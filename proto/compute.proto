@@ -1,0 +1,85 @@
+syntax = "proto3";
+package wowdb.compute;
+
+// QN → CN: 실행 계획 전달 (포트 9040)
+service ComputeService {
+    // QN이 CN에게 Fragment 실행 계획 전달, 스트리밍 결과 반환
+    rpc ExecuteFragment(FragmentRequest) returns (stream FragmentResult);
+
+    // 쿼리 취소
+    rpc CancelFragment(CancelRequest) returns (CancelResponse);
+
+    // 헬스체크
+    rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message FragmentRequest {
+    string query_id    = 1;
+    string fragment_id = 2;
+    // 직렬화된 PhysicalPlan (prost binary)
+    bytes  plan        = 3;
+    map<string, string> options = 4;
+    // Runtime Filter (Build Side에서 생성, Probe Side CN으로 전파)
+    repeated RuntimeFilter runtime_filters = 5;
+}
+
+message FragmentResult {
+    string query_id    = 1;
+    string fragment_id = 2;
+    // Arrow IPC 포맷 결과 배치
+    bytes  batch       = 3;
+    bool   is_last     = 4;
+    StageMetrics metrics = 5;
+    string error_msg   = 6;  // 오류 발생 시 설정
+}
+
+message StageMetrics {
+    uint64 rows_returned       = 1;
+    uint64 bytes_read          = 2;
+    uint64 duration_ms         = 3;
+    uint64 granules_skipped    = 4;
+    // stage_name → duration_ms
+    map<string, uint64> stage_times = 5;
+    // node_id → rows_processed
+    map<string, uint64> node_rows   = 6;
+}
+
+message RuntimeFilter {
+    enum FilterType {
+        BLOOM    = 0;
+        IN_LIST  = 1;
+        MIN_MAX  = 2;
+    }
+    FilterType filter_type  = 1;
+    string     target_column = 2;
+    bytes      bloom_bytes  = 3;
+    repeated bytes in_values = 4;
+    bytes      min_val      = 5;
+    bytes      max_val      = 6;
+}
+
+message CancelRequest {
+    string query_id    = 1;
+    string fragment_id = 2;
+}
+
+message CancelResponse {
+    bool   success  = 1;
+    string message  = 2;
+}
+
+message HealthRequest {
+    string service = 1;
+}
+
+message HealthResponse {
+    enum Status {
+        UNKNOWN     = 0;
+        SERVING     = 1;
+        NOT_SERVING = 2;
+    }
+    Status status  = 1;
+    string version = 2;
+    string node_id = 3;
+    map<string, string> details = 4;
+}

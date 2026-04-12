@@ -1,0 +1,29 @@
+# WOW-DB Compute Node 설정
+
+[node]
+id        = "cn-1"
+log_level = "info"
+
+[grpc]
+bind = "0.0.0.0"
+port = 9040
+
+[storage_nodes]
+# 환경변수 STORAGE_NODES로 오버라이드
+addresses = ["sn-1:9060", "sn-2:9060", "sn-3:9060"]
+
+[execution]
+# 병렬 파이프라인 수 (0 = CPU 코어 수 자동 결정)
+dop = 0
+# Hash Join 빌드 메모리 제한
+hash_join_max_memory_mb = 4096
+# 결과 캐시
+result_cache_enabled  = true
+result_cache_size_mb  = 1024
+result_cache_ttl_s    = 300
+
+[simd]
+# AVX2/AVX-512 자동 검사 및 활성화
+auto_detect = true
+# 강제 스칼라 fallback (테스트용)
+force_scalar = false

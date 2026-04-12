@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pwsh:*)",
+      "Bash(where powershell:*)",
+      "Bash(where pwsh:*)",
+      "Bash(powershell:*)",
+      "Bash(git:*)",
+      "Bash(find D:\\\\projects\\\\wow-db:*)",
+      "WebSearch",
+      "Bash(cargo check:*)",
+      "Bash(cargo update:*)",
+      "Bash(cargo tree:*)",
+      "Bash(cargo search:*)",
+      "Bash(sed -n '95,115p' D:/projects/wow-db/shared/src/types.rs)",
+      "Bash(sed -n '196,220p' D:/projects/wow-db/shared/src/types.rs)",
+      "Bash(sed -n '250,295p' D:/projects/wow-db/shared/src/types.rs)",
+      "Bash(grep -E \"-->.*logical|-->.*physical|-->.*optimizer|-->.*execution\")",
+      "Bash(cargo test:*)",
+      "Bash(grep -E \"^test |PASSED|FAILED|ok$|error|running [0-9]\")",
+      "Bash(cargo doc:*)"
+    ]
+  }
+}

@@ -1,0 +1,43 @@
+# WOW-DB Storage Node — 멀티스테이지 빌드
+
+FROM rust:1.87-bookworm AS chef
+RUN cargo install cargo-chef --locked
+RUN apt-get update && apt-get install -y \
+    protobuf-compiler \
+    libssl-dev \
+    pkg-config \
+    # librdkafka 빌드 의존성 (스토리지 노드에서 직접 사용하진 않지만 workspace 빌드 시 필요)
+    cmake \
+    libsasl2-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+COPY . .
+RUN cargo build --release -p storage-node
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/storage-node /usr/local/bin/storage-node
+
+# 데이터 디렉토리
+VOLUME ["/data"]
+
+EXPOSE 9060  # 스토리지 API (gRPC)
+EXPOSE 8040  # Spark Stream Load (HTTP)
+
+ENV RUST_LOG=storage_node=info,shared=info
+ENV DATA_DIR=/data
+
+ENTRYPOINT ["storage-node"]

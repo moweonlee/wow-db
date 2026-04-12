@@ -1,0 +1,321 @@
+name: wowdb
+
+# ──── 공통 설정 ────────────────────────────────────────────
+x-sn-common: &sn-common
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.storage-node
+  profiles: ["full", "storage", "compute"]
+  environment:
+    RUST_LOG: "storage_node=info,shared=info"
+    STORAGE_BACKEND: "native"
+    GRPC_PORT: "9060"
+    HTTP_PORT: "8040"
+  restart: unless-stopped
+
+x-cn-common: &cn-common
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.compute-node
+  profiles: ["full", "compute"]
+  environment:
+    RUST_LOG: "compute_node=info,shared=info"
+    GRPC_PORT: "9040"
+    STORAGE_NODES: "sn-1:9060,sn-2:9060,sn-3:9060"
+  restart: unless-stopped
+
+x-qn-common: &qn-common
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.query-node
+  profiles: ["full", "query"]
+  environment:
+    RUST_LOG: "query_node=info,shared=info"
+    MYSQL_PORT: "9030"
+    WEB_PORT: "8080"
+    RAFT_PORT: "9010"
+    GRPC_PORT: "9011"
+    RAFT_PEERS: "qn-1:9010,qn-2:9010,qn-3:9010"
+    COMPUTE_NODES: "cn-1:9040,cn-2:9040"
+  restart: unless-stopped
+
+services:
+  # ──── 인프라 서비스 ─────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    profiles: ["full", "infra", "storage"]
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web Console
+    volumes:
+      - minio-data:/data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wowdb-net
+
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    profiles: ["full", "infra"]
+    ports:
+      - "9092:9092"   # Kafka API
+      - "9644:9644"   # Admin API
+      - "8081:8081"   # Schema Registry
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wowdb-net
+
+  # ──── Storage Node ×3 ────────────────────────────────────
+  sn-1:
+    <<: *sn-common
+    container_name: wowdb-sn-1
+    ports:
+      - "19060:9060"
+      - "18040:8040"
+    volumes:
+      - sn-1-data:/data
+    environment:
+      NODE_ID: "sn-1"
+      RUST_LOG: "storage_node=info,shared=info"
+      STORAGE_BACKEND: "native"
+      GRPC_PORT: "9060"
+      HTTP_PORT: "8040"
+      DATA_DIR: "/data"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8040/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - wowdb-net
+
+  sn-2:
+    <<: *sn-common
+    container_name: wowdb-sn-2
+    ports:
+      - "29060:9060"
+      - "28040:8040"
+    volumes:
+      - sn-2-data:/data
+    environment:
+      NODE_ID: "sn-2"
+      RUST_LOG: "storage_node=info,shared=info"
+      STORAGE_BACKEND: "native"
+      GRPC_PORT: "9060"
+      HTTP_PORT: "8040"
+      DATA_DIR: "/data"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8040/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - wowdb-net
+
+  sn-3:
+    <<: *sn-common
+    container_name: wowdb-sn-3
+    ports:
+      - "39060:9060"
+      - "38040:8040"
+    volumes:
+      - sn-3-data:/data
+    environment:
+      NODE_ID: "sn-3"
+      RUST_LOG: "storage_node=info,shared=info"
+      STORAGE_BACKEND: "native"
+      GRPC_PORT: "9060"
+      HTTP_PORT: "8040"
+      DATA_DIR: "/data"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8040/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - wowdb-net
+
+  # ──── Compute Node ×2 ────────────────────────────────────
+  cn-1:
+    <<: *cn-common
+    container_name: wowdb-cn-1
+    ports:
+      - "19040:9040"
+    environment:
+      NODE_ID: "cn-1"
+      RUST_LOG: "compute_node=info,shared=info"
+      GRPC_PORT: "9040"
+      STORAGE_NODES: "sn-1:9060,sn-2:9060,sn-3:9060"
+    depends_on:
+      sn-1:
+        condition: service_healthy
+      sn-2:
+        condition: service_healthy
+      sn-3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9040/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    networks:
+      - wowdb-net
+
+  cn-2:
+    <<: *cn-common
+    container_name: wowdb-cn-2
+    ports:
+      - "29040:9040"
+    environment:
+      NODE_ID: "cn-2"
+      RUST_LOG: "compute_node=info,shared=info"
+      GRPC_PORT: "9040"
+      STORAGE_NODES: "sn-1:9060,sn-2:9060,sn-3:9060"
+    depends_on:
+      sn-1:
+        condition: service_healthy
+      sn-2:
+        condition: service_healthy
+      sn-3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9040/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    networks:
+      - wowdb-net
+
+  # ──── Query Node ×3 (Raft 클러스터) ─────────────────────
+  qn-1:
+    <<: *qn-common
+    container_name: wowdb-qn-1
+    ports:
+      - "9030:9030"   # MySQL Protocol (기본 노출)
+      - "8080:8080"   # Web UI (기본 노출)
+      - "9010:9010"   # Raft (내부)
+      - "9011:9011"   # gRPC Meta (내부)
+    environment:
+      NODE_ID: "qn-1"
+      RUST_LOG: "query_node=info,shared=info"
+      MYSQL_PORT: "9030"
+      WEB_PORT: "8080"
+      RAFT_PORT: "9010"
+      GRPC_PORT: "9011"
+      RAFT_PEERS: "qn-1:9010,qn-2:9010,qn-3:9010"
+      COMPUTE_NODES: "cn-1:9040,cn-2:9040"
+    depends_on:
+      cn-1:
+        condition: service_healthy
+      cn-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - wowdb-net
+
+  qn-2:
+    <<: *qn-common
+    container_name: wowdb-qn-2
+    ports:
+      - "19030:9030"
+      - "18080:8080"
+      - "19010:9010"
+      - "19011:9011"
+    environment:
+      NODE_ID: "qn-2"
+      RUST_LOG: "query_node=info,shared=info"
+      MYSQL_PORT: "9030"
+      WEB_PORT: "8080"
+      RAFT_PORT: "9010"
+      GRPC_PORT: "9011"
+      RAFT_PEERS: "qn-1:9010,qn-2:9010,qn-3:9010"
+      COMPUTE_NODES: "cn-1:9040,cn-2:9040"
+    depends_on:
+      cn-1:
+        condition: service_healthy
+      cn-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - wowdb-net
+
+  qn-3:
+    <<: *qn-common
+    container_name: wowdb-qn-3
+    ports:
+      - "29030:9030"
+      - "28080:8080"
+      - "29010:9010"
+      - "29011:9011"
+    environment:
+      NODE_ID: "qn-3"
+      RUST_LOG: "query_node=info,shared=info"
+      MYSQL_PORT: "9030"
+      WEB_PORT: "8080"
+      RAFT_PORT: "9010"
+      GRPC_PORT: "9011"
+      RAFT_PEERS: "qn-1:9010,qn-2:9010,qn-3:9010"
+      COMPUTE_NODES: "cn-1:9040,cn-2:9040"
+    depends_on:
+      cn-1:
+        condition: service_healthy
+      cn-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - wowdb-net
+
+  # ──── Docker Compose Watch 설정 ──────────────────────────
+  # docker compose watch 사용 시 소스 변경 감지
+
+volumes:
+  minio-data:
+  sn-1-data:
+  sn-2-data:
+  sn-3-data:
+
+networks:
+  wowdb-net:
+    driver: bridge
+    name: wowdb-network

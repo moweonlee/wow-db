@@ -1,0 +1,114 @@
+syntax = "proto3";
+package wowdb.ingestion;
+
+import "compute.proto";
+
+// QN: Kafka Routine Load 및 Spark Stream Load 관리
+service IngestionService {
+    // Routine Load 잡 관리
+    rpc CreateRoutineLoad(CreateRLRequest)  returns (RLResponse);
+    rpc PauseRoutineLoad(PauseRLRequest)    returns (RLResponse);
+    rpc ResumeRoutineLoad(ResumeRLRequest)  returns (RLResponse);
+    rpc StopRoutineLoad(StopRLRequest)      returns (RLResponse);
+    rpc GetRoutineLoadStatus(GetRLRequest)  returns (RLStatusResponse);
+    rpc ListRoutineLoads(ListRLRequest)     returns (ListRLResponse);
+
+    // Stream Load 트랜잭션 관리 (Spark)
+    rpc BeginStreamLoad(BeginSLRequest)    returns (BeginSLResponse);
+    rpc CommitStreamLoad(CommitSLRequest)  returns (CommitSLResponse);
+    rpc AbortStreamLoad(AbortSLRequest)    returns (AbortSLResponse);
+
+    // 헬스체크
+    rpc Health(wowdb.compute.HealthRequest) returns (wowdb.compute.HealthResponse);
+}
+
+// ──── Routine Load ────────────────────────────────────────
+
+message CreateRLRequest {
+    string job_name         = 1;
+    string cube_name        = 2;
+    string database         = 3;
+    string format           = 4;   // "json" | "avro" | "csv"
+    string kafka_brokers    = 5;
+    string kafka_topic      = 6;
+    string kafka_group_id   = 7;
+    uint32 max_batch_rows   = 8;   // 기본 100,000
+    uint32 max_batch_interval_s = 9;  // 기본 5초
+    float  max_error_rate   = 10;  // 기본 0.1 (10%)
+    string columns_mapping  = 11;  // JSON 컬럼 매핑 (optional)
+    string kafka_offsets    = 12;  // "OFFSET_BEGINNING" | "OFFSET_END" | 숫자
+}
+
+message PauseRLRequest  { string job_name = 1; string database = 2; }
+message ResumeRLRequest { string job_name = 1; string database = 2; }
+message StopRLRequest   { string job_name = 1; string database = 2; }
+message GetRLRequest    { string job_name = 1; string database = 2; }
+
+message RLResponse {
+    bool   success = 1;
+    string error   = 2;
+    string job_id  = 3;
+}
+
+message RLStatusResponse {
+    string job_id           = 1;
+    string job_name         = 2;
+    string state            = 3;   // "RUNNING" | "PAUSED" | "ERROR" | "CANCELLED"
+    uint64 total_rows       = 4;
+    uint64 error_rows       = 5;
+    string last_error       = 6;
+    int64  current_lag_rows = 7;
+    repeated PartitionOffset offsets = 8;
+    int64  created_at       = 9;
+    int64  updated_at       = 10;
+}
+
+message PartitionOffset {
+    int32  partition = 1;
+    int64  offset    = 2;
+    int64  lag       = 3;
+}
+
+message ListRLRequest {
+    string database = 1;
+    string state    = 2;   // 빈 문자열 = 전체
+}
+
+message ListRLResponse {
+    repeated RLStatusResponse jobs = 1;
+}
+
+// ──── Stream Load (Spark) ─────────────────────────────────
+
+message BeginSLRequest {
+    string cube_name = 1;
+    string database  = 2;
+    string label     = 3;   // 멱등성 레이블 (Spark job ID 등)
+}
+
+message BeginSLResponse {
+    bool   success   = 1;
+    string tx_id     = 2;
+    // SN 엔드포인트 목록 (Spark Executor가 직접 쓸 HTTP 포트 8040)
+    repeated string sn_endpoints = 3;
+    string error     = 4;
+}
+
+message CommitSLRequest {
+    string tx_id = 1;
+}
+
+message CommitSLResponse {
+    bool   success   = 1;
+    uint64 rows_loaded = 2;
+    string error     = 3;
+}
+
+message AbortSLRequest {
+    string tx_id   = 1;
+    string reason  = 2;
+}
+
+message AbortSLResponse {
+    bool success = 1;
+}

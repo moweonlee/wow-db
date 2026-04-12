@@ -1,0 +1,28 @@
+# Git
+.git/
+.gitignore
+
+# Rust build artifacts (rebuilt inside Docker)
+target/
+
+# Spec/doc artifacts
+specs/
+specification/
+.claude/
+.specify/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Env files
+.env
+.env.*
+!.env.example

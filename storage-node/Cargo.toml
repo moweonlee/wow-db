@@ -1,0 +1,63 @@
+[package]
+name        = "storage-node"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "storage-node"
+path = "src/main.rs"
+
+[dependencies]
+shared.workspace      = true
+tokio.workspace       = true
+tokio-stream.workspace = true
+tonic.workspace       = true
+async-trait.workspace  = true
+futures.workspace      = true
+prost.workspace    = true
+serde.workspace    = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace   = true
+uuid.workspace     = true
+chrono.workspace   = true
+tracing.workspace  = true
+tracing-subscriber.workspace = true
+arrow2.workspace   = true
+
+# io_uring (Linux only)
+tokio-uring = { version = "0.5", optional = true }
+
+# Object storage (S3/MinIO)
+object_store = { version = "0.10", features = ["aws"] }
+
+# HDFS + Kerberos (서비스-hdfs 는 Linux/macOS 전용; Windows에서는 stub)
+opendal = { version = "0.47", features = ["layers-tracing"] }
+
+# Compression
+lz4_flex = "0.11"
+zstd     = "0.13"
+
+# Checksums
+crc32fast = "1"
+
+# Zero-copy buffers
+bytes = "1"
+
+# Skip-list for MemTable
+crossbeam-skiplist = "0.1"
+
+# Bloom filter
+bloomfilter = "1"
+
+[features]
+default    = []
+io-uring   = ["tokio-uring"]
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+tonic-build = "0.12"
+prost-build = "0.13"
+protoc-bin-vendored = "3"

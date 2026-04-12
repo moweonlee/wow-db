@@ -1,0 +1,102 @@
+syntax = "proto3";
+package wowdb.storage;
+
+import "compute.proto";
+
+// CN → SN: Tablet 읽기/쓰기 (포트 9060)
+service StorageService {
+    // 컬럼 청크 읽기 (Tablet 스캔)
+    rpc ScanTablet(ScanRequest) returns (stream ScanBatch);
+
+    // 데이터 쓰기 (WAL + MemTable)
+    rpc WriteRows(WriteRequest) returns (WriteResponse);
+
+    // 2PC Prepare
+    rpc Prepare(PrepareRequest) returns (PrepareResponse);
+
+    // 2PC Commit
+    rpc Commit(CommitRequest) returns (CommitResponse);
+
+    // 2PC Rollback
+    rpc Rollback(RollbackRequest) returns (RollbackResponse);
+
+    // Tablet 메타데이터 조회
+    rpc GetTabletMeta(TabletMetaRequest) returns (TabletMetaResponse);
+
+    // 헬스체크
+    rpc Health(wowdb.compute.HealthRequest) returns (wowdb.compute.HealthResponse);
+}
+
+message ScanRequest {
+    string tablet_id              = 1;
+    repeated string columns       = 2;   // 빈 배열 = 전체 컬럼 투영
+    bytes  predicate              = 3;   // 직렬화된 predicate (optional)
+    wowdb.compute.RuntimeFilter runtime_filter = 4;
+    uint32 batch_size             = 5;   // 기본 4096행
+    // Data Skipping: 이 파티션의 min/max 통계
+    bytes  partition_stats        = 6;
+}
+
+message ScanBatch {
+    string tablet_id        = 1;
+    bytes  batch            = 2;   // Arrow IPC 포맷
+    bool   is_last          = 3;
+    uint64 rows_read        = 4;
+    uint64 granules_scanned = 5;
+    uint64 granules_skipped = 6;
+}
+
+message WriteRequest {
+    string tx_id     = 1;
+    string tablet_id = 2;
+    bytes  batch     = 3;   // Arrow IPC 포맷 행 배치
+}
+
+message WriteResponse {
+    bool   success  = 1;
+    uint64 lsn      = 2;   // 적용된 LSN
+    string error    = 3;
+}
+
+message PrepareRequest {
+    string tx_id     = 1;
+    string tablet_id = 2;
+}
+
+message PrepareResponse {
+    bool   success = 1;
+    string error   = 2;
+}
+
+message CommitRequest {
+    string tx_id     = 1;
+    string tablet_id = 2;
+}
+
+message CommitResponse {
+    bool   success = 1;
+    string error   = 2;
+}
+
+message RollbackRequest {
+    string tx_id     = 1;
+    string tablet_id = 2;
+}
+
+message RollbackResponse {
+    bool   success = 1;
+}
+
+message TabletMetaRequest {
+    string tablet_id = 1;
+}
+
+message TabletMetaResponse {
+    string tablet_id    = 1;
+    string partition_id = 2;
+    uint32 bucket_id    = 3;
+    uint64 row_count    = 4;
+    uint64 size_bytes   = 5;
+    string state        = 6;   // "normal" | "compacting" | "offline"
+    uint64 lsn          = 7;
+}

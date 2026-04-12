@@ -1,0 +1,41 @@
+# WOW-DB Query Node — 멀티스테이지 빌드 (cargo-chef 의존성 캐시)
+
+# ── Stage 1: cargo-chef 설치 ──────────────────────────────
+FROM rust:1.87-bookworm AS chef
+RUN cargo install cargo-chef --locked
+RUN apt-get update && apt-get install -y protobuf-compiler libssl-dev pkg-config && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+
+# ── Stage 2: 의존성 레시피 생성 ───────────────────────────
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ── Stage 3: 의존성 빌드 (캐시 레이어) ────────────────────
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# 소스 복사 및 빌드
+COPY . .
+RUN cargo build --release -p query-node
+
+# ── Stage 4: 최소 런타임 이미지 ───────────────────────────
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/query-node /usr/local/bin/query-node
+
+# 포트 선언
+EXPOSE 9030  # MySQL Wire Protocol
+EXPOSE 8080  # Web UI (HTTP/WebSocket)
+EXPOSE 9010  # Raft 합의 (QN 간)
+EXPOSE 9011  # QN ↔ CN/SN 내부 gRPC
+
+ENV RUST_LOG=query_node=info,shared=info
+
+ENTRYPOINT ["query-node"]

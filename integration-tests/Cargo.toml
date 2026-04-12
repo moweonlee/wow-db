@@ -1,0 +1,53 @@
+[package]
+name        = "integration-tests"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared.workspace  = true
+tokio.workspace   = true
+serde.workspace   = true
+serde_json.workspace = true
+anyhow.workspace  = true
+uuid.workspace    = true
+chrono.workspace  = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# MySQL client for compat tests
+mysql_async = "0.33"
+
+# HTTP client for Stream Load / Web UI tests
+reqwest = { version = "0.12", features = ["json"] }
+
+# Kafka producer for ingestion tests (requires cmake on PATH)
+rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }
+
+[features]
+integration = []
+kafka       = ["rdkafka"]
+
+[[test]]
+name              = "ddl_tests"
+path              = "tests/ddl_tests.rs"
+required-features = ["integration"]
+
+[[test]]
+name              = "ingestion_tests"
+path              = "tests/ingestion_tests.rs"
+required-features = ["integration"]
+
+[[test]]
+name              = "analytics_tests"
+path              = "tests/analytics_tests.rs"
+required-features = ["integration"]
+
+[[test]]
+name              = "compat_tests"
+path              = "tests/compat_tests.rs"
+required-features = ["integration"]
+
+[[test]]
+name              = "failover_tests"
+path              = "tests/failover_tests.rs"
+required-features = ["integration"]

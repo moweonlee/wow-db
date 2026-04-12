@@ -1,0 +1,59 @@
+# WOW-DB Storage Node 설정
+
+[node]
+id        = "sn-1"
+log_level = "info"
+
+[grpc]
+bind = "0.0.0.0"
+port = 9060
+
+[http]
+# Spark Stream Load HTTP 서버
+bind = "0.0.0.0"
+port = 8040
+
+[storage]
+# 스토리지 백엔드: "native" | "s3" | "hdfs"
+backend  = "native"
+data_dir = "/data"
+
+# Native LSM 설정
+[storage.native]
+# 권장: NVMe SSD, XFS, noatime
+memtable_size_mb    = 64
+block_cache_size_mb = 1024
+# io_uring 활성화 (Linux 전용, feature = "io-uring" 빌드 필요)
+io_uring_enabled    = false
+
+# S3 백엔드 설정 (backend = "s3" 시 사용)
+[storage.s3]
+bucket           = "wowdb-data"
+prefix           = "analytics/"
+region           = "ap-northeast-2"
+# 로컬 LRU 캐시
+local_cache_dir  = "/tmp/wowdb_cache"
+local_cache_size = "128GB"
+# 인증: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 환경변수 또는 IAM Role
+
+# HDFS 백엔드 설정 (backend = "hdfs" 시 사용)
+[storage.hdfs]
+namenode                    = "hdfs://namenode:8020"
+base_path                   = "/wowdb/analytics"
+kerberos_keytab             = "/etc/security/keytabs/wowdb.keytab"
+kerberos_principal          = "wowdb/sn-host@REALM.COM"
+kerberos_renew_interval_sec = 3600
+
+[compaction]
+# 백그라운드 Leveled Compaction
+enabled          = true
+max_concurrent   = 2
+level0_file_count_trigger = 4
+level_size_multiplier     = 10
+
+[ttl]
+# TTL 만료 확인 주기
+check_interval_s = 3600
+
+[tablet]
+replica_count = 3

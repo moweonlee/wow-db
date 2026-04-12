@@ -1,0 +1,43 @@
+# WOW-DB Query Node 설정
+
+[node]
+id       = "qn-1"          # 환경변수 NODE_ID로 오버라이드 가능
+log_level = "info"
+
+[mysql]
+bind    = "0.0.0.0"
+port    = 9030
+max_connections = 1000
+
+[web]
+bind = "0.0.0.0"
+port = 8080
+
+[raft]
+bind  = "0.0.0.0"
+port  = 9010
+# 쉼표 구분 피어 목록 (환경변수 RAFT_PEERS로 오버라이드)
+peers = ["qn-1:9010", "qn-2:9010", "qn-3:9010"]
+
+[grpc]
+bind = "0.0.0.0"
+port = 9011
+
+[compute_nodes]
+# 환경변수 COMPUTE_NODES로 오버라이드
+addresses = ["cn-1:9040", "cn-2:9040"]
+
+[ingestion]
+# Async INSERT 버퍼 설정
+async_insert_buffer_rows     = 10000
+async_insert_flush_interval_s = 1
+async_insert_max_memory_mb   = 256
+
+[profiler]
+# Query Profiler Circular Buffer 크기
+buffer_size = 1000
+
+[metrics]
+# Prometheus 메트릭 엔드포인트
+enabled = true
+path    = "/metrics"
