@@ -4,11 +4,11 @@
 
 | 항목 | 내용 |
 |---|---|
-| 문서 버전 | v0.1 Draft |
+| 문서 버전 | v0.2 Draft |
 | 작성일 | 2026-04-12 |
 | 상태 | 초안 (Draft) |
 | 프로젝트명 | WOW-DB |
-| 참조 시스템 | StarRocks, ClickHouse, RocksDB |
+| 참조 시스템 | StarRocks, ClickHouse, RocksDB, Snowflake |
 
 ---
 
@@ -26,8 +26,8 @@
 
 ## 1.1 문서 목적
 
-본 문서는 **WOW-DB**의 소프트웨어 요구사항 명세서(Software Requirements Specification)이다.  
-WOW-DB는 웹 분석에 특화된 MySQL 호환 OLAP 데이터베이스로서, 이벤트 기반의 데이터 수집·저장·분석을 주목적으로 한다.  
+본 문서는 **WOW-DB**의 소프트웨어 요구사항 명세서(Software Requirements Specification)이다.
+WOW-DB는 웹 분석에 특화된 MySQL 호환 OLAP 데이터베이스로서, 이벤트 기반의 데이터 수집·저장·분석을 주목적으로 한다.
 본 문서는 설계자, 개발자, QA 엔지니어가 시스템을 구현하고 검증하기 위한 기준 문서로 활용된다.
 
 ## 1.2 시스템 배경 및 범위
@@ -39,18 +39,20 @@ WOW-DB는 웹 분석에 특화된 MySQL 호환 OLAP 데이터베이스로서, �
 - 분석가가 직접 스키마를 설계하고 세션 로직을 구현해야 함
 - Funnel·Cohort·Path 분석을 위한 커스텀 SQL 작성 부담
 - 이벤트 → 세션 변환 파이프라인을 별도로 구축해야 함
+- Storage와 Compute가 결합되어 있어 독립적 확장 불가
 
-WOW-DB는 이러한 문제를 해결하기 위해, **이벤트 Cube 정의만으로 자동 세션화(Sessionization) Materialized View를 생성**하고, 웹 분석에 특화된 함수(FUNNEL, COHORT, PATH)를 내장하는 시스템이다.
+WOW-DB는 이러한 문제를 해결하기 위해, **이벤트 Cube 정의만으로 자동 세션화(Sessionization) Materialized View를 생성**하고, 웹 분석에 특화된 함수(FUNNEL, COHORT, PATH)를 내장하며, Storage와 Compute를 분리한 3-Tier 분산 아키텍처를 채택한다.
 
 ### 1.2.2 범위
 
 WOW-DB가 커버하는 범위:
 
 - 이벤트 데이터의 대용량 수집 (Kafka, Spark, MySQL INSERT)
-- LSM-Tree 기반 분산 스토리지
-- 웹 분석 전용 쿼리 엔진 (SIMD 가속)
+- 컬럼 지향 LSM-Tree 기반 분산 스토리지 (Native / S3 / HDFS)
+- 웹 분석 전용 쿼리 엔진 (SIMD 가속, CBO 최적화)
 - 대화형 Session Materialized View 생성 (Web UI)
 - MySQL 클라이언트 프로토콜 호환
+- 클러스터 모니터링 및 Query Profiler
 
 WOW-DB가 커버하지 않는 범위:
 
@@ -71,22 +73,30 @@ WOW-DB가 커버하지 않는 범위:
 | **Funnel Analysis** | 사전 정의된 단계(Step)를 순서대로 수행한 사용자 전환율 분석 |
 | **Cohort Analysis** | 특정 기준일(진입 이벤트 기준)로 그룹화된 사용자의 재방문/전환 추적 |
 | **Path Analysis** | 사용자가 실제로 이동한 이벤트 시퀀스 패턴 분석 |
-| **DSL** | Data Serving Layer. 클라이언트 프로토콜 처리, 쿼리 파싱·플래닝, 세션/Cube 관리 담당 |
-| **SL** | Storage Layer. LSM-Tree 기반 실제 데이터 저장 및 SIMD 기반 쿼리 실행 담당 |
-| **Tablet** | SL에서 데이터를 분산 저장하는 최소 물리 단위 (StarRocks의 Tablet과 동일 개념) |
+| **Query Node (QN)** | SQL 파싱·CBO·플래닝·메타데이터 관리·사용자 Frontend 담당 노드. 홀수 개로 Raft 클러스터 구성. Stateless 설계로 K8s LoadBalancer 라우팅 지원 |
+| **Compute Node (CN)** | Query Node의 물리 실행 계획을 수행하는 Worker 노드. Data Node와 co-located 또는 독립 배치 가능 |
+| **Data Node (DN)** | 컬럼 지향 LSM-Tree 기반 스토리지 담당 노드. 수평 확장 가능. Native/S3/HDFS 백엔드 지원 |
+| **CBO** | Cost-Based Optimizer. 컬럼 통계(min/max/NDV/Histogram)를 기반으로 최적 실행 계획을 선택 |
+| **NDV** | Number of Distinct Values. 컬럼의 유니크 값 종류 수 (CBO 통계 항목) |
+| **Tablet** | Data Node에서 데이터를 분산 저장하는 최소 물리 단위 |
+| **Partition** | Cube의 데이터를 시간 또는 키 범위로 나눈 논리 단위. **파티션 내에서만 LSM Merge 발생** |
+| **Sort Key** | 파티션 내 LSM Merge 및 SSTable 정렬 기준. `ORDER BY`로 지정 |
 | **SIMD** | Single Instruction Multiple Data. CPU 벡터 연산을 활용한 병렬 데이터 처리 |
 | **LSM-Tree** | Log-Structured Merge Tree. 쓰기에 최적화된 트리 구조 스토리지 |
+| **Query Profiler** | 최근 최대 1,000건의 쿼리 실행 이력(SQL, 소요 시간, 노드별 처리량)을 기록하는 모듈 |
+| **Storage Backend** | Data Node의 물리 저장소 종류: Native LSM (로컬 NVMe), S3, HDFS (Kerberos 인증 필수) |
 
 ## 1.4 시스템 개요
 
-WOW-DB는 다음 다섯 가지 핵심 가치를 중심으로 설계된다.
+WOW-DB는 다음 여섯 가지 핵심 가치를 중심으로 설계된다.
 
 ```
-1. 웹 분석 최적화   : Event → Session 변환 자동화, 전용 분석 함수 내장
-2. 대용량 처리      : 200억+ 레코드, 분산 아키텍처 (SL 수평 확장)
-3. 실시간 수집      : Kafka, Spark Streaming, MySQL INSERT 동시 지원
-4. MySQL 호환성     : 기존 MySQL 클라이언트/툴/드라이버 그대로 연결
-5. 개발자 친화성    : Web SQL Editor, 대화형 Cube Builder 내장
+1. 웹 분석 최적화      : Event → Session 변환 자동화, 전용 분석 함수 내장
+2. 대용량 처리         : 200억+ 레코드, Data Node 수평 확장
+3. 실시간 수집         : Kafka, Spark Streaming, MySQL INSERT 동시 지원
+4. MySQL 호환성        : 기존 MySQL 클라이언트/툴/드라이버 그대로 연결
+5. Storage-Compute 분리: Compute Node와 Data Node 독립 확장, 클라우드 스토리지 지원
+6. 개발자 친화성       : Web SQL Editor, 대화형 Cube Builder, Profiler, Monitoring 내장
 ```
 
 ## 1.5 설계 원칙
@@ -94,16 +104,19 @@ WOW-DB는 다음 다섯 가지 핵심 가치를 중심으로 설계된다.
 | 원칙 | 설명 |
 |---|---|
 | **Write Optimized First** | LSM-Tree 채택으로 대용량 이벤트 스트림 수집 최우선 |
-| **Column-Oriented Storage** | 분석 쿼리의 특성상 컬럼 단위 저장으로 IO 최소화 |
-| **SIMD Everywhere** | 스캔, 집계, 필터, 해시 조인 모든 연산에 AVX2 이상 벡터 연산 적용 |
-| **Schema on Write** | Cube 정의 시 스키마를 확정하여 쿼리 성능 보장 |
-| **Guided Analytics** | 복잡한 SQL 없이 대화형 UI로 세션/분석 설정 가능 |
-| **Separation of Concerns** | DSL(서빙)과 SL(스토리지) 완전 분리로 독립적 확장 |
+| **Column-Oriented Storage** | 컬럼 단위 파일 저장으로 분석 쿼리 IO 최소화 |
+| **SIMD Everywhere** | 스캔, 집계, 필터, 해시 조인 모든 연산에 AVX2 이상 적용 |
+| **Schema on Write** | Cube 정의 시 스키마 확정으로 쿼리 성능 보장 |
+| **Guided Analytics** | 대화형 UI로 세션/분석 설정 가능 |
+| **Storage-Compute Separation** | DN과 CN 분리로 독립 확장 및 S3/HDFS 클라우드 활용 |
+| **Stateless Query Nodes** | 모든 QN이 Raft 복제 메타데이터 보유 → K8s 무작위 라우팅 가능 |
+| **CBO-Driven Planning** | 쿼리 통계 기반 비용 최적화, 불필요 파티션/파일 스캔 제거 |
 
 ## 1.6 참조 시스템
 
 - **StarRocks 3.x**: FE/BE 분리 아키텍처, Tablet 분산, Routine Load 설계 참조
 - **ClickHouse**: 실시간 수집, MergeTree 컬럼 저장, SIMD 활용 참조
+- **Snowflake**: Storage-Compute 분리, 멀티 클라우드 스토리지 참조
 - **RocksDB**: LSM-Tree 구현체 참조 (WOW-DB는 Rust로 자체 구현)
 - **MySQL 8.0**: 클라이언트 프로토콜, DDL/DML 문법 호환 기준
 
@@ -122,295 +135,473 @@ graph TB
         KF["Kafka Producer\n(JSON / Avro)"]
     end
 
-    subgraph DSL_CLUSTER["DSL - Data Serving Layer (HA Cluster)"]
-        direction TB
-        DSL_L["DSL Leader Node"]
-        DSL_F1["DSL Follower Node 1"]
-        DSL_F2["DSL Follower Node 2"]
+    subgraph QN_CLUSTER["Query Node Cluster (Raft, 홀수 노드)"]
+        QN1["QN Leader"]
+        QN2["QN Follower 1"]
+        QN3["QN Follower 2 (+ N)"]
     end
 
-    subgraph DSL_INTERNALS["DSL 내부 구조"]
-        MP["MySQL Protocol Handler\n(Port 9030)"]
-        WS["Web Server\n(Port 8080)"]
-        QP["SQL Parser\n(MySQL + Custom Syntax)"]
-        QPL["Query Planner\n(Logical → Physical Plan)"]
-        QC["Query Coordinator\n(Distributed Execution)"]
-        CM["Cube Manager\n(Schema Registry)"]
-        SM["Session Manager\n(MV 생성·갱신 관리)"]
-        IG["Ingestion Gateway\n(Kafka / Spark 코디네이터)"]
-        TX["Transaction Manager\n(2PC)"]
+    subgraph CN_CLUSTER["Compute Node Cluster"]
+        CN1["Compute Node 1"]
+        CN2["Compute Node 2"]
+        CNN["Compute Node N"]
     end
 
-    subgraph SL_CLUSTER["SL - Storage Layer (N Nodes)"]
-        SL1["SL Node 1\n(Tablet 1~K)"]
-        SL2["SL Node 2\n(Tablet K+1~2K)"]
-        SLN["SL Node N\n(Tablet ...)"]
+    subgraph DN_CLUSTER["Data Node Cluster (수평 확장)"]
+        DN1["Data Node 1\n(Tablet 1~K)"]
+        DN2["Data Node 2\n(Tablet K+1~2K)"]
+        DNN["Data Node N"]
     end
 
-    subgraph SL_INTERNALS["SL 노드 내부 구조"]
-        LSM["LSM-Tree Engine\n(MemTable + SSTable)"]
-        SIMD_EXEC["SIMD Executor\n(AVX2/AVX-512)"]
-        MV_MGR["MV Manager\n(Materialized View 유지)"]
-        COMPACT["Compaction Service\n(Leveled Compaction)"]
-        WAL["WAL\n(Write-Ahead Log)"]
-        CACHE["Block Cache\n(LRU, 컬럼 블록)"]
+    subgraph STORAGE["Storage Backend (DN 선택)"]
+        LOCAL["Native LSM\n(NVMe SSD)"]
+        S3["S3 / MinIO\n(Object Storage)"]
+        HDFS["HDFS\n(Kerberos 인증)"]
     end
 
-    MC -->|"MySQL Wire Protocol"| MP
-    WC -->|"HTTP/WebSocket"| WS
-    SK -->|"HTTP Stream Load"| IG
-    KF -->|"Kafka Topic"| IG
+    MC -->|"MySQL Protocol\n(9030)"| QN1
+    WC -->|"HTTP/WebSocket\n(8080)"| QN1
+    SK -->|"HTTP Stream Load\n(8040)"| QN1
+    KF -->|"Kafka Topic"| QN1
 
-    MP --> QP
-    WS --> QP
-    QP --> QPL --> QC
-    QC -->|"Tablet 라우팅"| SL1
-    QC -->|"Tablet 라우팅"| SL2
-    QC -->|"Tablet 라우팅"| SLN
-    CM --> SM
-    IG --> TX
-    TX -->|"병렬 쓰기"| SL1
-    TX -->|"병렬 쓰기"| SL2
+    QN1 -->|"물리 실행 계획\n(gRPC 9040)"| CN1
+    QN1 -->|"물리 실행 계획"| CN2
+    CN1 -->|"Tablet 읽기·쓰기\n(gRPC 9060)"| DN1
+    CN1 -->|"Tablet 읽기·쓰기"| DN2
+    CN2 -->|"Tablet 읽기·쓰기"| DN1
+    CN2 -->|"Tablet 읽기·쓰기"| DNN
+
+    DN1 --- LOCAL
+    DN2 --- S3
+    DNN --- HDFS
+
+    QN1 <-->|"Raft Consensus\n(9010)"| QN2
+    QN2 <-->|"Raft Consensus"| QN3
 ```
 
-## 2.2 DSL (Data Serving Layer) 상세 구조
+> **Storage-Compute 분리 모드**: CN과 DN을 별도 호스트에 배치, S3/HDFS를 공유 스토리지로 사용. CN만 독립 확장 가능.
+>
+> **Co-located 모드**: CN과 DN을 동일 호스트에서 실행. 네트워크 오버헤드 최소화, 온프레미스 환경에 적합.
 
-### 2.2.1 DSL 역할
+## 2.2 Query Node (QN) 상세 구조
 
-DSL은 모든 클라이언트 요청의 진입점이며 다음 책임을 갖는다.
+### 2.2.1 QN 역할
 
 | 컴포넌트 | 책임 |
 |---|---|
 | MySQL Protocol Handler | MySQL 8.0 Wire Protocol 처리 (포트 9030) |
-| Web Server | Web SQL Editor REST API + WebSocket 제공 (포트 8080) |
-| SQL Parser | MySQL 호환 SQL + WOW-DB Custom Syntax 파싱 |
-| Query Planner | 논리 계획 → 물리 계획 변환, 통계 기반 최적화 |
-| Query Coordinator | 분산 실행 계획 SL 노드에 분산, 결과 집계 |
-| Cube Manager | CREATE/ALTER/DROP CUBE DDL, 메타데이터 관리 |
+| Web Server | Web SQL Editor REST API + WebSocket (포트 8080) |
+| SQL Parser | MySQL 호환 SQL + WOW-DB Custom Syntax 파싱, AST 생성 |
+| CBO (Cost-Based Optimizer) | 컬럼 통계 기반 Logical → Physical Plan 최적화 |
+| Statistics Manager | 컬럼별 min/max/NDV/Histogram 통계 수집·저장·제공 |
+| Logical Planner | AST → 논리 계획 변환 (Join 순서, 집계 방식 결정) |
+| Physical Planner | 논리 계획 → 분산 물리 계획 (CN Fragment 할당) |
+| Cube Manager | CREATE/ALTER/DROP CUBE DDL, 스키마 메타데이터 관리 |
 | Session Manager | Session MV 생성 대화 흐름, MV 갱신 스케줄 관리 |
 | Ingestion Gateway | Kafka Offset 추적, Spark 트랜잭션 코디네이션 |
 | Transaction Manager | 2-Phase Commit (2PC) 프로토콜 구현 |
+| Monitoring Service | 클러스터 전체 상태 수집·제공 (Prometheus `/metrics`) |
+| Query Profiler | 최근 1,000건 쿼리 실행 이력 기록 (Circular Buffer) |
 
-### 2.2.2 DSL HA 구성
+### 2.2.2 QN HA 구성 및 Raft 메타데이터
 
-- **최소 구성**: 1 Leader + 2 Follower
-- Leader: 모든 쓰기 요청 처리, 메타데이터 변경 권한
-- Follower: 읽기 요청 분산 처리, Leader 장애 시 자동 선출 (Raft 프로토콜)
-- 메타데이터 저장소: 내장 Raft 기반 Key-Value Store (별도 ZooKeeper 불필요)
+- **노드 수**: 반드시 홀수 (3, 5, 7, ...). Raft 과반수 보장을 위해 필수
+- **Leader**: 모든 쓰기 요청 처리, 메타데이터 변경 권한, CN 작업 할당
+- **Follower**: 읽기 요청 분산 처리, Leader 장애 시 자동 선출
+- **메타데이터 내용**: Cube 스키마, Tablet 위치 맵, 컬럼 통계, Routine Load 상태, 세션 토큰
+- **동기화**: 모든 메타데이터 변경은 Raft WAL로 팔로워에 복제 후 클라이언트 응답
 
-## 2.3 SL (Storage Layer) 상세 구조
+### 2.2.3 QN Stateless 설계 (Kubernetes 대응)
 
-### 2.3.1 SL 역할
+```
+[K8s LoadBalancer / Service]
+         ↓ (라운드로빈 또는 랜덤)
+  QN-Pod-1 | QN-Pod-2 | QN-Pod-3
+         ↓
+  모두 동일한 Raft 복제 메타데이터 보유
+  → 어떤 QN 파드에 접속해도 동일한 응답 보장
+```
 
-SL은 실제 데이터 저장과 쿼리 실행을 담당한다.
+- QN 요청 처리에 필요한 모든 상태를 Raft 메타스토어에서 읽음
+- 로컬 인메모리 캐시는 TTL 기반 무효화
+- Web Client 세션 토큰은 Raft KV에 저장 → 모든 QN에서 검증 가능
+
+### 2.2.4 CBO (Cost-Based Optimizer)
+
+**수집 통계 항목:**
+
+| 통계 | 설명 | 수집 시점 |
+|---|---|---|
+| `row_count` | 파티션·Tablet별 레코드 수 | 쓰기 완료 시 증분 |
+| `min_val` | 컬럼의 최솟값 | SSTable Flush 시 |
+| `max_val` | 컬럼의 최댓값 | SSTable Flush 시 |
+| `ndv` | 컬럼의 유니크 값 수 (HyperLogLog 추정) | 쿼리 실행 시 샘플링 |
+| `null_count` | NULL 값 수 | SSTable Flush 시 |
+| `histogram` | 컬럼 값 분포 버킷 (기본 100 버킷) | `ANALYZE TABLE` 또는 자동 |
+
+**CBO 활용 예:**
+
+| 최적화 | 활용 통계 |
+|---|---|
+| **파티션 Pruning** | `min_val`, `max_val` 으로 WHERE 조건 비교 → 불필요 파티션 스캔 제거 |
+| **Join 순서** | `row_count`, `ndv` 로 Build/Probe 측 결정 |
+| **집계 전략** | `ndv` 기반 Hash Agg vs Sort Agg 선택 |
+| **Index 활용** | BITMAP 인덱스의 `ndv` 가 낮을 때 우선 사용 |
+| **Predicate Pushdown** | `histogram` 으로 선택도 추정 → DN 레벨 필터 적용 여부 결정 |
+
+## 2.3 Compute Node (CN) 상세 구조
+
+### 2.3.1 CN 역할
+
+Compute Node는 Query Node의 Physical Planner가 생성한 실행 계획을 실제로 수행하는 Worker이다.
 
 | 컴포넌트 | 책임 |
 |---|---|
-| LSM-Tree Engine | MemTable + WAL + SSTable 관리 |
-| SIMD Executor | AVX2/AVX-512 기반 컬럼 스캔, 집계, 필터 실행 |
-| MV Manager | Materialized View 실시간 증분 갱신 |
-| Compaction Service | Leveled Compaction (백그라운드) |
-| Block Cache | LRU 기반 SSTable 블록 캐시 |
+| Execution Engine | Physical Plan Fragment 수신 및 Pipeline 실행 |
+| SIMD Executor | AVX2/AVX-512 기반 컬럼 스캔, 필터, 집계 |
+| Hash Join Engine | SIMD 기반 해시 빌드·프로브, Partitioned Hash Join |
+| Sort / Merge Engine | 정렬, Merge Sort, Top-K |
+| Vectorized Aggregation | GROUP BY, 집계 함수의 벡터화 실행 |
+| Data Shuffle | 분산 Join·Aggregation을 위한 CN 간 데이터 교환 |
+| Pipeline Scheduler | 비동기 파이프라인 실행, 백프레셔(backpressure) 관리 |
+| Session/Funnel/Path Executor | FUNNEL_COUNT, COHORT_ANALYSIS, PATH_ANALYSIS 전용 실행기 |
+
+### 2.3.2 Co-located 모드 vs. 분리 모드
+
+| 항목 | Co-located 모드 | 분리(Decoupled) 모드 |
+|---|---|---|
+| **배치** | CN + DN 동일 호스트 | CN과 DN 별도 호스트 |
+| **데이터 접근** | 로컬 파일 직접 읽기 | 네트워크를 통해 DN 또는 S3/HDFS 접근 |
+| **확장 방식** | CN/DN 함께 확장 | CN만 독립 확장 가능 |
+| **권장 환경** | 온프레미스 NVMe 서버 | 클라우드 (S3/HDFS 공유 스토리지) |
+| **성능** | 최고 (로컬 IO) | 약간 낮음 (네트워크 IO) |
+
+## 2.4 Data Node (DN) 상세 구조
+
+### 2.4.1 DN 역할
+
+| 컴포넌트 | 책임 |
+|---|---|
+| Partition Manager | Sort Key 기반 파티션 라우팅 |
+| LSM-Tree Engine | MemTable + WAL + SSTable 관리 (파티션 단위) |
+| Compaction Service | Partition 경계 내 Leveled Compaction (백그라운드) |
+| Columnar File Writer | 컬럼 단위 SSTable 파일 생성 |
+| Storage Abstraction Layer | Native / S3 / HDFS 백엔드 통합 인터페이스 |
+| Block Cache | LRU 기반 SSTable 블록 캐시 (컬럼 블록 단위) |
 | WAL | 크래시 복구를 위한 Write-Ahead Log |
+| Bloom Filter | SSTable별 Bloom Filter (point lookup 최적화) |
 
-### 2.3.2 SL 내부 데이터 흐름
+### 2.4.2 컬럼 지향 파티션 파일 구조
 
-```mermaid
-graph LR
-    WRITE["쓰기 요청\n(DSL → SL)"]
-    WAL2["WAL 기록\n(Append-only)"]
-    MEM["MemTable\n(Sorted in Memory)"]
-    IMM["Immutable MemTable\n(플러시 대기)"]
-    L0["SSTable L0\n(정렬된 파일)"]
-    L1["SSTable L1"]
-    LN["SSTable L2~Ln\n(Leveled)"]
-    CACHE2["Block Cache\n(LRU)"]
-    READ["읽기 요청"]
+WOW-DB는 컬럼 지향(Column-Oriented) DB이다. 각 컬럼은 파티션 단위로 독립된 파일로 저장된다.
 
-    WRITE --> WAL2
-    WRITE --> MEM
-    MEM -->|"임계값 초과"| IMM
-    IMM -->|"Flush"| L0
-    L0 -->|"Leveled Compaction"| L1
-    L1 --> LN
-    READ --> CACHE2
-    CACHE2 -->|"Cache Miss"| L0
-    CACHE2 -->|"Cache Miss"| L1
-    CACHE2 -->|"Cache Miss"| LN
+```
+Data Node 스토리지 레이아웃
+
+analytics/page_events/
+├── partition=p_2024_q1/
+│   ├── device_id/
+│   │   ├── seg_0001.col        ← 컬럼 데이터 (압축: LZ4/ZSTD)
+│   │   ├── seg_0001.bloom      ← Bloom Filter
+│   │   └── seg_0001.min_max    ← CBO용 Min/Max 통계
+│   ├── event_name/
+│   │   ├── seg_0001.col
+│   │   └── seg_0001.dict       ← Dictionary 인코딩 (저기수 컬럼)
+│   ├── event_time/
+│   │   └── seg_0001.col        ← Delta 인코딩 (단조 증가 시계열)
+│   ├── properties/
+│   │   └── seg_0001.col        ← JSON 원본 저장
+│   └── _meta/
+│       ├── schema.json         ← 파티션 스키마 메타데이터
+│       └── stats.json          ← CBO용 컬럼 통계
+├── partition=p_2024_q2/
+│   └── ...
+└── _cube_meta/
+    └── tablet_map.json         ← Tablet → DN 매핑
 ```
 
-### 2.3.3 Tablet 분산
+**컬럼 인코딩 전략:**
 
-- Cube 생성 시 `DISTRIBUTED BY HASH(<key>) BUCKETS <n>` 으로 Tablet 수 결정
-- 각 Tablet은 기본 3개 복제본 (Leader + 2 Replica) 유지
-- DSL Query Coordinator가 Tablet → SL Node 매핑 테이블 관리
+| 컬럼 특성 | 인코딩 | 예시 |
+|---|---|---|
+| 저기수(NDV < 1000) | Dictionary Encoding | event_name, country_code |
+| 단조 증가 | Delta Encoding | event_time, sequence_id |
+| 고기수 문자열 | Plain + LZ4 | device_id, page_url |
+| 정수 | BitPacking | session_event_count |
+| JSON | Plain + ZSTD | properties |
 
-## 2.4 상호작용 다이어그램 (Interaction Diagrams)
+### 2.4.3 LSM-Tree 파티션 내 Merge
 
-### 2.4.1 SELECT 쿼리 실행 흐름
+```
+파티션 내 LSM-Tree 동작:
+
+Write Path:
+  새 이벤트 도착
+    → WAL 기록
+    → MemTable에 Sort Key(ORDER BY) 기준 정렬 삽입
+    → MemTable 임계값 초과 → Immutable MemTable 전환
+    → Flush: 파티션 디렉토리에 컬럼별 SSTable 파일 생성 (Level 0)
+    → 백그라운드 Compaction: Level 0 → Level N (파티션 경계 내)
+
+파티션 경계 규칙:
+  - LSM Merge는 파티션 내부에서만 발생 (파티션 간 Merge 없음)
+  - 파티션 Pruning: CBO가 min_val/max_val 통계로 불필요 파티션 스킵
+```
+
+### 2.4.4 스토리지 백엔드
+
+#### Native LSM (로컬 NVMe)
+
+- 기본 백엔드. DN과 동일 호스트 로컬 디스크
+- I/O: Rust `tokio::fs` + `io_uring` (Linux, 비동기 DIO)
+- 권장: NVMe SSD, XFS 파일시스템, noatime 마운트
+
+#### S3 Backend
+
+- AWS S3 및 S3 호환 스토리지 (MinIO, Ceph RGW 등) 지원
+- SSTable 파일 단위 Object PUT/GET/DELETE
+- 로컬 LRU 캐시 레이어: 반복 접근 블록 캐시 (크기 설정 가능)
+
+```toml
+# data_node.toml
+[storage]
+backend          = "s3"
+bucket           = "wowdb-data"
+prefix           = "analytics/"
+region           = "ap-northeast-2"
+local_cache_dir  = "/tmp/wowdb_cache"
+local_cache_size = "128GB"
+# 인증: 환경변수 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY 또는 IAM Role
+```
+
+#### HDFS Backend (Kerberos 인증 필수)
+
+- Hadoop 3.x HDFS 지원
+- **Kerberos 인증은 필수** (비인증 HDFS 접속 불허)
+- keytab 자동 갱신 (`kerberos_renew_interval_sec` 설정)
+
+```toml
+# data_node.toml
+[storage]
+backend                     = "hdfs"
+namenode                    = "hdfs://namenode:8020"
+base_path                   = "/wowdb/analytics"
+kerberos_keytab             = "/etc/security/keytabs/wowdb.keytab"
+kerberos_principal          = "wowdb/dn-host@REALM.COM"
+kerberos_renew_interval_sec = 3600
+```
+
+## 2.5 상호작용 다이어그램 (Interaction Diagrams)
+
+### 2.5.1 SELECT 쿼리 실행 흐름
 
 ```mermaid
 sequenceDiagram
     participant CL as MySQL Client
-    participant DSL as DSL (Protocol Handler)
-    participant QP as Query Planner
-    participant QC as Query Coordinator
-    participant SL1 as SL Node 1
-    participant SL2 as SL Node 2
+    participant QN as Query Node
+    participant CBO as CBO / Statistics
+    participant CN1 as Compute Node 1
+    participant CN2 as Compute Node 2
+    participant DN1 as Data Node 1
+    participant DN2 as Data Node 2
 
-    CL->>DSL: SQL 쿼리 전송 (MySQL Protocol)
-    DSL->>QP: SQL 파싱 → AST 생성
-    QP->>QP: 논리 계획 수립 (통계 참조)
-    QP->>QC: 물리 실행 계획 전달
-    QC->>QC: Tablet 라우팅 맵 조회
-    par 병렬 실행
-        QC->>SL1: 서브플랜 실행 (Tablet 1~K)
-        QC->>SL2: 서브플랜 실행 (Tablet K+1~2K)
+    CL->>QN: SQL 쿼리 전송 (MySQL Protocol)
+    QN->>QN: SQL 파싱 → AST
+    QN->>CBO: 컬럼 통계 조회 (min/max/NDV/histogram)
+    CBO-->>QN: 통계 반환
+    QN->>QN: CBO 최적화 → Physical Plan
+    QN->>QN: 파티션 Pruning (통계 기반)
+    par 병렬 Fragment 배포
+        QN->>CN1: Fragment Plan (Tablet 1~K)
+        QN->>CN2: Fragment Plan (Tablet K+1~2K)
     end
-    SL1-->>QC: 부분 결과 (컬럼 청크)
-    SL2-->>QC: 부분 결과 (컬럼 청크)
-    QC->>QC: 결과 병합 (Shuffle / Merge Sort)
-    QC-->>DSL: 최종 결과셋
-    DSL-->>CL: MySQL Result Set 반환
+    par 병렬 DN 읽기
+        CN1->>DN1: 컬럼 청크 요청 (필요 컬럼만)
+        CN2->>DN2: 컬럼 청크 요청
+    end
+    DN1-->>CN1: 컬럼 데이터 (벡터)
+    DN2-->>CN2: 컬럼 데이터
+    CN1->>CN1: SIMD 필터·집계 실행
+    CN2->>CN2: SIMD 필터·집계 실행
+    CN1-->>QN: 부분 결과
+    CN2-->>QN: 부분 결과
+    QN->>QN: 최종 병합 + 통계 갱신 (Profiler 기록)
+    QN-->>CL: MySQL Result Set 반환
 ```
 
-### 2.4.2 Kafka Streaming Ingestion 흐름
+### 2.5.2 Kafka Streaming Ingestion 흐름
 
 ```mermaid
 sequenceDiagram
     participant KF as Kafka Broker
-    participant IG as Ingestion Gateway (DSL)
+    participant QN as Query Node (Ingestion GW)
     participant TX as Transaction Manager
-    participant SL1 as SL Node 1
-    participant SL2 as SL Node 2
+    participant CN as Compute Node
+    participant DN1 as Data Node 1
+    participant DN2 as Data Node 2
 
-    IG->>KF: Kafka Consumer 등록 (Offset 추적)
-    loop 배치 수집 (max_batch_rows 또는 max_batch_interval 마다)
-        KF-->>IG: 이벤트 배치 (JSON/Avro)
-        IG->>IG: 스키마 검증 + 타입 변환
-        IG->>TX: 트랜잭션 시작 (TxID 발급)
-        par Tablet 병렬 쓰기
-            TX->>SL1: Prepare (TxID, 데이터 청크)
-            TX->>SL2: Prepare (TxID, 데이터 청크)
+    QN->>KF: Kafka Consumer 등록 (Offset 추적)
+    loop 배치 수집 (max_batch_rows / max_batch_interval)
+        KF-->>QN: 이벤트 배치 (JSON/Avro)
+        QN->>QN: 스키마 검증 + 타입 변환
+        QN->>TX: 트랜잭션 시작 (TxID)
+        QN->>CN: 파티션 라우팅 + Row→Columnar 변환
+        CN->>CN: SIMD 기반 컬럼 변환
+        par 파티션별 병렬 쓰기
+            CN->>DN1: WAL + MemTable 쓰기 (TxID)
+            CN->>DN2: WAL + MemTable 쓰기 (TxID)
         end
-        SL1-->>TX: Prepare ACK
-        SL2-->>TX: Prepare ACK
-        TX->>SL1: Commit (TxID)
-        TX->>SL2: Commit (TxID)
-        IG->>KF: Offset Commit (처리 완료 확인)
+        DN1-->>TX: Prepare ACK
+        DN2-->>TX: Prepare ACK
+        TX->>DN1: Commit
+        TX->>DN2: Commit
+        QN->>KF: Offset Commit
+        QN->>QN: CBO 통계 증분 갱신 (row_count, min/max)
     end
-
-    note over IG,TX: 실패 시: TX Rollback → Kafka Offset 유지 → 재처리
+    note over QN,TX: 실패 시: TX Rollback → Kafka Offset 유지 → 재처리
 ```
 
-### 2.4.3 Spark Ingestion 흐름
+### 2.5.3 Spark Ingestion 흐름
 
 ```mermaid
 sequenceDiagram
     participant SP as Spark Driver
-    participant SC as Spark Executor (N개)
-    participant IG as Ingestion Gateway (DSL)
+    participant SE as Spark Executor (N개)
+    participant QN as Query Node
     participant TX as Transaction Manager
-    participant SL as SL Nodes
+    participant DN as Data Nodes
 
-    SP->>IG: 연결 수립 + 트랜잭션 ID 요청
-    IG->>TX: Global TxID 발급
-    TX-->>IG: TxID 반환
-    IG-->>SP: TxID 전달
-
+    SP->>QN: 연결 + TxID 요청
+    QN->>TX: Global TxID 발급
+    TX-->>QN: TxID
+    QN-->>SP: TxID + DN Endpoint 목록
     par Executor 병렬 로드
-        SC->>SL: HTTP Stream Load (TxID 포함, 파티션별)
-        SC->>SL: HTTP Stream Load (TxID 포함, 파티션별)
+        SE->>DN: HTTP Stream Load (TxID + 컬럼 데이터, 포트 8040)
+        SE->>DN: HTTP Stream Load (TxID + 컬럼 데이터)
     end
-
-    SL-->>SC: 각 청크 적재 완료 응답
-    SC-->>SP: 모든 Executor 완료 신호
-
-    SP->>IG: Commit 요청 (TxID)
-    IG->>TX: 2PC Commit Phase
-    TX->>SL: Commit (모든 노드)
-    SL-->>TX: Commit ACK
-    TX-->>IG: 커밋 완료
-    IG-->>SP: 성공 응답
+    DN-->>SE: 청크 완료
+    SE-->>SP: 모든 Executor 완료
+    SP->>QN: Commit (TxID)
+    QN->>TX: 2PC Commit Phase
+    TX->>DN: Commit
+    DN-->>TX: ACK
+    TX-->>QN: 완료
+    QN-->>SP: 성공
+    QN->>QN: CBO 통계 증분 갱신
 ```
 
-### 2.4.4 Cube 생성 및 Session MV 대화 흐름 (Web UI)
+### 2.5.4 Cube 생성 및 Session MV 대화 흐름 (Web UI)
 
 ```mermaid
 sequenceDiagram
     actor User
     participant WEB as Web SQL Client
-    participant DSL as DSL (Cube Manager)
+    participant QN as Query Node (Cube Manager)
     participant SM as Session Manager
-    participant SL as SL Nodes
+    participant DN as Data Nodes
 
-    User->>WEB: CREATE CUBE 실행 (SQL 에디터)
-    WEB->>DSL: DDL 전달
-    DSL->>SL: Tablet 할당 + 스키마 등록
-    SL-->>DSL: 완료
-    DSL-->>WEB: Cube 생성 성공
+    User->>WEB: CREATE CUBE 실행
+    WEB->>QN: DDL 전달
+    QN->>QN: 스키마 파싱 + Raft 메타데이터 기록
+    QN->>DN: Tablet 할당 (파티션 × Bucket 수)
+    DN-->>QN: 완료
+    QN-->>WEB: Cube 생성 성공
 
-    WEB->>User: 대화 팝업: "이 Cube에 대한 Session Materialized View를 생성하시겠습니까?"
-
-    User->>WEB: "예" 선택
-    WEB->>User: "User Key를 선택하세요" (컬럼 드롭다운)
-    User->>WEB: user_id 선택
-    WEB->>User: "Session Timeout 설정: [5분] [30분] [1시간] [직접 입력]"
+    WEB->>User: "Session Materialized View를 생성하시겠습니까?"
+    User->>WEB: "예"
+    WEB->>User: "User Key 컬럼 선택" (드롭다운)
+    User->>WEB: device_id 선택
+    WEB->>User: "Session Timeout: [5분] [30분] [1시간] [직접 입력]"
     User->>WEB: 30분 선택
-    WEB->>User: "Session MV 이름을 입력하세요" (자동 제안: <cube>_sessions)
-    User->>WEB: 이름 확정
+    WEB->>User: "MV 이름 입력" (자동 제안: page_events_sessions)
+    User->>WEB: 확정 → DDL 미리보기 표시
 
     WEB->>SM: CREATE SESSION MATERIALIZED VIEW 요청
-    SM->>SL: MV 스키마 등록 + 초기 구체화 시작
-    SL-->>SM: 구체화 완료
-    SM-->>WEB: 생성 성공 + MV 정보
-    WEB->>User: 완료 알림 + MV 미리보기 표시
+    SM->>QN: SMV 스키마 등록 (Raft 기록)
+    SM->>DN: SMV Tablet 할당 + 초기 구체화 시작
+    DN-->>SM: 구체화 완료
+    SM-->>WEB: 성공 + MV 컬럼 목록 + 샘플 데이터
+    WEB->>User: 완료 알림 + 미리보기
 ```
 
-### 2.4.5 Funnel 분석 쿼리 실행 흐름
+### 2.5.5 Funnel 분석 쿼리 실행 흐름
 
 ```mermaid
 sequenceDiagram
     participant CL as Client
-    participant QP as Query Planner
-    participant QC as Query Coordinator
-    participant SL as SL Nodes
+    participant QN as Query Node
+    participant CBO as CBO
+    participant CN as Compute Nodes
+    participant DN as Data Nodes
 
-    CL->>QP: FUNNEL_ANALYSIS() 쿼리
-    QP->>QP: Custom Syntax 파싱 → Funnel 물리 계획
-    note over QP: Step 조건을 비트마스크로 변환\n사용자별 시계열 정렬 플랜 생성
-    QP->>QC: 분산 Funnel 실행 계획
-
-    QC->>SL: 사용자별 이벤트 시퀀스 조회 (User Key로 샤딩)
-    note over SL: SIMD로 이벤트 타입 컬럼 스캔\n각 Step 조건 벡터 비교
-    SL-->>QC: 사용자별 달성 Step 비트마스크
-
-    QC->>QC: 전체 Step 카운트 집계
-    QC-->>CL: Funnel 단계별 사용자 수 반환
+    CL->>QN: FUNNEL_COUNT(...) 쿼리
+    QN->>QN: Custom Syntax 파싱 → Step 조건 비트마스크
+    QN->>CBO: User Key 컬럼 통계 조회
+    CBO-->>QN: NDV, 파티션 통계
+    QN->>QN: Funnel Physical Plan (User Key 기준 데이터 분배)
+    QN->>CN: Funnel Fragment (Step 조건 + Time Window)
+    CN->>DN: User Key 기준 이벤트 시퀀스 조회
+    note over DN: 파티션 Pruning 적용\n필요 컬럼만 읽기
+    DN-->>CN: 컬럼 청크
+    CN->>CN: SIMD 이벤트 타입 스캔
+    CN->>CN: 사용자별 Step 비트마스크 계산 + Time Window 필터
+    CN-->>QN: 사용자별 달성 Step 집계
+    QN->>QN: 전체 Step Count 병합
+    QN-->>CL: Funnel 단계별 사용자 수
 ```
 
-## 2.5 분산 클러스터 구성
+### 2.5.6 Query Profiler 기록 흐름
 
-### 2.5.1 최소 운영 구성
+```mermaid
+sequenceDiagram
+    participant CL as Client
+    participant QN as Query Node
+    participant PROF as Query Profiler (Circular Buffer)
+    participant CN as Compute Node
+
+    CL->>QN: SQL 쿼리
+    QN->>PROF: 프로파일 시작 (query_id, SQL text, 시작 시각)
+    QN->>CN: 실행 계획 Fragment 배포
+    loop 각 실행 단계 완료
+        CN-->>QN: 단계 완료 (처리 행 수, 소요 시간)
+        QN->>PROF: 단계별 메트릭 기록
+    end
+    QN-->>CL: 결과 반환
+    QN->>PROF: 쿼리 완료 기록 (총 소요 시간, rows_scanned, 노드별 분석)
+    PROF->>PROF: Circular Buffer 갱신\n(1000건 초과 시 oldest 항목 제거)
+```
+
+## 2.6 분산 클러스터 구성
+
+### 2.6.1 최소 운영 구성
 
 ```
-DSL: 1 Leader + 2 Follower (총 3 노드)
-SL:  최소 3 노드 (Tablet 복제본 3개 보장)
+Query Node  : 3 노드 (홀수 필수, Raft Leader 1 + Follower 2)
+Compute Node: 2 노드 이상 (DN co-located 또는 별도)
+Data Node   : 3 노드 이상 (Tablet 복제본 3개 보장)
 ```
 
-### 2.5.2 대용량 운영 구성 (200억+ 레코드 기준)
+### 2.6.2 대용량 운영 구성 (200억+ 레코드 기준)
 
 ```
-DSL: 3 Leader-eligible + 2 Read Follower
-SL:  N × SL 노드 (데이터 볼륨에 따라 수평 확장)
-     - 추천: 10~20 노드, 각 노드 NVMe SSD
+Query Node  : 3 또는 5 노드
+Compute Node: 8~16 노드 (분리 모드, S3/HDFS 공유 스토리지)
+              또는 co-located with DN
+Data Node   : 10~30 노드 (NVMe SSD 또는 S3/HDFS)
 ```
 
-### 2.5.3 데이터 분산 전략
+### 2.6.3 포트 구성
 
-- **Hash Partitioning**: `DISTRIBUTED BY HASH(user_id) BUCKETS 32` (기본값)
-- **Range Partitioning**: 시계열 데이터는 `PARTITION BY RANGE(event_time)` 권장
-- **복합 파티셔닝**: Range + Hash 조합 지원 (예: 날짜별 파티션 + user_id 해시)
+| 노드 | 포트 | 용도 |
+|---|---|---|
+| Query Node | 9030 | MySQL Wire Protocol |
+| Query Node | 8080 | Web SQL Client HTTP/WebSocket |
+| Query Node | 9010 | 내부 Raft 통신 (QN 간) |
+| Query Node | 9011 | QN ↔ CN/DN 내부 gRPC |
+| Compute Node | 9040 | Fragment Plan 수신 (gRPC) |
+| Data Node | 9060 | 내부 스토리지 API (gRPC) |
+| Data Node | 8040 | HTTP Stream Load (Spark 커넥터) |
+| 모든 노드 | 9090 | Prometheus `/metrics` |
 
 ---
 
@@ -420,19 +611,16 @@ SL:  N × SL 노드 (데이터 볼륨에 따라 수평 확장)
 
 ### 3.1.1 Cube 생성 (FR-CUBE-001)
 
-시스템은 `CREATE CUBE` DDL을 지원해야 한다.
-
 **지원 옵션:**
 
 | 옵션 | 필수 여부 | 설명 |
 |---|---|---|
 | 컬럼 정의 | 필수 | 이름, 타입, NOT NULL, COMMENT |
-| EVENT_TIME | 권장 | 이벤트 발생 시각 지정 컬럼 (파티셔닝 기준) |
 | ENGINE | 필수 | `WOW_LSM` 고정 |
-| PARTITION BY | 선택 | RANGE(datetime) 또는 RANGE(datetime) + HASH |
+| PARTITION BY | 선택 | RANGE(datetime) 또는 RANGE + HASH |
 | DISTRIBUTED BY | 필수 | HASH 기반 Tablet 분산 키 |
-| ORDER BY | 권장 | SSTable 내 정렬 순서 (쿼리 성능에 직접 영향) |
-| PROPERTIES | 선택 | 복제본 수, 압축 알고리즘 등 |
+| ORDER BY | 권장 | LSM Sort Key. 파티션 내 SSTable 정렬 기준 |
+| PROPERTIES | 선택 | 복제본 수, 압축 알고리즘, 스토리지 백엔드 등 |
 
 **지원 데이터 타입:**
 
@@ -448,66 +636,60 @@ SL:  N × SL 노드 (데이터 볼륨에 따라 수평 확장)
 
 ### 3.1.2 Cube 수정 (FR-CUBE-002)
 
-- `ALTER CUBE <name> ADD COLUMN <col_def>` 지원
-- `ALTER CUBE <name> MODIFY COLUMN` 타입 확장만 허용 (축소 불가)
-- 컬럼 삭제 시 연관 Session MV 자동 무효화 경고 출력
+- `ALTER CUBE ADD COLUMN` 지원 (Online DDL, 서비스 무중단)
+- `ALTER CUBE MODIFY COLUMN` 타입 확장만 허용 (축소 불가)
+- `ALTER CUBE ADD PARTITION` 파티션 동적 추가
+- 컬럼 삭제 시 연관 SMV 자동 무효화 경고
 
 ### 3.1.3 Cube 삭제 (FR-CUBE-003)
 
 - `DROP CUBE <name>` 지원
-- 연관 Session MV 존재 시 `CASCADE` 옵션 필수 요구
+- 연관 SMV 존재 시 `CASCADE` 필수
 
 ## 3.2 Session Materialized View (SMV)
 
 ### 3.2.1 대화형 SMV 생성 (FR-SMV-001)
 
-Web SQL Client에서 Cube 생성 완료 후 다음 대화형 흐름을 제공해야 한다.
-
-**단계별 대화 흐름:**
-
 ```
 Step 1: "이 Cube에 대한 Session Materialized View를 생성하시겠습니까?"
         [예] [아니요]
 
-Step 2 (예 선택 시): "세션을 구분할 User Key 컬럼을 선택하세요"
-        → Cube의 컬럼 목록 드롭다운 제공
-        → 복합 키 지원 (예: device_id + user_id 순서 지정)
+Step 2: "세션을 구분할 User Key 컬럼을 선택하세요"
+        → 컬럼 목록 드롭다운 (COALESCE 식 직접 입력도 허용)
 
 Step 3: "Session Timeout을 설정하세요"
         [5분] [30분] [1시간] [직접 입력 (분 단위)]
 
 Step 4: "Materialized View 이름을 입력하세요"
-        → 기본값: {cube_name}_sessions 자동 제안
+        → 기본값: {cube_name}_sessions
 
-Step 5: 요약 화면 → [생성] [취소]
+Step 5: 요약 화면 (생성될 DDL SQL 미리보기) → [생성] [취소]
 ```
 
 ### 3.2.2 SMV 자동 생성 컬럼 (FR-SMV-002)
 
-SMV 생성 시 원본 Cube 컬럼에 더해 다음 컬럼이 자동 추가된다.
-
 | 컬럼명 | 타입 | 설명 |
 |---|---|---|
-| `session_id` | VARCHAR(64) | 세션 고유 ID (UUID 기반 자동 생성) |
+| `session_id` | VARCHAR(64) | 세션 고유 ID (UUID 기반) |
 | `session_start_time` | DATETIME | 세션 첫 이벤트 시각 |
 | `session_end_time` | DATETIME | 세션 마지막 이벤트 시각 |
 | `session_duration_sec` | BIGINT | 세션 지속 시간 (초) |
 | `session_event_count` | INT | 세션 내 이벤트 수 |
-| `session_seq` | INT | 세션 내 이벤트 순서 번호 (1부터 시작) |
+| `session_seq` | INT | 세션 내 이벤트 순서 (1부터) |
 | `is_new_user` | BOOLEAN | 해당 Cube 기준 첫 세션 여부 |
 
 ### 3.2.3 SMV 갱신 전략 (FR-SMV-003)
 
-| 갱신 모드 | 설명 | 권장 사용 사례 |
+| 갱신 모드 | 설명 | 권장 사용 |
 |---|---|---|
-| `REFRESH REALTIME` | 새 이벤트 수집 시 증분 갱신 | Kafka 실시간 수집 |
-| `REFRESH ON DEMAND` | 수동 `REFRESH MATERIALIZED VIEW` 명령 | 배치 수집 |
+| `REFRESH REALTIME` | 새 이벤트 수집 시 증분 갱신 | Kafka |
+| `REFRESH ON DEMAND` | 수동 `REFRESH MATERIALIZED VIEW` | 배치 |
 | `REFRESH EVERY <interval>` | 지정 주기 자동 갱신 | Spark 마이크로배치 |
 
-### 3.2.4 SMV 세션 경계 판단 알고리즘 (FR-SMV-004)
+### 3.2.4 세션 경계 판단 알고리즘 (FR-SMV-004)
 
 ```
-동일 User Key의 연속된 두 이벤트에 대해:
+동일 User Key의 연속 이벤트에 대해:
   if (event[i+1].event_time - event[i].event_time) > SESSION_TIMEOUT
     → 새 세션 시작 (session_id 신규 발급)
   else
@@ -518,111 +700,66 @@ SMV 생성 시 원본 Cube 컬럼에 더해 다음 컬럼이 자동 추가된다
 
 ### 3.3.1 MySQL 호환 SQL (FR-QE-001)
 
-다음 MySQL 8.0 SQL 구문을 지원해야 한다.
-
 | 구문 | 지원 범위 |
 |---|---|
 | SELECT | FROM, WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET |
 | JOIN | INNER, LEFT OUTER, CROSS JOIN |
 | 집계 함수 | COUNT, SUM, AVG, MIN, MAX, COUNT(DISTINCT) |
 | 윈도우 함수 | ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, SUM OVER, AVG OVER |
-| 서브쿼리 | 스칼라, IN/EXISTS, FROM 절 서브쿼리 |
-| CTE | WITH 절 (재귀 CTE 지원) |
+| 서브쿼리 | 스칼라, IN/EXISTS, FROM 절 |
+| CTE | WITH 절 (재귀 CTE 포함) |
 | JSON 함수 | JSON_EXTRACT, JSON_VALUE, JSON_KEYS, JSON_CONTAINS |
 | 날짜 함수 | DATE_FORMAT, DATE_ADD, DATE_DIFF, TIMESTAMPDIFF, NOW() |
 | 문자열 함수 | CONCAT, SUBSTRING, LIKE, REGEXP |
 
-### 3.3.2 Funnel Analysis (FR-QE-002)
+### 3.3.2 CBO 통계 수집 (FR-QE-002)
 
-**구문:**
+- 쿼리 실행 시 샘플링 방식으로 NDV 추정치 갱신
+- SSTable Flush 시 min/max/null_count 자동 수집
+- `ANALYZE TABLE` 명령으로 전체 통계 재계산 (백그라운드)
+- `SHOW STATS` 명령으로 현재 통계 조회
+- 통계는 Raft 메타스토어에 저장 (모든 QN 동기화)
+
+### 3.3.3 Funnel Analysis (FR-QE-003)
 
 ```sql
 FUNNEL_COUNT(
-    <조건1> STEP <n>,
-    <조건2> STEP <n>,
-    ...
+    <조건1> STEP <n>, ...,
     TIME_WINDOW => INTERVAL <n> <UNIT>,
     STRICT => TRUE | FALSE
 )
-```
 
-**동작 규칙:**
-
-- `STRICT = TRUE` (기본값): Step 1 → 2 → 3 순서 엄격히 준수
-- `STRICT = FALSE`: 중간 단계 이탈 허용 후 복귀 인정
-- `TIME_WINDOW`: Step 1 이후 마지막 Step까지의 최대 허용 시간
-- 반환값: 각 Step에 도달한 사용자 수 배열
-
-**FUNNEL_ANALYSIS 테이블 함수:**
-
-```sql
 SELECT * FROM FUNNEL_ANALYSIS(
-    SOURCE     => '<table>',
-    USER_KEY   => '<col>',
-    TIME_COL   => '<col>',
-    STEPS      => ARRAY['<조건식1>', '<조건식2>', ...],
+    SOURCE => '<table>', USER_KEY => '<col>',
+    STEPS  => ARRAY['<조건식1>', ...],
     TIME_WINDOW => INTERVAL <n> <UNIT>
 )
 ```
 
-### 3.3.3 Cohort Analysis (FR-QE-003)
-
-**구문:**
+### 3.3.4 Cohort Analysis (FR-QE-004)
 
 ```sql
 SELECT * FROM COHORT_ANALYSIS(
-    SOURCE       => '<table>',
-    ENTRY_EVENT  => '<event_name>',
-    RETURN_EVENT => '<event_name>',
-    COHORT_DATE  => <날짜 표현식>,
-    METRIC       => 'RETENTION_RATE' | 'USER_COUNT' | 'CONVERSION_RATE',
-    TIME_UNIT    => 'DAY' | 'WEEK' | 'MONTH',
-    MAX_PERIODS  => <n>,
-    USER_KEY     => '<col>'
+    SOURCE => '<table>', ENTRY_EVENT => '<event>',
+    RETURN_EVENT => '<event>', COHORT_DATE => <날짜 표현식>,
+    METRIC => 'RETENTION_RATE' | 'USER_COUNT' | 'CONVERSION_RATE',
+    TIME_UNIT => 'DAY' | 'WEEK' | 'MONTH',
+    MAX_PERIODS => <n>, USER_KEY => '<col>'
 )
 ```
 
-**반환 컬럼:**
-
-| 컬럼 | 설명 |
-|---|---|
-| `cohort_date` | 코호트 기준일 |
-| `period` | 기준일로부터 n번째 시간 단위 |
-| `cohort_size` | 코호트 진입 사용자 수 |
-| `returned_users` | 해당 period에 재방문/전환한 사용자 수 |
-| `metric_value` | METRIC 종류에 따른 값 (율 또는 수) |
-
-### 3.3.4 Path Analysis (FR-QE-004)
-
-**구문:**
+### 3.3.5 Path Analysis (FR-QE-005)
 
 ```sql
 SELECT * FROM PATH_ANALYSIS(
-    SOURCE       => '<table>',
-    PATH_EVENT   => '<event_col>',
-    USER_KEY     => '<col>',
-    SESSION_KEY  => '<session_col>',
-    MAX_DEPTH    => <n>,
-    MIN_SUPPORT  => <0.0~1.0>,
-    ENTRY_FILTER => '<조건식>',
-    EXIT_FILTER  => '<조건식>'
+    SOURCE => '<table>', PATH_EVENT => '<col>',
+    USER_KEY => '<col>', SESSION_KEY => '<col>',
+    MAX_DEPTH => <n>, MIN_SUPPORT => <0.0~1.0>,
+    ENTRY_FILTER => '<조건식>', EXIT_FILTER => '<조건식>'
 )
 ```
 
-**반환 컬럼:**
-
-| 컬럼 | 설명 |
-|---|---|
-| `path` | 이벤트 시퀀스 (예: `'landing → product → cart → purchase'`) |
-| `path_depth` | 경로 깊이 |
-| `path_count` | 해당 경로 발생 횟수 |
-| `unique_users` | 해당 경로를 밟은 유니크 사용자 수 |
-| `support_rate` | 전체 대비 발생 빈도 |
-| `avg_duration_sec` | 경로 완주 평균 시간 |
-
-### 3.3.5 Custom Query 문법 (FR-QE-005)
-
-MySQL과 충돌하지 않는 WOW-DB 전용 확장 구문:
+### 3.3.6 Custom Query 문법 (FR-QE-006)
 
 | 구문 | 설명 |
 |---|---|
@@ -630,153 +767,147 @@ MySQL과 충돌하지 않는 WOW-DB 전용 확장 구문:
 | `CREATE SESSION MATERIALIZED VIEW` | 세션화 MV 생성 |
 | `REFRESH MATERIALIZED VIEW` | MV 수동 갱신 |
 | `CREATE ROUTINE LOAD` | Kafka 지속 수집 작업 등록 |
-| `SHOW CUBES` | Cube 목록 조회 |
-| `SHOW SESSIONS` | SMV 목록 조회 |
+| `SHOW CUBES` / `SHOW SESSIONS` | Cube / SMV 목록 조회 |
 | `EXPLAIN PHYSICAL` | 물리 실행 계획 출력 |
 | `SHOW TABLET STATUS` | Tablet 분산 상태 조회 |
+| `ANALYZE TABLE` / `SHOW STATS` | CBO 통계 재계산 / 조회 |
+| `SHOW QUERY PROFILE` | Query Profiler 이력 조회 |
+| `SHOW CLUSTER STATUS` | 전체 노드 상태 조회 |
 
 ## 3.4 데이터 수집 (Ingestion)
 
 ### 3.4.1 MySQL INSERT (FR-ING-001)
 
-- 표준 MySQL `INSERT INTO ... VALUES` 지원
-- `INSERT INTO ... SELECT` 지원
-- 단건 및 다건(배치) INSERT 모두 지원
-- 성능 목표: 단일 DSL 노드 기준 초당 100,000건 이상
+- 표준 `INSERT INTO ... VALUES` 및 `INSERT INTO ... SELECT` 지원
+- 성능 목표: QN 단일 노드 기준 초당 100,000건 이상
 
 ### 3.4.2 Kafka Streaming Ingestion (FR-ING-002)
 
-`CREATE ROUTINE LOAD` 명령으로 지속적인 Kafka 소비 작업을 등록한다.
-
-**지원 기능:**
-
 | 기능 | 설명 |
 |---|---|
-| 포맷 지원 | JSON, Avro, CSV |
-| Offset 관리 | OFFSET_BEGINNING, OFFSET_END, 특정 Offset 지정 |
-| 병렬 소비 | 파티션별 병렬 Consumer 설정 |
-| 스키마 검증 | 타입 불일치 레코드 격리 (dead letter queue) |
-| SASL/SSL | Kafka 보안 설정 지원 |
-| Exactly-once | Kafka 트랜잭션 API 연동으로 중복 방지 |
-| 모니터링 | `SHOW ROUTINE LOAD` 로 상태·진행률 확인 |
+| 포맷 | JSON, Avro, CSV |
+| Offset 관리 | OFFSET_BEGINNING, OFFSET_END, 특정 Offset |
+| 병렬 소비 | 파티션별 병렬 Consumer |
+| 스키마 검증 | 타입 불일치 레코드 → Dead Letter Queue |
+| 보안 | SASL/SSL 지원 |
+| Exactly-once | Kafka 트랜잭션 API + WOW-DB 2PC |
+| 모니터링 | `SHOW ROUTINE LOAD` 상태·Lag 조회 |
 
 ### 3.4.3 Spark Batch/Micro-batch Ingestion (FR-ING-003)
 
-WOW-DB는 Spark DataSource API를 구현한 공식 커넥터를 제공한다.
-
-**지원 Spark 버전:**
-
-| 버전 | API | 특이사항 |
+| Spark 버전 | API | 특이사항 |
 |---|---|---|
-| Spark 3.1 | DataSource V1 | HTTP Stream Load 방식 |
-| Spark 3.4 | DataSource V2 | 분산 트랜잭션, 구조화 스트리밍 지원 |
-
-**Spark 커넥터 옵션:**
-
-| 옵션 키 | 설명 | 기본값 |
-|---|---|---|
-| `wowdb.endpoints` | DSL 노드 주소 (복수 설정 시 로드밸런싱) | - |
-| `wowdb.user` / `wowdb.password` | 인증 정보 | - |
-| `wowdb.database` | 대상 데이터베이스 | - |
-| `wowdb.table` | 대상 Cube 이름 | - |
-| `wowdb.batch.size` | 한 번에 전송할 행 수 | 100,000 |
-| `wowdb.transaction.enable` | 2PC 트랜잭션 활성화 | false |
-| `wowdb.compression` | 전송 압축 (lz4, zstd, none) | lz4 |
-| `wowdb.parallelism` | Spark Executor당 병렬 쓰기 스레드 수 | 4 |
+| 3.1 | DataSource V1 | HTTP Stream Load (DN 포트 8040) |
+| 3.4 | DataSource V2 | 분산 트랜잭션, Structured Streaming |
 
 ### 3.4.4 트랜잭션 지원 (FR-ING-004)
 
-- Kafka, Spark 수집 모두 2PC(Two-Phase Commit) 트랜잭션 지원
-- 트랜잭션 타임아웃 설정 가능 (기본: 5분)
-- 실패 시 자동 롤백 + 재시도 지원
-- 트랜잭션 로그는 DSL의 WAL에 보관 (복구 가능)
+- Kafka, Spark 모두 2PC 트랜잭션 지원
+- 타임아웃 설정 가능 (기본 5분), 실패 시 자동 롤백
+- 트랜잭션 로그: QN WAL에 보관
 
 ## 3.5 스토리지 엔진
 
-### 3.5.1 LSM-Tree 구현 요구사항 (FR-ST-001)
-
-Rust로 자체 구현하며 다음 구성요소를 포함한다.
+### 3.5.1 LSM-Tree 구현 (FR-ST-001)
 
 | 구성요소 | 요구사항 |
 |---|---|
-| MemTable | Skip List 기반, 동시성 접근 지원 (Arc + RwLock) |
+| MemTable | Skip List 기반, Arc + RwLock 동시성 |
 | WAL | Append-only, 세그먼트 방식, CRC32 체크섬 |
-| SSTable | 블록 단위 컬럼 저장, Bloom Filter 내장, 압축(LZ4/ZSTD) |
-| Block Cache | LRU 기반, 설정 가능한 최대 크기 |
-| Compaction | Leveled Compaction (기본), Tiered 선택 가능 |
-| MVCC | 버전 태그 기반 스냅샷 격리 (읽기 일관성) |
+| SSTable | 컬럼별 독립 파일, Bloom Filter, LZ4/ZSTD 압축 |
+| Block Cache | LRU 기반, 컬럼 블록 단위 |
+| Compaction | Leveled Compaction, **파티션 내부에서만** |
+| MVCC | 버전 태그 기반 스냅샷 격리 |
 
-### 3.5.2 SIMD 가속 요구사항 (FR-ST-002)
+### 3.5.2 SIMD 가속 (FR-ST-002)
 
-Rust의 `std::arch` 또는 `packed_simd` / `wide` 크레이트를 활용한다.
+| 연산 | 최소 ISA |
+|---|---|
+| 컬럼 스캔, WHERE 필터, SUM/COUNT/MIN/MAX | AVX2 |
+| LIKE 패턴 매칭 | SSE4.2 |
+| 해시 조인, BITMAP 집계, Row→Columnar 변환 | AVX2 |
 
-| 연산 | SIMD 활용 방식 | 최소 ISA |
+- 런타임 `cpuid` 감지로 AVX-512 자동 활성화
+
+### 3.5.3 스토리지 백엔드 (FR-ST-003)
+
+| 백엔드 | 설정 값 | 인증 |
 |---|---|---|
-| 컬럼 스캔 | 64바이트 배치 로드 후 벡터 비교 | AVX2 |
-| WHERE 필터 | 벡터 비교 + 비트마스크 생성 | AVX2 |
-| SUM / COUNT | 수평 벡터 덧셈 | AVX2 |
-| MIN / MAX | 벡터 비교 감소 | AVX2 |
-| LIKE 패턴 매칭 | SIMD 문자열 탐색 | SSE4.2 |
-| 해시 조인 | 벡터 해시 계산 | AVX2 |
-| Bitmap 집계 | SIMD Popcount (HLL, BITMAP 타입) | AVX2 |
+| Native LSM | `backend = "local"` | OS 파일 권한 |
+| S3 | `backend = "s3"` | AWS IAM Role 또는 Access Key |
+| HDFS | `backend = "hdfs"` | **Kerberos 필수** |
 
-- 런타임에 CPU ISA 감지 (`cpuid`) 하여 최적 경로 선택
-- AVX-512 지원 CPU에서 자동으로 512bit 경로 활성화
+### 3.5.4 Materialized View 관리 (FR-ST-004)
 
-### 3.5.3 Materialized View 관리 (FR-ST-003)
-
-- SMV는 별도 Cube로 물리 저장 (독립적 Tablet 할당)
-- 증분 갱신: 새로운 이벤트 도착 시 영향받는 세션만 재계산
-- 세션 경계 갱신: 기존 세션에 이벤트 추가 또는 새 세션 분리 처리
-- 원본 Cube와 SMV 간 메타데이터 링크 유지 (의존성 추적)
+- SMV는 독립 Cube로 물리 저장 (독립 Tablet 할당)
+- 증분 갱신: 새 이벤트 도착 시 영향 세션만 재계산
 
 ## 3.6 Web SQL Client (FR-WEB)
 
-### 3.6.1 SQL 편집기 (FR-WEB-001)
-
 | 기능 | 설명 |
 |---|---|
-| 코드 하이라이팅 | MySQL + WOW-DB Custom Syntax 지원 |
-| 자동완성 | 테이블명, 컬럼명, 함수명 자동완성 |
-| 실행 결과 표시 | 테이블 형태, CSV 다운로드 |
-| 쿼리 기록 | 최근 100개 쿼리 히스토리 |
-| 다중 탭 | 여러 쿼리 동시 편집 |
-| Explain 시각화 | EXPLAIN PHYSICAL 결과 시각적 트리 렌더링 |
-
-### 3.6.2 Cube Builder (FR-WEB-002)
-
-GUI 기반 Cube 스키마 설계 도구:
-- 컬럼 추가/삭제 드래그앤드롭
-- 파티션/분산 키 시각적 설정
-- 미리보기: 생성될 DDL SQL 즉시 확인
-- "Session MV 생성" 버튼으로 3.2.1 대화 흐름 진입
-
-### 3.6.3 분석 대시보드 (FR-WEB-003)
-
-- Funnel, Cohort, Path 분석 결과 기본 차트 제공
-- 외부 BI 툴 연동을 위한 MySQL JDBC 접속 정보 내보내기
+| SQL 편집기 | 코드 하이라이팅, 자동완성, 결과 표시, 다중 탭, Explain 시각화 |
+| Cube Builder | 컬럼/파티션/백엔드 GUI 설정, DDL 미리보기, SMV 생성 진입 |
+| Profiler 화면 | 최근 1,000건 쿼리 이력 테이블 (정렬·필터) |
+| Cluster 모니터링 | 노드별 CPU/메모리/디스크/쿼리 현황 실시간 대시보드 |
+| 분석 대시보드 | Funnel/Cohort/Path 결과 기본 차트, JDBC 접속 정보 내보내기 |
 
 ## 3.7 MySQL 프로토콜 호환성 (FR-COMPAT)
 
-| 항목 | 지원 버전 / 세부 사항 |
+| 항목 | 세부 사항 |
 |---|---|
-| Wire Protocol | MySQL 8.0 Client/Server Protocol |
-| 접속 포트 | 9030 (기본값, 변경 가능) |
+| Wire Protocol | MySQL 8.0 Client/Server Protocol (포트 9030) |
 | 인증 | mysql_native_password, caching_sha2_password |
-| 클라이언트 호환 | MySQL CLI, MySQL Workbench, DBeaver, JDBC 8.x |
-| 시스템 테이블 | `information_schema.TABLES`, `information_schema.COLUMNS` 지원 |
-| SHOW 명령 | `SHOW DATABASES`, `SHOW TABLES`, `SHOW CREATE TABLE` 지원 |
-| 주의 사항 | `UPDATE` / `DELETE` 는 단일 Tablet 범위로 제한 (OLAP 특성 반영) |
+| 클라이언트 호환 | MySQL CLI, Workbench, DBeaver, JDBC 8.x |
+| 시스템 테이블 | `information_schema.TABLES`, `COLUMNS` 지원 |
+| SHOW 명령 | `SHOW DATABASES`, `SHOW TABLES`, `SHOW CREATE TABLE` |
+| 주의 사항 | `UPDATE`/`DELETE`는 단일 Tablet 범위 제한 |
 
 ## 3.8 분산 처리 (FR-DIST)
 
 | 기능 | 요구사항 |
 |---|---|
-| SL 노드 추가 | 온라인 Tablet 재분배 지원 (무중단) |
-| SL 노드 제거 | 데이터 마이그레이션 후 제거 |
-| DSL Leader 선출 | Raft 기반 자동 Leader 선출 (장애 감지 3초 이내) |
-| 쿼리 장애 처리 | SL 노드 1개 장애 시 복제본으로 자동 전환 |
-| 부하 분산 | DSL이 쿼리 부하를 기준으로 SL 실행 노드 선택 |
+| DN 노드 추가 | 온라인 Tablet 재분배 (무중단) |
+| CN 노드 추가/제거 | 무중단 (QN이 새 CN에 Fragment 자동 배분) |
+| QN Leader 선출 | Raft 기반 자동 선출 (장애 감지 3초, 선출 15초 이내) |
+| DN 장애 처리 | Replication Factor 3, 동시 1 노드 허용, 자동 복제본 전환 |
+| K8s 지원 | QN Stateless, Service/LoadBalancer 라우팅, Helm Chart 제공 |
+
+## 3.9 클러스터 모니터링 (FR-MON)
+
+**수집 메트릭:**
+
+| 분류 | 메트릭 |
+|---|---|
+| 노드 상태 | 생존 여부, 역할(Leader/Follower), 버전, 업타임 |
+| 시스템 리소스 | CPU 사용률, 메모리, 디스크, 네트워크 I/O |
+| 스토리지 | DN별 Tablet 수, LSM Level별 파일 수, Compaction 진행, WAL 크기 |
+| 수집 | Kafka Consumer Lag, Routine Load 처리 속도, 트랜잭션 성공/실패 |
+| 쿼리 | 활성 쿼리 수, 큐 대기 수, 평균/P99 응답 시간 |
+| CBO | 통계 갱신 빈도, 파티션 Pruning 효율 |
+
+**접근 방법:**
+- Prometheus 엔드포인트: 모든 노드 `:9090/metrics`
+- Web UI 대시보드: `http://QN:8080/admin/cluster`
+- SQL: `SHOW CLUSTER STATUS`
+- Alertmanager 연동 지원
+
+## 3.10 Query Profiler (FR-PROF)
+
+QN의 Circular Buffer에 최근 **1,000건** 쿼리 실행 이력 유지.
+
+**수집 항목:** query_id, sql_text, user, start_time, end_time, duration_ms, rows_scanned, rows_returned, partitions_pruned, compute_nodes_used, status (SUCCESS/ERROR/TIMEOUT), error_message, node_breakdown (JSON)
+
+**접근 방법:**
+
+```sql
+SHOW QUERY PROFILE ORDER BY duration_ms DESC LIMIT 20;
+SHOW QUERY PROFILE WHERE status = 'ERROR';
+SHOW QUERY PROFILE WHERE query_id = '<uuid>';
+```
+
+- Web UI: `http://QN:8080/profiler`
+- 1,000건 초과 시 oldest 자동 제거, 재시작 시 초기화
 
 ---
 
@@ -786,63 +917,68 @@ GUI 기반 Cube 스키마 설계 도구:
 
 | 항목 | 목표치 | 측정 조건 |
 |---|---|---|
-| 쓰기 처리량 | ≥ 1,000,000 이벤트/초 | 10 SL 노드, Kafka 수집 |
-| 쿼리 지연 (P99) | ≤ 3초 | 10억 행 테이블, GROUP BY 쿼리 |
+| 쓰기 처리량 | ≥ 1,000,000 이벤트/초 | 10 DN 노드, Kafka 수집 |
+| 쿼리 지연 (P99) | ≤ 3초 | 10억 행, GROUP BY 쿼리 |
 | 쿼리 지연 (P50) | ≤ 500ms | 동일 조건 |
-| Funnel 쿼리 | ≤ 10초 | 10억 행, 4-step Funnel |
-| 동시 쿼리 | ≥ 200 동시 쿼리 | 10 SL 노드 기준 |
+| Funnel 쿼리 | ≤ 10초 | 10억 행, 4-step |
+| 동시 쿼리 | ≥ 200 동시 쿼리 | 10 CN + 10 DN 노드 |
 | 총 데이터 규모 | ≥ 200억 레코드 | 분산 클러스터 |
-| 컬럼 스캔 속도 | ≥ 10 GB/s | AVX-512 SL 노드 단일 코어 |
+| 컬럼 스캔 속도 | ≥ 10 GB/s | AVX-512, CN 단일 코어 |
+| 파티션 Pruning 효율 | ≥ 70% 파티션 제거 | 1개월 범위 쿼리, 12개월 데이터 |
 
 ## 4.2 확장성 (NFR-SCALE)
 
-- **SL 수평 확장**: SL 노드 추가만으로 저장 용량 및 처리량 선형 증가
-- **DSL 수평 확장**: Read Follower 추가로 읽기 처리량 확장
-- **Tablet 자동 재분배**: 노드 추가 시 Tablet 자동 이동 (백그라운드)
-- **최대 지원 규모**: SL 노드 100대, Tablet 10,000개
+- **DN 수평 확장**: DN 추가만으로 저장 용량·처리량 선형 증가
+- **CN 독립 확장**: CN만 추가하여 연산 처리량 확장 (분리 모드)
+- **QN 수평 확장**: Read Follower 추가로 읽기 처리량 확장
+- **최대 지원 규모**: DN 100대, CN 200대, Tablet 10,000개
 
 ## 4.3 가용성 및 안정성 (NFR-HA)
 
 | 항목 | 목표 |
 |---|---|
-| 가용성 | 99.99% (연간 다운타임 ≤ 52분) |
-| RPO (복구 목표 시점) | ≤ 1분 (WAL 기반) |
-| RTO (복구 목표 시간) | ≤ 30초 (자동 장애 복구) |
-| SL 노드 장애 내성 | Replication Factor 3 기준, 동시 1 노드 장애 허용 |
-| DSL Leader 장애 | Raft 선출로 15초 이내 자동 복구 |
+| 가용성 | 99.99% (연간 ≤ 52분 다운타임) |
+| RPO | ≤ 1분 (WAL 기반) |
+| RTO | ≤ 30초 (자동 장애 복구) |
+| DN 장애 내성 | Replication Factor 3, 동시 1 노드 허용 |
+| QN Leader 장애 | Raft 자동 선출, 15초 이내 복구 |
+| CN 장애 | QN이 실패 Fragment를 다른 CN에 재배분 |
 
 ## 4.4 보안 (NFR-SEC)
 
 | 항목 | 요구사항 |
 |---|---|
-| 전송 암호화 | TLS 1.2 이상 (클라이언트 ↔ DSL, DSL ↔ SL) |
-| 인증 | 사용자 계정 기반 (MySQL 호환 방식) |
-| 권한 관리 | GRANT/REVOKE 기반 (DATABASE, TABLE, COLUMN 레벨) |
+| 전송 암호화 | TLS 1.2 이상 (Client↔QN, QN↔CN, QN↔DN) |
+| 인증 | MySQL 호환 사용자 계정 |
+| 권한 관리 | GRANT/REVOKE (DATABASE/TABLE/COLUMN 레벨) |
 | 감사 로그 | 모든 DDL 및 관리 명령 로깅 |
-| 비밀번호 | bcrypt 해싱 저장 |
-| Web Client | HTTPS 필수, 세션 토큰 기반 인증 |
+| HDFS | **Kerberos 인증 필수** |
+| Web Client | HTTPS 필수, 세션 토큰 (Raft KV 저장) |
 
 ## 4.5 운영성 (NFR-OPS)
 
 | 항목 | 요구사항 |
 |---|---|
-| 모니터링 | Prometheus 메트릭 엔드포인트 제공 (`/metrics`) |
-| 로깅 | 구조화 로그 (JSON), 레벨 조정 가능 |
-| 설정 | TOML 파일 기반 (DSL, SL 각각) |
+| 모니터링 | Prometheus 메트릭 (모든 노드 `:9090/metrics`) |
+| 로깅 | 구조화 JSON 로그, 레벨 조정 가능 |
+| 설정 | TOML 파일 기반 (QN, CN, DN 각각) |
 | 업그레이드 | 롤링 업그레이드 지원 (무중단) |
-| 백업 | Snapshot 기반 백업 / 복원 명령 제공 |
-| CLI 관리 도구 | `wowdb-ctl` 커맨드라인 관리 툴 제공 |
+| 백업 | Snapshot 기반 백업/복원 |
+| CLI | `wowdb-ctl` 커맨드라인 관리 툴 |
+| K8s | Helm Chart 제공, CN HPA (Horizontal Pod Autoscaler) 지원 |
 
 ## 4.6 구현 기술 제약 (NFR-TECH)
 
 | 항목 | 요구사항 |
 |---|---|
-| 구현 언어 | Rust (stable toolchain, edition 2021 이상) |
-| 최소 SIMD 요구사항 | AVX2 (x86-64 기준) |
-| 운영체제 | Linux (Ubuntu 20.04+, RHEL 8+), 컨테이너(Docker/K8s) 지원 |
-| 메모리 최소 사양 | DSL 노드 16GB, SL 노드 64GB |
-| 스토리지 | SL 노드 NVMe SSD 권장 |
-| 네트워크 | 10GbE 이상 권장 (SL 노드 간) |
+| 구현 언어 | Rust (stable, edition 2021+) |
+| 최소 SIMD | AVX2 (x86-64) |
+| 운영체제 | Linux (Ubuntu 20.04+, RHEL 8+), Docker/K8s |
+| QN 메모리 | 최소 16GB |
+| CN 메모리 | 최소 32GB |
+| DN 메모리 | 최소 64GB |
+| DN 스토리지 | NVMe SSD 권장 (Local 모드) |
+| 네트워크 | 10GbE 이상 (CN↔DN 간) |
 
 ---
 
@@ -850,82 +986,96 @@ GUI 기반 Cube 스키마 설계 도구:
 
 ## 5.1 DDL 예제
 
-### 5.1.1 Event Cube 생성
+### 5.1.1 Event Cube 생성 (S3 백엔드)
 
 ```sql
--- 웹 페이지 이벤트 Cube 생성
 CREATE CUBE IF NOT EXISTS page_events (
     event_time      DATETIME     NOT NULL  COMMENT '이벤트 발생 시각',
-    user_id         VARCHAR(64)            COMMENT '로그인 사용자 ID (없으면 NULL)',
+    user_id         VARCHAR(64)            COMMENT '로그인 사용자 ID',
     device_id       VARCHAR(64)  NOT NULL  COMMENT '디바이스 식별자',
-    session_source  VARCHAR(32)            COMMENT '유입 소스 (utm_source 등)',
+    session_source  VARCHAR(32)            COMMENT 'utm_source',
     event_name      VARCHAR(128) NOT NULL  COMMENT '이벤트 이름',
     page_url        VARCHAR(2048)          COMMENT '페이지 URL',
     referrer_url    VARCHAR(2048)          COMMENT '직전 페이지 URL',
-    country_code    CHAR(2)                COMMENT 'ISO 3166-1 국가 코드',
+    country_code    CHAR(2)                COMMENT 'ISO 3166-1',
     properties      JSON                   COMMENT '이벤트 추가 속성',
-    revenue         DECIMAL(10,2)          COMMENT '거래 금액 (해당 없으면 NULL)',
-
+    revenue         DECIMAL(10,2)          COMMENT '거래 금액',
     INDEX idx_event_name (event_name) USING BITMAP,
-    INDEX idx_country (country_code) USING BITMAP
+    INDEX idx_country    (country_code) USING BITMAP
 )
 ENGINE = WOW_LSM
 PARTITION BY RANGE(event_time) (
-    PARTITION p_2024_01 VALUES [('2024-01-01'), ('2024-02-01')),
-    PARTITION p_2024_02 VALUES [('2024-02-01'), ('2024-03-01')),
-    PARTITION p_future   VALUES [('2024-03-01'), (MAXVALUE))
+    PARTITION p_2024_q1 VALUES [('2024-01-01'), ('2024-04-01')),
+    PARTITION p_2024_q2 VALUES [('2024-04-01'), ('2024-07-01')),
+    PARTITION p_future  VALUES [('2024-07-01'), (MAXVALUE))
 )
 DISTRIBUTED BY HASH(device_id) BUCKETS 64
 ORDER BY (event_time, device_id, event_name)
 PROPERTIES (
     "replication_num" = "3",
     "compression"     = "LZ4",
-    "storage_format"  = "v2"
-)
-COMMENT '웹 서비스 사용자 행동 이벤트 Cube';
+    "storage_backend" = "s3",
+    "s3.bucket"       = "wowdb-data",
+    "s3.prefix"       = "analytics/page_events/"
+);
 ```
 
-### 5.1.2 Session Materialized View 생성 (SQL 방식)
+### 5.1.2 Event Cube 생성 (HDFS + Kerberos)
 
 ```sql
--- page_events로부터 device_id 기준 30분 세션 MV 생성
+CREATE CUBE IF NOT EXISTS page_events_hdfs (
+    event_time  DATETIME     NOT NULL,
+    device_id   VARCHAR(64)  NOT NULL,
+    event_name  VARCHAR(128) NOT NULL,
+    properties  JSON
+)
+ENGINE = WOW_LSM
+PARTITION BY RANGE(event_time) (
+    PARTITION p_2024 VALUES [('2024-01-01'), ('2025-01-01')),
+    PARTITION p_2025 VALUES [('2025-01-01'), (MAXVALUE))
+)
+DISTRIBUTED BY HASH(device_id) BUCKETS 32
+ORDER BY (event_time, device_id)
+PROPERTIES (
+    "replication_num"           = "3",
+    "storage_backend"           = "hdfs",
+    "hdfs.namenode"             = "hdfs://namenode:8020",
+    "hdfs.base_path"            = "/wowdb/analytics/page_events",
+    "hdfs.kerberos_keytab"      = "/etc/security/keytabs/wowdb.keytab",
+    "hdfs.kerberos_principal"   = "wowdb/dn@CORP.REALM.COM"
+);
+```
+
+### 5.1.3 Session Materialized View 생성
+
+```sql
+-- device_id 기준 30분 세션 MV
 CREATE SESSION MATERIALIZED VIEW IF NOT EXISTS page_events_sessions
 FROM page_events
 USER_KEY        = device_id
 SESSION_TIMEOUT = 30 MINUTE
 REFRESH REALTIME
-PROPERTIES (
-    "replication_num" = "3"
-)
-COMMENT 'device_id 기준 30분 세션 Materialized View';
+PROPERTIES ("replication_num" = "3");
 
--- 생성 결과 확인
-SHOW CREATE TABLE page_events_sessions;
-SHOW SESSIONS;
-```
-
-### 5.1.3 복합 User Key Session MV
-
-```sql
--- user_id 우선, 없으면 device_id fallback 복합 키
+-- COALESCE 복합 User Key
 CREATE SESSION MATERIALIZED VIEW IF NOT EXISTS page_events_user_sessions
 FROM page_events
 USER_KEY        = COALESCE(user_id, device_id)
 SESSION_TIMEOUT = 1 HOUR
-REFRESH EVERY INTERVAL 5 MINUTE
-COMMENT '로그인 사용자 기준 1시간 세션 MV';
+REFRESH EVERY INTERVAL 5 MINUTE;
 ```
 
-### 5.1.4 Cube 파티션 추가
+### 5.1.4 CBO 통계 및 클러스터 관리
 
 ```sql
--- 월별 파티션 동적 추가
-ALTER CUBE page_events
-    ADD PARTITION p_2024_04 VALUES [('2024-04-01'), ('2024-05-01'));
+ANALYZE TABLE page_events;           -- CBO 통계 재계산 (백그라운드)
+SHOW STATS page_events;              -- 통계 조회
+SHOW CLUSTER STATUS;                 -- 전체 노드 상태
+SHOW TABLET STATUS FROM page_events; -- Tablet 분산 상태
 
--- 컬럼 추가
+-- 파티션 추가
 ALTER CUBE page_events
-    ADD COLUMN browser_name VARCHAR(64) COMMENT '브라우저 이름';
+    ADD PARTITION p_2025_q1 VALUES [('2025-01-01'), ('2025-04-01'));
 ```
 
 ## 5.2 SELECT 예제
@@ -933,62 +1083,35 @@ ALTER CUBE page_events
 ### 5.2.1 기본 집계 쿼리
 
 ```sql
--- 일별 이벤트 수 집계
 SELECT
-    DATE(event_time)                    AS event_date,
+    DATE(event_time)          AS event_date,
     event_name,
-    COUNT(*)                            AS event_count,
-    COUNT(DISTINCT device_id)           AS unique_devices,
-    COUNT(DISTINCT user_id)             AS unique_users
+    COUNT(*)                  AS event_count,
+    COUNT(DISTINCT device_id) AS unique_devices
 FROM page_events
-WHERE event_time BETWEEN '2024-01-01 00:00:00'
-                     AND '2024-01-31 23:59:59'
+WHERE event_time BETWEEN '2024-01-01' AND '2024-01-31 23:59:59'
 GROUP BY event_date, event_name
 ORDER BY event_date, event_count DESC;
 ```
 
-### 5.2.2 세션 기반 분석
+### 5.2.2 Funnel Analysis
 
 ```sql
--- 세션 길이 분포 조회
-SELECT
-    CASE
-        WHEN session_duration_sec < 30    THEN '0-30초'
-        WHEN session_duration_sec < 120   THEN '30초-2분'
-        WHEN session_duration_sec < 300   THEN '2-5분'
-        WHEN session_duration_sec < 1800  THEN '5-30분'
-        ELSE '30분 이상'
-    END                                 AS duration_bucket,
-    COUNT(DISTINCT session_id)          AS session_count,
-    AVG(session_event_count)            AS avg_events_per_session
-FROM page_events_sessions
-WHERE session_start_time >= '2024-01-01'
-GROUP BY duration_bucket
-ORDER BY MIN(session_duration_sec);
-```
-
-### 5.2.3 Funnel Analysis
-
-```sql
--- 구매 전환 4단계 퍼널 (7일 윈도우 내 완료 기준)
 SELECT
     event_date,
     step_counts[1]  AS step1_landing,
-    step_counts[2]  AS step2_product_view,
-    step_counts[3]  AS step3_add_to_cart,
+    step_counts[2]  AS step2_product,
+    step_counts[3]  AS step3_cart,
     step_counts[4]  AS step4_purchase,
-    ROUND(step_counts[2] / step_counts[1] * 100, 2) AS step1_to_2_rate,
-    ROUND(step_counts[3] / step_counts[2] * 100, 2) AS step2_to_3_rate,
-    ROUND(step_counts[4] / step_counts[3] * 100, 2) AS step3_to_4_rate,
-    ROUND(step_counts[4] / step_counts[1] * 100, 2) AS total_conversion_rate
+    ROUND(step_counts[4] / step_counts[1] * 100, 2) AS total_cvr
 FROM (
     SELECT
         DATE(session_start_time) AS event_date,
         FUNNEL_COUNT(
-            event_name = 'landing_page'  STEP 1,
-            event_name = 'product_view'  STEP 2,
-            event_name = 'add_to_cart'   STEP 3,
-            event_name = 'purchase'      STEP 4,
+            event_name = 'landing_page' STEP 1,
+            event_name = 'product_view' STEP 2,
+            event_name = 'add_to_cart'  STEP 3,
+            event_name = 'purchase'     STEP 4,
             TIME_WINDOW => INTERVAL 7 DAY,
             STRICT => TRUE
         ) AS step_counts
@@ -999,16 +1122,11 @@ FROM (
 ORDER BY event_date;
 ```
 
-### 5.2.4 Cohort Retention Analysis
+### 5.2.3 Cohort Retention Analysis
 
 ```sql
--- 첫 방문 기준 8주간 구매 리텐션 코호트
-SELECT
-    cohort_date,
-    period,
-    cohort_size,
-    returned_users,
-    ROUND(metric_value * 100, 2) AS retention_pct
+SELECT cohort_date, period, cohort_size, returned_users,
+       ROUND(metric_value * 100, 2) AS retention_pct
 FROM COHORT_ANALYSIS(
     SOURCE       => 'page_events_sessions',
     ENTRY_EVENT  => 'first_visit',
@@ -1023,17 +1141,11 @@ WHERE cohort_date BETWEEN '2024-01-01' AND '2024-03-31'
 ORDER BY cohort_date, period;
 ```
 
-### 5.2.5 Path Analysis
+### 5.2.4 Path Analysis
 
 ```sql
--- 랜딩 페이지 → 구매 사이 상위 50개 사용자 경로
-SELECT
-    path,
-    path_depth,
-    path_count,
-    unique_users,
-    ROUND(support_rate * 100, 3)  AS support_pct,
-    ROUND(avg_duration_sec / 60)  AS avg_duration_min
+SELECT path, path_count, unique_users,
+       ROUND(support_rate * 100, 3) AS support_pct
 FROM PATH_ANALYSIS(
     SOURCE       => 'page_events_sessions',
     PATH_EVENT   => 'event_name',
@@ -1044,48 +1156,31 @@ FROM PATH_ANALYSIS(
     ENTRY_FILTER => "event_name = 'landing_page'",
     EXIT_FILTER  => "event_name = 'purchase'"
 )
-ORDER BY path_count DESC
-LIMIT 50;
+ORDER BY path_count DESC LIMIT 50;
 ```
 
-### 5.2.6 JSON Properties 분석
+### 5.2.5 Query Profiler 조회
 
 ```sql
--- 이벤트 properties에서 버튼 클릭 데이터 추출
-SELECT
-    JSON_VALUE(properties, '$.button_id')   AS button_id,
-    JSON_VALUE(properties, '$.button_text') AS button_text,
-    COUNT(*)                                AS click_count,
-    COUNT(DISTINCT device_id)               AS unique_clickers
-FROM page_events
-WHERE event_name = 'button_click'
-  AND event_time >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-  AND JSON_VALUE(properties, '$.page_section') = 'hero'
-GROUP BY button_id, button_text
-ORDER BY click_count DESC
-LIMIT 20;
+-- 느린 쿼리 Top 10
+SHOW QUERY PROFILE ORDER BY duration_ms DESC LIMIT 10;
+
+-- 오늘 오류 쿼리
+SHOW QUERY PROFILE WHERE status = 'ERROR' AND start_time >= CURDATE();
+
+-- 특정 쿼리 상세
+SHOW QUERY PROFILE WHERE query_id = '550e8400-e29b-41d4-a716-446655440000';
 ```
 
-### 5.2.7 윈도우 함수 활용
+### 5.2.6 실행 계획 확인
 
 ```sql
--- 사용자별 누적 이벤트 수 및 직전 이벤트 시각 조회
-SELECT
-    device_id,
-    event_time,
-    event_name,
-    LAG(event_name, 1)  OVER w  AS prev_event,
-    LAG(event_time, 1)  OVER w  AS prev_event_time,
-    TIMESTAMPDIFF(SECOND,
-        LAG(event_time, 1) OVER w,
-        event_time
-    )                           AS seconds_since_prev,
-    ROW_NUMBER()        OVER w  AS event_seq_in_day
+EXPLAIN PHYSICAL
+SELECT DATE(event_time) AS dt, COUNT(DISTINCT device_id) AS dau
 FROM page_events
-WHERE device_id = 'device-abc-123'
-  AND DATE(event_time) = '2024-01-15'
-WINDOW w AS (PARTITION BY device_id, DATE(event_time) ORDER BY event_time)
-ORDER BY event_time;
+WHERE event_time BETWEEN '2024-01-01' AND '2024-01-31'
+GROUP BY dt ORDER BY dt;
+-- CBO가 제거한 파티션 목록 및 CN Fragment 배분 계획 출력
 ```
 
 ## 5.3 INSERT 예제
@@ -1095,15 +1190,11 @@ ORDER BY event_time;
 ```sql
 INSERT INTO page_events
     (event_time, user_id, device_id, event_name, page_url, properties)
-VALUES
-    (
-        '2024-01-15 14:32:10',
-        'user-001',
-        'device-abc-123',
-        'product_view',
-        'https://example.com/products/42',
-        '{"product_id": 42, "category": "electronics", "price": 299000}'
-    );
+VALUES (
+    '2024-01-15 14:32:10', 'user-001', 'device-abc-123', 'product_view',
+    'https://example.com/products/42',
+    '{"product_id": 42, "category": "electronics", "price": 299000}'
+);
 ```
 
 ### 5.3.2 배치 INSERT
@@ -1112,109 +1203,71 @@ VALUES
 INSERT INTO page_events
     (event_time, device_id, event_name, page_url, country_code, properties)
 VALUES
-    ('2024-01-15 14:32:10', 'device-001', 'page_view',    'https://example.com/',        'KR', '{"referrer": "google"}'),
-    ('2024-01-15 14:32:45', 'device-001', 'product_view', 'https://example.com/p/42',    'KR', '{"product_id": 42}'),
-    ('2024-01-15 14:33:20', 'device-001', 'add_to_cart',  'https://example.com/p/42',    'KR', '{"product_id": 42, "qty": 1}'),
-    ('2024-01-15 14:35:00', 'device-002', 'page_view',    'https://example.com/',        'US', '{"referrer": "direct"}'),
-    ('2024-01-15 14:35:30', 'device-002', 'search',       'https://example.com/search',  'US', '{"query": "laptop"}');
-```
-
-### 5.3.3 INSERT SELECT (집계 결과 저장)
-
-```sql
--- 일별 이벤트 요약 Cube에 INSERT
-INSERT INTO daily_event_summary
-    (summary_date, event_name, unique_devices, event_count)
-SELECT
-    DATE(event_time),
-    event_name,
-    COUNT(DISTINCT device_id),
-    COUNT(*)
-FROM page_events
-WHERE DATE(event_time) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)
-GROUP BY DATE(event_time), event_name;
+    ('2024-01-15 14:32:10', 'device-001', 'page_view',    'https://example.com/',       'KR', '{"referrer": "google"}'),
+    ('2024-01-15 14:32:45', 'device-001', 'product_view', 'https://example.com/p/42',   'KR', '{"product_id": 42}'),
+    ('2024-01-15 14:33:20', 'device-001', 'add_to_cart',  'https://example.com/p/42',   'KR', '{"product_id": 42, "qty": 1}'),
+    ('2024-01-15 14:35:00', 'device-002', 'page_view',    'https://example.com/',       'US', '{"referrer": "direct"}'),
+    ('2024-01-15 14:35:30', 'device-002', 'search',       'https://example.com/search', 'US', '{"query": "laptop"}');
 ```
 
 ## 5.4 LOAD 예제
 
-### 5.4.1 Kafka Routine Load 등록
+### 5.4.1 Kafka Routine Load
 
 ```sql
--- Kafka 지속 수집 작업 생성
 CREATE ROUTINE LOAD analytics.load_web_events ON page_events
-COLUMNS TERMINATED BY ','
-COLUMNS (event_time, user_id, device_id, event_name, page_url, properties)
 PROPERTIES (
     "desired_concurrent_number" = "4",
     "max_batch_interval"        = "20",
     "max_batch_rows"            = "500000",
-    "max_batch_size"            = "209715200",
-    "strict_mode"               = "false",
-    "timezone"                  = "Asia/Seoul",
     "format"                    = "json",
-    "jsonpaths"                 = "[\"$.ts\",\"$.uid\",\"$.did\",\"$.event\",\"$.url\",\"$.props\"]"
+    "jsonpaths"                 = "[\"$.ts\",\"$.uid\",\"$.did\",\"$.event\",\"$.url\",\"$.props\"]",
+    "timezone"                  = "Asia/Seoul"
 )
 FROM KAFKA (
     "kafka_broker_list"          = "kafka1:9092,kafka2:9092,kafka3:9092",
     "kafka_topic"                = "web-events-prod",
-    "kafka_partitions"           = "0,1,2,3,4,5,6,7",
     "kafka_offsets"              = "OFFSET_END",
     "property.group.id"          = "wowdb-routine-loader",
     "property.security.protocol" = "SASL_SSL",
-    "property.sasl.mechanism"    = "PLAIN",
     "property.sasl.username"     = "wowdb_consumer",
     "property.sasl.password"     = "${KAFKA_PASSWORD}"
 );
 
--- 상태 확인
 SHOW ROUTINE LOAD FOR load_web_events;
-
--- 일시 정지 / 재개
-PAUSE ROUTINE LOAD FOR load_web_events;
+PAUSE  ROUTINE LOAD FOR load_web_events;
 RESUME ROUTINE LOAD FOR load_web_events;
 ```
 
 ### 5.4.2 Spark 3.1 Batch Load
 
 ```scala
-// WOW-DB Spark 3.1 커넥터 사용
 // build.sbt: "io.wowdb" %% "wowdb-spark-connector" % "1.0.0"
-
 import org.apache.spark.sql.SparkSession
 
 object WowDbSpark31Load extends App {
-
   val spark = SparkSession.builder()
     .appName("WOW-DB Spark 3.1 Batch Load")
-    .config("spark.sql.shuffle.partitions", "200")
     .getOrCreate()
 
-  // 소스 데이터 읽기 (Parquet)
-  val eventsDF = spark.read
-    .schema(EventSchema.schema)          // 사전 정의된 StructType
+  spark.read
+    .schema(EventSchema.schema)
     .parquet("hdfs://namenode:8020/data/events/2024-01-15/")
-
-  // 전처리
-  val cleanDF = eventsDF
-    .filter(eventsDF("event_time").isNotNull)
-    .filter(eventsDF("device_id").isNotNull)
-    .repartition(64, eventsDF("device_id"))  // Tablet 수와 일치 권장
-
-  // WOW-DB 쓰기 (DataSource V1)
-  cleanDF.write
+    .filter("event_time IS NOT NULL AND device_id IS NOT NULL")
+    .repartition(64)
+    .write
     .format("wowdb")
-    .option("wowdb.http.urls",        "http://wowdb-sl-1:8040;http://wowdb-sl-2:8040;http://wowdb-sl-3:8040")
-    .option("wowdb.user",             "spark_loader")
-    .option("wowdb.password",         sys.env("WOWDB_PASSWORD"))
-    .option("wowdb.table.identifier", "analytics.page_events")
-    .option("wowdb.columns",          "event_time,user_id,device_id,event_name,page_url,properties")
-    .option("wowdb.write.buffer.size","134217728")   // 128 MB
-    .option("wowdb.max.retries",      "3")
-    .option("wowdb.compression",      "lz4")
+    // DN HTTP Stream Load 엔드포인트 (포트 8040)
+    .option("wowdb.http.urls",         "http://wowdb-dn-1:8040;http://wowdb-dn-2:8040;http://wowdb-dn-3:8040")
+    .option("wowdb.user",              "spark_loader")
+    .option("wowdb.password",          sys.env("WOWDB_PASSWORD"))
+    .option("wowdb.table.identifier",  "analytics.page_events")
+    .option("wowdb.columns",           "event_time,user_id,device_id,event_name,page_url,properties")
+    .option("wowdb.write.buffer.size", "134217728")
+    .option("wowdb.compression",       "lz4")
     .mode("append")
     .save()
 
-  println(s"Load completed: ${cleanDF.count()} rows written")
   spark.stop()
 }
 ```
@@ -1222,39 +1275,31 @@ object WowDbSpark31Load extends App {
 ### 5.4.3 Spark 3.4 Batch Load (DataSource V2 + Transaction)
 
 ```scala
-// WOW-DB Spark 3.4 커넥터 사용 (DataSource V2 API)
 // build.sbt: "io.wowdb" %% "wowdb-spark-connector-v2" % "2.0.0"
-
 import org.apache.spark.sql.SparkSession
 
 object WowDbSpark34Load extends App {
-
   val spark = SparkSession.builder()
-    .appName("WOW-DB Spark 3.4 Batch Load with Transaction")
+    .appName("WOW-DB Spark 3.4 Batch Load")
     .config("spark.sql.extensions", "io.wowdb.spark.WowDbExtensions")
     .getOrCreate()
 
-  // Delta Lake 소스 읽기 (Spark 3.4 네이티브)
-  val eventsDF = spark.read
-    .format("delta")
-    .option("versionAsOf", "42")
+  spark.read.format("delta").option("versionAsOf", "42")
     .load("s3a://data-lake/events/page_events/")
-
-  // WOW-DB 쓰기 (DataSource V2, 분산 트랜잭션 지원)
-  eventsDF
     .filter("event_time IS NOT NULL AND device_id IS NOT NULL")
     .repartition(128)
     .write
     .format("wowdb-v2")
-    .option("wowdb.endpoints",           "wowdb-dsl-1:9030,wowdb-dsl-2:9030,wowdb-dsl-3:9030")
+    // QN 엔드포인트 (포트 9030)
+    .option("wowdb.endpoints",           "wowdb-qn-1:9030,wowdb-qn-2:9030,wowdb-qn-3:9030")
     .option("wowdb.user",                "spark_loader")
     .option("wowdb.password",            sys.env("WOWDB_PASSWORD"))
     .option("wowdb.database",            "analytics")
     .option("wowdb.table",               "page_events")
-    .option("wowdb.transaction.enable",  "true")       // 2PC 트랜잭션
-    .option("wowdb.transaction.timeout", "600000")     // 10분
-    .option("wowdb.batch.size",          "500000")     // 배치당 50만 행
-    .option("wowdb.parallelism",         "8")          // Executor당 8 스레드
+    .option("wowdb.transaction.enable",  "true")
+    .option("wowdb.transaction.timeout", "600000")
+    .option("wowdb.batch.size",          "500000")
+    .option("wowdb.parallelism",         "8")
     .option("wowdb.compression",         "zstd")
     .option("wowdb.write.mode",          "exactly_once")
     .mode("append")
@@ -1264,77 +1309,48 @@ object WowDbSpark34Load extends App {
 }
 ```
 
-### 5.4.4 Spark 3.4 Structured Streaming (실시간)
+### 5.4.4 Spark 3.4 Structured Streaming
 
 ```scala
-// Kafka → WOW-DB 실시간 스트리밍 파이프라인
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 
 object WowDbSpark34Streaming extends App {
-
   val spark = SparkSession.builder()
     .appName("WOW-DB Spark 3.4 Structured Streaming")
     .getOrCreate()
 
-  val eventSchema = StructType(Seq(
-    StructField("event_time",  TimestampType, nullable = false),
-    StructField("user_id",     StringType,    nullable = true),
-    StructField("device_id",   StringType,    nullable = false),
-    StructField("event_name",  StringType,    nullable = false),
-    StructField("page_url",    StringType,    nullable = true),
-    StructField("properties",  StringType,    nullable = true)   // JSON string
+  val schema = StructType(Seq(
+    StructField("event_time", TimestampType, nullable = false),
+    StructField("user_id",    StringType,    nullable = true),
+    StructField("device_id",  StringType,    nullable = false),
+    StructField("event_name", StringType,    nullable = false),
+    StructField("page_url",   StringType,    nullable = true),
+    StructField("properties", StringType,    nullable = true)
   ))
 
-  val kafkaStream = spark.readStream
+  spark.readStream
     .format("kafka")
     .option("kafka.bootstrap.servers", "kafka1:9092,kafka2:9092")
     .option("subscribe",               "web-events-prod")
     .option("startingOffsets",         "latest")
-    .option("failOnDataLoss",          "false")
     .load()
-
-  val parsedStream = kafkaStream
-    .select(from_json(col("value").cast("string"), eventSchema).as("data"))
-    .select("data.*")
+    .select(from_json(col("value").cast("string"), schema).as("d"))
+    .select("d.*")
     .filter(col("event_time").isNotNull)
-
-  // WOW-DB foreachBatch로 마이크로배치 쓰기
-  val query = parsedStream.writeStream
+    .writeStream
     .format("wowdb-v2")
-    .option("wowdb.endpoints",          "wowdb-dsl-1:9030,wowdb-dsl-2:9030")
+    .option("wowdb.endpoints",          "wowdb-qn-1:9030,wowdb-qn-2:9030")
     .option("wowdb.user",               "spark_stream_loader")
     .option("wowdb.password",           sys.env("WOWDB_PASSWORD"))
     .option("wowdb.database",           "analytics")
     .option("wowdb.table",              "page_events")
-    .option("wowdb.batch.size",         "100000")
     .option("wowdb.transaction.enable", "true")
     .option("checkpointLocation",       "hdfs://namenode:8020/checkpoints/page_events/")
     .outputMode("append")
     .trigger(org.apache.spark.sql.streaming.Trigger.ProcessingTime("30 seconds"))
     .start()
-
-  query.awaitTermination()
+    .awaitTermination()
 }
-```
-
-### 5.4.5 실행 계획 확인
-
-```sql
--- 쿼리 실행 계획 확인
-EXPLAIN PHYSICAL
-SELECT
-    DATE(event_time)     AS event_date,
-    COUNT(DISTINCT device_id)  AS dau
-FROM page_events
-WHERE event_time BETWEEN '2024-01-01' AND '2024-01-31'
-GROUP BY event_date
-ORDER BY event_date;
-
--- Tablet 분산 상태 확인
-SHOW TABLET STATUS FROM page_events;
-
--- Routine Load 상태 확인
-SHOW ROUTINE LOAD;
 ```

@@ -4,9 +4,9 @@
 
 | 항목 | 내용 |
 |---|---|
-| 문서 버전 | v0.1 Draft |
+| 문서 버전 | v0.2 Draft |
 | 작성일 | 2026-04-12 |
-| 참조 문서 | srs.md v0.1 |
+| 참조 문서 | srs.md v0.2 |
 
 ---
 
@@ -16,7 +16,8 @@
 
 ```
 TC-{카테고리}-{번호}
-카테고리: DDL, DML, ING(Ingestion), ANA(Analytics), SMV, COMPAT, PERF, WEB
+카테고리: DDL, DML, ING(Ingestion), ANA(Analytics), SMV, COMPAT, PERF, WEB,
+          QN(Query Node), CBO, CN(Compute Node), DN(Data Node), MON(Monitoring), PROF(Profiler)
 ```
 
 **Pass 기준 컬럼 정의:**
@@ -43,8 +44,8 @@ TC-{카테고리}-{번호}
 | **우선순위** | Critical |
 
 **사전 조건:**
-- WOW-DB 클러스터 정상 기동 (DSL 1 Leader + SL 3 노드)
-- MySQL 클라이언트로 DSL 접속 완료 (`analytics` 데이터베이스 선택)
+- WOW-DB 클러스터 정상 기동 (QN 3노드 Raft + CN 2노드 + DN 3노드)
+- MySQL 클라이언트로 QN 접속 완료 (`analytics` 데이터베이스 선택)
 
 **테스트 절차:**
 
@@ -547,8 +548,8 @@ ORDER BY event_time;
 **테스트 시나리오:**
 
 1. Kafka에 100건 메시지 발행
-2. 50건 처리 중 SL Node 1 강제 종료 (`kill -9`)
-3. SL Node 1 재기동
+2. 50건 처리 중 DN Node 1 강제 종료 (`kill -9`)
+3. DN Node 1 재기동
 4. Kafka Offset 롤백 후 재처리 확인
 5. 중복 없이 100건 정확히 적재됐는지 확인
 
@@ -902,7 +903,7 @@ ORDER BY event_time;
 
 ```bash
 # MySQL CLI (8.0.x)로 WOW-DB 접속
-mysql -h wowdb-dsl-1 -P 9030 -u admin -p analytics
+mysql -h wowdb-qn-1 -P 9030 -u admin -p analytics
 
 # 접속 성공 확인
 SELECT VERSION();
@@ -931,7 +932,7 @@ SHOW TABLES;
 
 ```java
 // MySQL JDBC 8.0.x
-String url = "jdbc:mysql://wowdb-dsl-1:9030/analytics"
+String url = "jdbc:mysql://wowdb-qn-1:9030/analytics"
            + "?useSSL=false&allowPublicKeyRetrieval=true";
 Connection conn = DriverManager.getConnection(url, "admin", "password");
 
@@ -1004,7 +1005,7 @@ GROUP BY dt;
 ```
 
 **기대 결과:**
-- 계획 트리 출력 (SL 노드별 실행 계획 포함)
+- 계획 트리 출력 (DN/CN 노드별 실행 계획 포함)
 - 파티션 Pruning 적용 여부 표시
 - 예상 행 수 (Estimated rows) 표시
 
@@ -1186,6 +1187,674 @@ python load_test.py \
 
 ---
 
+## TC-QN: Query Node 테스트
+
+---
+
+### TC-QN-001: Raft 리더 선출 및 홀수 구성 검증
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-QN-001 |
+| **테스트명** | QN 3노드 Raft 리더 선출 및 메타데이터 동기화 |
+| **관련 요구사항** | FR-QN-001, FR-QN-002 |
+| **우선순위** | Critical |
+
+**사전 조건:**
+- QN 3노드 기동 (`qn-1`, `qn-2`, `qn-3`, 포트 9010 Raft)
+- 각 노드 `wow.conf` 에 `[raft] peers = ["qn-1:9010","qn-2:9010","qn-3:9010"]` 설정
+
+**테스트 절차:**
+
+```bash
+# Step 1: 리더 확인
+curl -s http://qn-1:9011/raft/status | jq '.role'
+curl -s http://qn-2:9011/raft/status | jq '.role'
+curl -s http://qn-3:9011/raft/status | jq '.role'
+```
+
+```sql
+-- Step 2: 임의 QN에서 DDL 실행
+CREATE CUBE raft_test (event_time DATETIME NOT NULL, device_id VARCHAR(64))
+ENGINE = WOW_LSM DISTRIBUTED BY HASH(device_id) BUCKETS 4;
+
+-- Step 3: Follower QN에서 메타데이터 반영 확인
+-- qn-2, qn-3에 각각 접속
+SHOW CUBES;
+```
+
+```bash
+# Step 4: 짝수 구성 시도 (4노드) → 경고 확인
+curl -X POST http://qn-1:9011/raft/add-peer -d '{"peer":"qn-4:9010"}'
+```
+
+**기대 결과:**
+
+| 스텝 | 기대 결과 |
+|---|---|
+| Step 1 | 3노드 중 정확히 1개만 `"Leader"`, 나머지 2개 `"Follower"` |
+| Step 2 | DDL 성공 (`Query OK`) |
+| Step 3 | 모든 QN에서 `raft_test` Cube 목록 포함 (메타 동기화 확인) |
+| Step 4 | `WARN: Even number of Raft peers (4) detected. Recommend odd number.` |
+
+**Pass 기준:** Step 1~3 모두 충족 시 Pass
+
+---
+
+### TC-QN-002: Stateless K8s 동일 엔드포인트 응답 검증
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-QN-002 |
+| **테스트명** | K8s LoadBalancer 통해 임의 QN Pod에 접속해도 동일 결과 반환 |
+| **관련 요구사항** | FR-QN-003 |
+| **우선순위** | Critical |
+
+**사전 조건:**
+- K8s 클러스터에 QN 3개 Pod 배포 (`wow-qn-0`, `wow-qn-1`, `wow-qn-2`)
+- K8s Service (ClusterIP/LoadBalancer) `wow-qn-svc:9030` 설정
+- `page_events` Cube + 데이터 10,000건 존재
+
+**테스트 절차:**
+
+```bash
+# Step 1: 각 Pod에 직접 접속하여 동일 쿼리 실행
+for pod in wow-qn-0 wow-qn-1 wow-qn-2; do
+  echo "=== $pod ==="
+  kubectl exec $pod -- mysql -P 9030 -u admin -p -e \
+    "SELECT COUNT(*) FROM page_events WHERE event_time >= '2024-01-01';"
+done
+
+# Step 2: LoadBalancer 경유로 100회 반복 실행 (랜덤 Pod 라우팅)
+for i in $(seq 1 100); do
+  mysql -h wow-qn-svc -P 9030 -u admin -p -e \
+    "SELECT COUNT(*) FROM page_events;" 2>/dev/null
+done | sort | uniq -c
+```
+
+**기대 결과:**
+- Step 1: 3개 Pod 모두 동일한 `COUNT(*)` 값 반환
+- Step 2: 100회 결과가 모두 동일한 단일 값 (분산 라우팅에 관계없이 일관성 보장)
+
+**Pass 기준:** 모든 응답값이 동일한 숫자일 때 Pass
+
+---
+
+### TC-QN-003: QN 리더 장애 시 Failover
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-QN-003 |
+| **테스트명** | QN Leader 강제 종료 후 새 리더 선출 및 서비스 복구 |
+| **관련 요구사항** | FR-QN-001, FR-QN-002 |
+| **우선순위** | High |
+
+**테스트 시나리오:**
+
+1. `qn-1` (현재 Leader) 강제 종료 (`kill -9`)
+2. 30초 이내에 `qn-2` 또는 `qn-3`가 새 Leader로 선출되는지 확인
+3. 새 Leader에 DDL/DML 실행 가능 여부 확인
+4. `qn-1` 재기동 후 Follower로 복귀 및 메타데이터 동기화 확인
+
+```bash
+# Step 2: 새 리더 확인 (qn-2에 질의)
+sleep 10 && curl -s http://qn-2:9011/raft/status | jq '.role'
+```
+
+```sql
+-- Step 3: 새 리더에서 DML 실행
+INSERT INTO page_events (event_time, device_id, event_name)
+VALUES (NOW(), 'failover-test', 'qn_failover_event');
+SELECT COUNT(*) FROM page_events WHERE device_id = 'failover-test';
+```
+
+**기대 결과:**
+- Step 2: `qn-2` 또는 `qn-3` 가 `"Leader"` 로 변경됨 (30초 이내)
+- Step 3: INSERT 및 SELECT 정상 실행
+- Step 4: `qn-1` 재기동 후 `"Follower"` 상태로 복귀, 신규 메타데이터 동기화 확인
+
+**Pass 기준:** Failover 30초 이내, INSERT/SELECT 무중단 확인 시 Pass
+
+---
+
+## TC-CBO: Cost-Based Optimizer 테스트
+
+---
+
+### TC-CBO-001: ANALYZE TABLE 통계 수집
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-CBO-001 |
+| **테스트명** | ANALYZE TABLE 실행 후 SHOW STATS 통계 항목 확인 |
+| **관련 요구사항** | FR-CBO-001 |
+| **우선순위** | Critical |
+
+**사전 조건:** `page_events` Cube에 1,000,000건 이상 데이터 존재
+
+**테스트 절차:**
+
+```sql
+-- Step 1: 통계 수집
+ANALYZE TABLE page_events;
+
+-- Step 2: 전체 테이블 통계 확인
+SHOW STATS FOR page_events;
+
+-- Step 3: 컬럼별 상세 통계 확인
+SHOW STATS FOR page_events COLUMNS (event_time, device_id, event_name);
+```
+
+**기대 결과:**
+
+| 스텝 | 기대 결과 |
+|---|---|
+| Step 1 | `Analyze complete. X rows analyzed.` |
+| Step 2 | `row_count`, `partition_count`, `last_analyzed` 필드 포함 반환 |
+| Step 3 | 컬럼별 `min`, `max`, `ndv` (Distinct Value Count), `null_count`, `histogram` 포함 |
+
+**Pass 기준:** Step 3에서 모든 5개 통계 항목 (min/max/ndv/null_count/histogram) 반환 시 Pass
+
+---
+
+### TC-CBO-002: 파티션 프루닝 효과 검증
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-CBO-002 |
+| **테스트명** | WHERE 절 파티션 키 조건으로 파티션 프루닝 확인 |
+| **관련 요구사항** | FR-CBO-002 |
+| **우선순위** | Critical |
+
+**사전 조건:**
+- Range 파티션 `page_events_partitioned` (p_2024_q1, p_2024_q2, p_future)
+- ANALYZE TABLE 완료
+
+**테스트 절차:**
+
+```sql
+-- Step 1: 전체 파티션 스캔 쿼리 (프루닝 없음)
+EXPLAIN PHYSICAL
+SELECT COUNT(*) FROM page_events_partitioned;
+
+-- Step 2: 특정 파티션 범위 쿼리 (p_2024_q1만 스캔 기대)
+EXPLAIN PHYSICAL
+SELECT COUNT(*) FROM page_events_partitioned
+WHERE event_time BETWEEN '2024-01-01' AND '2024-03-31';
+
+-- Step 3: 실제 수행 시간 비교
+SELECT COUNT(*) FROM page_events_partitioned;  -- 전체
+SELECT COUNT(*) FROM page_events_partitioned
+WHERE event_time BETWEEN '2024-01-01' AND '2024-03-31';  -- 프루닝
+```
+
+**기대 결과:**
+- Step 1: `partitions: [p_2024_q1, p_2024_q2, p_future]` (전체 3개)
+- Step 2: `partitions: [p_2024_q1]` (1개만 스캔)
+- Step 3: 프루닝 쿼리가 전체 스캔 대비 수행 시간 ≤ 40% (2.5배 이상 빠름)
+
+**Pass 기준:** Step 2에서 `p_2024_q1` 1개 파티션만 표시 시 Pass
+
+---
+
+### TC-CBO-003: NDV 기반 조인 순서 최적화
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-CBO-003 |
+| **테스트명** | NDV 통계 기반으로 CBO가 소형 테이블을 Build Side로 선택 |
+| **관련 요구사항** | FR-CBO-003 |
+| **우선순위** | High |
+
+**사전 조건:**
+- `page_events` (대형, 1억 건)
+- `dim_devices` (소형, 1만 건) Cube 생성 후 ANALYZE TABLE 수행
+
+**테스트 절차:**
+
+```sql
+-- Step 1: 조인 쿼리 EXPLAIN
+EXPLAIN PHYSICAL
+SELECT p.event_name, d.device_brand, COUNT(*) AS cnt
+FROM page_events p
+JOIN dim_devices d ON p.device_id = d.device_id
+WHERE p.event_time >= '2024-01-01'
+GROUP BY p.event_name, d.device_brand;
+```
+
+**기대 결과:**
+- `JOIN type: HashJoin`
+- `Build side: dim_devices` (소형 테이블이 Build side)
+- `Probe side: page_events` (대형 테이블이 Probe side)
+- EXPLAIN 출력에 추정 행 수 (`estimated_rows`) 표시
+
+**Pass 기준:** Build/Probe 역할 할당이 통계 기반으로 올바를 때 Pass
+
+---
+
+## TC-CN: Compute Node 테스트
+
+---
+
+### TC-CN-001: CN 코-로케이션 모드 vs 분리 모드 결과 일치
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-CN-001 |
+| **테스트명** | DN 코-로케이션 CN과 독립형 CN의 쿼리 결과 동일성 |
+| **관련 요구사항** | FR-CN-001 |
+| **우선순위** | High |
+
+**사전 조건:**
+- 환경 A: CN이 DN과 동일 호스트에 배포 (코-로케이션 모드)
+- 환경 B: CN이 독립 호스트에 배포 (분리 모드)
+- 동일한 `page_events` 데이터셋 (동일 스냅샷)
+
+**테스트 절차:**
+
+```sql
+-- 환경 A와 환경 B에서 동일 쿼리 각각 실행
+SELECT
+    DATE(event_time)             AS event_date,
+    COUNT(DISTINCT device_id)    AS dau,
+    COUNT(*)                     AS total_events,
+    AVG(session_duration_sec)    AS avg_session_sec
+FROM page_events_sessions
+WHERE event_time BETWEEN '2024-01-01' AND '2024-01-31'
+GROUP BY event_date
+ORDER BY event_date;
+```
+
+**기대 결과:**
+- 환경 A와 환경 B의 모든 행이 동일 (행 수, 각 셀 값)
+- 수행 시간 차이는 허용 (코-로케이션이 보통 빠름)
+
+**Pass 기준:** 결과 집합 100% 일치 시 Pass
+
+---
+
+### TC-CN-002: CN 노드 장애 시 쿼리 재실행 및 복구
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-CN-002 |
+| **테스트명** | 쿼리 실행 중 CN 장애 시 오류 반환 및 재시도 동작 |
+| **관련 요구사항** | FR-CN-002 |
+| **우선순위** | High |
+
+**테스트 시나리오:**
+
+1. 복수의 CN (cn-1, cn-2) 환경에서 대형 쿼리 실행 시작 (예상 소요 30초 이상)
+2. 쿼리 실행 중 `cn-1` 강제 종료
+3. QN이 `cn-2`로 Fragment Plan 재분배하는지 확인
+4. 쿼리 최종 성공 또는 명확한 오류 메시지 반환 확인
+
+```sql
+-- 대형 집계 쿼리 (30초+ 소요 데이터)
+SELECT event_name, COUNT(DISTINCT device_id) AS uu
+FROM page_events
+GROUP BY event_name
+ORDER BY uu DESC;
+```
+
+**기대 결과:**
+- CN 장애 후 QN이 남은 CN으로 재분배 시도
+- 가용 CN 존재 시 쿼리 최종 완료
+- 가용 CN 없을 때 `ERROR: All Compute Nodes unavailable` 명확 반환
+
+**Pass 기준:** 재분배 성공 시 결과 정상 반환, CN 전무 시 명확 오류 메시지 Pass
+
+---
+
+## TC-DN: Data Node 테스트
+
+---
+
+### TC-DN-001: S3 백엔드 적재 및 조회
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-DN-001 |
+| **테스트명** | DN S3 백엔드 설정 후 데이터 적재 및 SELECT 조회 |
+| **관련 요구사항** | FR-DN-002 |
+| **우선순위** | Critical |
+
+**사전 조건:**
+
+```toml
+# dn.conf (S3 설정)
+[storage]
+backend       = "s3"
+s3_bucket     = "wowdb-test-bucket"
+s3_region     = "ap-northeast-2"
+s3_prefix     = "wowdb/data/"
+aws_access_key = "AKIAXXXXXXXXXXXXXXXX"
+aws_secret_key = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+```
+
+**테스트 절차:**
+
+```sql
+-- Step 1: S3 백엔드 DN에 Cube 생성
+CREATE CUBE s3_events (
+    event_time DATETIME NOT NULL,
+    device_id  VARCHAR(64) NOT NULL,
+    event_name VARCHAR(128) NOT NULL
+)
+ENGINE = WOW_LSM
+DISTRIBUTED BY HASH(device_id) BUCKETS 4
+ORDER BY (event_time, device_id)
+PROPERTIES ("storage_backend" = "s3");
+
+-- Step 2: 데이터 적재 (10,000건)
+INSERT INTO s3_events
+SELECT event_time, device_id, event_name FROM page_events LIMIT 10000;
+
+-- Step 3: 조회
+SELECT COUNT(*) FROM s3_events;
+SELECT event_name, COUNT(*) FROM s3_events GROUP BY event_name ORDER BY 2 DESC LIMIT 5;
+```
+
+```bash
+# Step 4: S3에 실제 파일 생성 확인
+aws s3 ls s3://wowdb-test-bucket/wowdb/data/ --recursive | head -20
+```
+
+**기대 결과:**
+- Step 2: INSERT 성공
+- Step 3: `COUNT(*)` = 10,000; GROUP BY 결과 정상
+- Step 4: `seg_XXXX.col`, `seg_XXXX.min_max`, `seg_XXXX.bloom` 파일이 S3에 존재
+
+**Pass 기준:** Step 3, Step 4 모두 충족 시 Pass
+
+---
+
+### TC-DN-002: HDFS + Kerberos 인증 적재 및 조회
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-DN-002 |
+| **테스트명** | HDFS Kerberos 인증 후 DN 데이터 적재 및 조회 |
+| **관련 요구사항** | FR-DN-003 |
+| **우선순위** | Critical |
+
+**사전 조건:**
+
+```toml
+# dn.conf (HDFS + Kerberos 설정)
+[storage]
+backend                   = "hdfs"
+namenode                  = "hdfs://namenode:8020"
+kerberos_keytab           = "/etc/security/keytabs/wowdb.keytab"
+kerberos_principal        = "wowdb/dn-host@REALM.COM"
+kerberos_renew_interval_sec = 3600
+```
+
+- KDC 서버 기동, `wowdb.keytab` 발급 완료
+- HDFS에 `/wowdb/data/` 경로에 wowdb 서비스 계정 쓰기 권한 부여
+
+**테스트 절차:**
+
+```bash
+# Step 1: Kerberos 티켓 획득 확인
+klist -kt /etc/security/keytabs/wowdb.keytab
+
+# Step 2: HDFS 접근 테스트
+hdfs dfs -ls /wowdb/data/
+```
+
+```sql
+-- Step 3: HDFS 백엔드 Cube 생성
+CREATE CUBE hdfs_events (
+    event_time DATETIME NOT NULL,
+    device_id  VARCHAR(64) NOT NULL,
+    event_name VARCHAR(128) NOT NULL
+)
+ENGINE = WOW_LSM
+DISTRIBUTED BY HASH(device_id) BUCKETS 4
+ORDER BY (event_time, device_id)
+PROPERTIES ("storage_backend" = "hdfs");
+
+-- Step 4: 데이터 적재
+INSERT INTO hdfs_events
+SELECT event_time, device_id, event_name FROM page_events LIMIT 5000;
+
+-- Step 5: 조회 확인
+SELECT COUNT(*) FROM hdfs_events;
+```
+
+```bash
+# Step 6: HDFS 파일 생성 확인
+hdfs dfs -ls /wowdb/data/hdfs_events/
+```
+
+**기대 결과:**
+- Step 1: keytab의 Principal 목록 정상 출력
+- Step 2: HDFS 경로 접근 성공
+- Step 5: `COUNT(*)` = 5,000
+- Step 6: 컬럼별 `.col`, `.bloom`, `.min_max` 파일 HDFS에 존재
+
+**Kerberos 인증 실패 케이스:**
+- keytab 삭제 후 DN 재기동 → `ERROR: Kerberos authentication failed for principal wowdb/dn-host@REALM.COM` 반환 확인
+
+**Pass 기준:** 정상 케이스 Pass + 인증 실패 케이스 오류 메시지 정확 시 Pass
+
+---
+
+### TC-DN-003: 컬럼별 파일 분리 저장 구조 검증
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-DN-003 |
+| **테스트명** | 데이터 적재 후 DN 로컬 파일 시스템에서 컬럼별 파일 분리 확인 |
+| **관련 요구사항** | FR-DN-001 |
+| **우선순위** | High |
+
+**사전 조건:**
+- Native LSM 백엔드 DN (`storage.backend = "native"`)
+- `page_events` Cube에 100,000건 적재 + flush 완료 (메모리 → 디스크)
+
+**테스트 절차:**
+
+```bash
+# Step 1: DN 데이터 디렉토리 구조 확인
+find /data/wowdb/analytics/page_events -type f | sort
+
+# Step 2: 컬럼 파일 형식 확인
+ls /data/wowdb/analytics/page_events/partition=p_2024_q1/event_name/
+
+# Step 3: min_max 파일 존재 확인 (파티션 프루닝용)
+ls /data/wowdb/analytics/page_events/partition=p_2024_q1/event_time/
+
+# Step 4: _meta 디렉토리 확인
+cat /data/wowdb/analytics/page_events/partition=p_2024_q1/_meta/stats.json
+```
+
+**기대 결과:**
+
+```
+# Step 1 예상 출력 (일부):
+.../page_events/partition=p_2024_q1/device_id/seg_0001.col
+.../page_events/partition=p_2024_q1/device_id/seg_0001.bloom
+.../page_events/partition=p_2024_q1/event_name/seg_0001.col
+.../page_events/partition=p_2024_q1/event_name/seg_0001.dict
+.../page_events/partition=p_2024_q1/event_time/seg_0001.col
+.../page_events/partition=p_2024_q1/event_time/seg_0001.min_max
+.../page_events/partition=p_2024_q1/_meta/schema.json
+.../page_events/partition=p_2024_q1/_meta/stats.json
+
+# Step 4 예상 stats.json:
+{"row_count": 100000, "min_event_time": "...", "max_event_time": "..."}
+```
+
+**Pass 기준:** 각 컬럼이 독립 디렉토리에 `.col` 파일로 존재하고 `_meta/stats.json` 포함 시 Pass
+
+---
+
+## TC-MON: Monitoring 테스트
+
+---
+
+### TC-MON-001: SHOW CLUSTER STATUS 전체 노드 상태 조회
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-MON-001 |
+| **테스트명** | SHOW CLUSTER STATUS로 QN/CN/DN 전체 노드 상태 및 메트릭 확인 |
+| **관련 요구사항** | FR-MON-001 |
+| **우선순위** | Critical |
+
+**사전 조건:** QN 3 + CN 2 + DN 3 = 8노드 클러스터 정상 기동
+
+**테스트 절차:**
+
+```sql
+-- Step 1: 전체 클러스터 상태 조회
+SHOW CLUSTER STATUS;
+
+-- Step 2: 특정 노드 타입 필터
+SHOW CLUSTER STATUS WHERE node_type = 'QN';
+SHOW CLUSTER STATUS WHERE node_type = 'DN';
+
+-- Step 3: DN 1개 강제 종료 후 상태 확인
+-- (외부에서 kill -9 후 10초 대기)
+SHOW CLUSTER STATUS WHERE node_type = 'DN';
+```
+
+**기대 결과:**
+
+| 스텝 | 기대 결과 |
+|---|---|
+| Step 1 | 8개 노드 행 반환, 각 행에 `node_id`, `node_type`, `host`, `port`, `status`, `cpu_pct`, `mem_pct`, `disk_pct` 컬럼 |
+| Step 2 (QN) | 3행, `status = ALIVE`, `raft_role` 컬럼 포함 (Leader/Follower 구분) |
+| Step 3 | 종료된 DN의 `status = DEAD` 또는 `UNREACHABLE` 표시 |
+
+**Pass 기준:** Step 1, 2 충족 + Step 3에서 장애 DN 상태 변경 감지 시 Pass
+
+---
+
+### TC-MON-002: Prometheus /metrics 엔드포인트
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-MON-002 |
+| **테스트명** | 각 노드 :9090/metrics 엔드포인트가 Prometheus 형식 메트릭 반환 |
+| **관련 요구사항** | FR-MON-002 |
+| **우선순위** | High |
+
+**테스트 절차:**
+
+```bash
+# Step 1: 각 노드 유형별 /metrics 엔드포인트 확인
+curl -s http://qn-1:9090/metrics | grep -E "^wowdb_"
+curl -s http://cn-1:9090/metrics | grep -E "^wowdb_"
+curl -s http://dn-1:9090/metrics | grep -E "^wowdb_"
+
+# Step 2: QN 핵심 메트릭 항목 확인
+curl -s http://qn-1:9090/metrics | grep -E "wowdb_qn_(query_total|active_connections|raft_term)"
+
+# Step 3: DN 핵심 메트릭 항목 확인
+curl -s http://dn-1:9090/metrics | grep -E "wowdb_dn_(lsm_compaction|disk_used_bytes|tablet_count)"
+```
+
+**기대 결과:**
+
+| 메트릭 키 | 노드 타입 | 기대 존재 여부 |
+|---|---|---|
+| `wowdb_qn_query_total` | QN | 존재 |
+| `wowdb_qn_active_connections` | QN | 존재 |
+| `wowdb_qn_raft_term` | QN | 존재 |
+| `wowdb_cn_fragment_execution_total` | CN | 존재 |
+| `wowdb_cn_simd_rows_processed_total` | CN | 존재 |
+| `wowdb_dn_lsm_compaction_total` | DN | 존재 |
+| `wowdb_dn_disk_used_bytes` | DN | 존재 |
+| `wowdb_dn_tablet_count` | DN | 존재 |
+
+**Pass 기준:** 표에 나열된 8개 메트릭이 모두 각 노드에서 반환될 때 Pass
+
+---
+
+## TC-PROF: Query Profiler 테스트
+
+---
+
+### TC-PROF-001: SHOW QUERY PROFILE 조회 및 항목 검증
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-PROF-001 |
+| **테스트명** | 쿼리 실행 후 SHOW QUERY PROFILE로 실행 기록 확인 |
+| **관련 요구사항** | FR-PROF-001 |
+| **우선순위** | Critical |
+
+**사전 조건:** QN 접속 완료
+
+**테스트 절차:**
+
+```sql
+-- Step 1: 쿼리 실행 (프로파일 대상)
+SELECT DATE(event_time) AS dt, COUNT(*) AS cnt
+FROM page_events
+WHERE event_time >= '2024-01-01'
+GROUP BY dt ORDER BY dt;
+
+-- Step 2: 최근 쿼리 목록 조회
+SHOW QUERY PROFILE;
+
+-- Step 3: 특정 쿼리 상세 조회 (query_id는 Step 2에서 확인)
+SHOW QUERY PROFILE FOR '{query_id}';
+```
+
+**기대 결과:**
+
+| 스텝 | 기대 결과 |
+|---|---|
+| Step 2 | `query_id`, `start_time`, `end_time`, `duration_ms`, `status`, `sql_text` 컬럼 포함 |
+| Step 2 | Step 1의 SELECT 쿼리가 최상단에 위치 |
+| Step 3 | Fragment별 실행 시간, CN별 처리 행 수, DN별 스캔 행 수, SIMD 적용 여부 포함 |
+
+**Pass 기준:** Step 2, 3 모두 기대 결과 충족 시 Pass
+
+---
+
+### TC-PROF-002: 1,000개 순환 버퍼 한도 검증
+
+| 항목 | 내용 |
+|---|---|
+| **TC ID** | TC-PROF-002 |
+| **테스트명** | 1,001건째 쿼리 실행 시 가장 오래된 기록이 삭제되는 순환 버퍼 동작 |
+| **관련 요구사항** | FR-PROF-002 |
+| **우선순위** | High |
+
+**테스트 절차:**
+
+```bash
+# Step 1: 쿼리 1,001건 연속 실행 (스크립트)
+for i in $(seq 1 1001); do
+  mysql -h qn-1 -P 9030 -u admin -p -e \
+    "SELECT $i AS seq, COUNT(*) FROM page_events LIMIT 1;" 2>/dev/null
+done
+```
+
+```sql
+-- Step 2: 프로파일 건수 확인
+SELECT COUNT(*) AS profile_count FROM INFORMATION_SCHEMA.QUERY_PROFILES;
+
+-- Step 3: 가장 오래된 쿼리 확인
+SELECT query_id, start_time, sql_text
+FROM INFORMATION_SCHEMA.QUERY_PROFILES
+ORDER BY start_time ASC
+LIMIT 1;
+```
+
+**기대 결과:**
+- Step 2: `profile_count` = 1,000 (1,001번째 쿼리 이후에도 1,000 유지)
+- Step 3: `sql_text`에 `SELECT 2 AS seq` 이상의 쿼리 (최초 `SELECT 1 AS seq` 삭제 확인)
+
+**Pass 기준:** `COUNT(*) = 1000` 이고 최초 쿼리 삭제 확인 시 Pass
+
+---
+
 ## TC 실행 매트릭스
 
 | TC ID | 카테고리 | 우선순위 | 자동화 가능 | 선행 TC |
@@ -1222,3 +1891,18 @@ python load_test.py \
 | TC-WEB-001 | Web UI | Critical | 수동 | TC-DDL-001 |
 | TC-WEB-002 | Web UI | High | 수동 | TC-DDL-001 |
 | TC-WEB-003 | Web UI | Medium | 수동 | TC-DDL-001 |
+| TC-QN-001 | Query Node | Critical | 가능 | - |
+| TC-QN-002 | Query Node | Critical | 가능 (K8s 필요) | TC-QN-001 |
+| TC-QN-003 | Query Node | High | 반자동 | TC-QN-001 |
+| TC-CBO-001 | CBO | Critical | 가능 | TC-DML-002 |
+| TC-CBO-002 | CBO | Critical | 가능 | TC-CBO-001, TC-DDL-002 |
+| TC-CBO-003 | CBO | High | 가능 | TC-CBO-001 |
+| TC-CN-001 | Compute Node | High | 가능 | TC-DDL-001 |
+| TC-CN-002 | Compute Node | High | 반자동 | TC-CN-001 |
+| TC-DN-001 | Data Node | Critical | 가능 (S3 필요) | TC-DDL-001 |
+| TC-DN-002 | Data Node | Critical | 가능 (HDFS/Kerberos 필요) | TC-DDL-001 |
+| TC-DN-003 | Data Node | High | 가능 | TC-DML-002 |
+| TC-MON-001 | Monitoring | Critical | 가능 | - |
+| TC-MON-002 | Monitoring | High | 가능 | - |
+| TC-PROF-001 | Profiler | Critical | 가능 | TC-DML-001 |
+| TC-PROF-002 | Profiler | High | 가능 | TC-PROF-001 |

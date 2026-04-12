@@ -165,3 +165,33 @@ SRS 와 Testcase 를 문성의 형태로작성하는 거야
 
 SRS 는 srs.md
 testcase 는 tc.md 에 작성해줘
+
+---------------------------------------------------------------------------------
+
+1. 일단 NODE 구성은 
+- Data Node  ( LSM Storage 를 구현한 Horizontally scalable 한 노드 )
+- Compute Node ( Data Node 와 같이 붙어 있을 수도 있지만 떨어질수도 있는 Storage 와 Decoupling 되어서 DB 의 연산을 담당 하는 모듈 
+
+Optimizer Planner 가 시킨 역활을 수행하는 실제 Worker 에 해당 
+- Query Node ( SQL 과 관련된 Parsing 사용자 Frone End 제공 Plannner, CBO 통계 수집을 통해서 Query Accellarataion 을 수행하는 모듈 ) 
+  - Accelleration 을 위해서는 Columnar 최대 최소값 분산 Unique 값의 종류등을 위해서 각 Query 를 실행할때에 이 값들을 통계로 사용해서 Planning 하는 거지 
+
+
+일단적인 Planncer 와 같은 DB 모듈이 모두 구현되어야 해
+
+- Storage Node 에는 LSM Merge 를 하는 모듈이 필요하고 Partition 을 통해서 파일이 구분되어야해
+Partition 내에 있는 경우 LSM Meger 가 일어나는 거지 이를 위해서는 Key 를 받아야해 Create table 을 할때에
+
+- Storage Node 는 Native LSM, S3, HDFS (Kerberos 인증 기능 필수 ) 기능이 들어가야해
+
+- 이 DB 는 COlumnar DB 이며 각각의 Column 이 partition 단위로 나뉘어져 파일로 저장되어야 해
+
+- Query Node 는 홀수개씩 Raft 를 통해서 Metadata 를 관리해야해 이해 되니 ?? Query Node 는 각 테이블의 metadata 를 관리하는데 이 metadata 는 node 들 사이에서 동기화 되어야 하니깐 
+
+_query node 는 kubernetes 환경에서늬 접속을 위해서 어떤 노드에 붙어도 동일한 Endpoint 로 구현되도록 Stateless 해야 하고 이를 위해서 Metadata 정보가 통일되어 관리되어야 해 
+
+Monitoring 기능을 통해서 전체 Cluster 의 상태를 제공해야 하고 
+
+Profiler 를 통해서ㅗ Query 의 실행시간 을 최대 (1000) 개 까지 제공해야 해 
+
+이 설명도 모두  이 스펙에 추가해주고 tc.md 에도 반영해줘
