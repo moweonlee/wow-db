@@ -8,6 +8,8 @@ mod grpc;
 mod columnar;
 mod block_cache;
 mod index;
+mod transaction;
+mod partition;
 
 use anyhow::Result;
 use tracing::info;

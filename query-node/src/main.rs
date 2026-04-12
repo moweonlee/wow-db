@@ -8,6 +8,8 @@ mod mysql_protocol;
 mod sql_parser;
 mod planner;
 mod execution;
+mod ingestion;
+mod transaction;
 
 use anyhow::Result;
 use tracing::info;

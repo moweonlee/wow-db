@@ -2,6 +2,7 @@
 // WOW-DB 커스텀 AST 노드 뼈대 정의 (FUNNEL, COHORT, PATH, CREATE CUBE, ROUTINE LOAD)
 
 pub mod analytics;
+pub mod routineload;
 
 use anyhow::{bail, Result};
 use sqlparser::{

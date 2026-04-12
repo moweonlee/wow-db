@@ -30,12 +30,17 @@ impl SsTableBloom {
         self.bloom.check(key)
     }
 
-    /// 직렬화 (비트맵 바이트 배열)
+    /// 직렬화 (비트맵 + 해시 파라미터)
     pub fn to_bytes(&self) -> anyhow::Result<Bytes> {
+        let sip = self.bloom.sip_keys();
         let serialized = BloomSerialized {
-            bitmap:     self.bloom.bitmap(),
-            k_num:      self.bloom.number_of_hash_functions(),
-            num_bits:   self.bloom.number_of_bits() as u64,
+            bitmap:    self.bloom.bitmap(),
+            k_num:     self.bloom.number_of_hash_functions(),
+            num_bits:  self.bloom.number_of_bits() as u64,
+            sip0_k0:   sip[0].0,
+            sip0_k1:   sip[0].1,
+            sip1_k0:   sip[1].0,
+            sip1_k1:   sip[1].1,
         };
         let bytes = serde_json::to_vec(&serialized)?;
         Ok(Bytes::from(bytes))
@@ -43,12 +48,12 @@ impl SsTableBloom {
 
     /// 역직렬화
     pub fn from_bytes(data: &[u8]) -> anyhow::Result<Self> {
-        let serialized: BloomSerialized = serde_json::from_slice(data)?;
+        let s: BloomSerialized = serde_json::from_slice(data)?;
         let bloom = Bloom::from_existing(
-            &serialized.bitmap,
-            serialized.num_bits,
-            serialized.k_num,
-            [(0, 0), (1, 1)],   // seed (ignored by from_existing)
+            &s.bitmap,
+            s.num_bits,
+            s.k_num,
+            [(s.sip0_k0, s.sip0_k1), (s.sip1_k0, s.sip1_k1)],
         );
         Ok(Self { bloom })
     }
@@ -56,9 +61,13 @@ impl SsTableBloom {
 
 #[derive(Serialize, Deserialize)]
 struct BloomSerialized {
-    bitmap:   Vec<u8>,
-    k_num:    u32,
+    bitmap:  Vec<u8>,
+    k_num:   u32,
     num_bits: u64,
+    sip0_k0: u64,
+    sip0_k1: u64,
+    sip1_k0: u64,
+    sip1_k1: u64,
 }
 
 // ─── Granule-level Bloom Index ────────────────────────────────────────────────

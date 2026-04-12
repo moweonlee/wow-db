@@ -18,7 +18,8 @@
       "Bash(grep -E \"-->.*logical|-->.*physical|-->.*optimizer|-->.*execution\")",
       "Bash(cargo test:*)",
       "Bash(grep -E \"^test |PASSED|FAILED|ok$|error|running [0-9]\")",
-      "Bash(cargo doc:*)"
+      "Bash(cargo doc:*)",
+      "Bash(cargo build:*)"
     ]
   }
 }

@@ -113,15 +113,15 @@
 
 **독립 테스트**: Redpanda에 이벤트를 publish → 60초 이내 `SELECT COUNT(*) FROM page_events` 증가 확인
 
-- [ ] T060 [US2] `query-node/src/ingestion/kafka.rs` 구현 (rdkafka 기반 Routine Load — 컨슈머 그룹, 오프셋 추적, JSON/Avro 파싱, exactly-once ACK)
-- [ ] T061 [P] [US2] `query-node/src/sql_parser/routineload.rs` 구현 (CREATE/PAUSE/RESUME/STOP ROUTINE LOAD 문법 파싱)
-- [ ] T062 [US2] `query-node/src/transaction.rs` 구현 (2PC Transaction Manager — TxID 발급, Prepare/Commit/Rollback 코디네이션)
-- [ ] T063 [US2] `compute-node/src/ingestion.rs` 구현 (Row-to-Columnar 변환 — Kafka/INSERT 배치 → Arrow2 RecordBatch, 파티션 라우팅)
-- [ ] T064 [US2] `storage-node/src/grpc/write.rs` 구현 (WriteRows 완전 구현 — WAL append, MemTable insert, TxID 연결)
-- [ ] T065 [P] [US2] `storage-node/src/transaction.rs` 구현 (SN 측 2PC — Prepare 상태 유지, Commit 적용, Rollback 취소)
-- [ ] T066 [US2] `query-node/src/ingestion/spark.rs` 구현 (axum HTTP Stream Load 엔드포인트 — 포트 8040, TxID 수신, 컬럼 데이터 전달, Commit)
-- [ ] T067 [US2] `query-node/src/ingestion/async_insert.rs` 구현 (Async INSERT Buffer — QN 메모리 누적, 임계값/타임아웃 도달 시 배치 플러시, 종료 시 데이터 보존)
-- [ ] T068 [US2] `storage-node/src/partition.rs` 구현 (Auto Partition — INSERT 시 매핑 파티션 부재 시 QN에 파티션 생성 요청, 일/월/연 시간 단위)
+- [x] T060 [US2] `query-node/src/ingestion/kafka.rs` 구현 (rdkafka 기반 Routine Load — 컨슈머 그룹, 오프셋 추적, JSON/Avro 파싱, exactly-once ACK)
+- [x] T061 [P] [US2] `query-node/src/sql_parser/routineload.rs` 구현 (CREATE/PAUSE/RESUME/STOP ROUTINE LOAD 문법 파싱)
+- [x] T062 [US2] `query-node/src/transaction.rs` 구현 (2PC Transaction Manager — TxID 발급, Prepare/Commit/Rollback 코디네이션)
+- [x] T063 [US2] `compute-node/src/ingestion.rs` 구현 (Row-to-Columnar 변환 — Kafka/INSERT 배치 → Arrow2 RecordBatch, 파티션 라우팅)
+- [x] T064 [US2] `storage-node/src/grpc/write.rs` 구현 (WriteRows 완전 구현 — WAL append, MemTable insert, TxID 연결)
+- [x] T065 [P] [US2] `storage-node/src/transaction.rs` 구현 (SN 측 2PC — Prepare 상태 유지, Commit 적용, Rollback 취소)
+- [x] T066 [US2] `query-node/src/ingestion/spark.rs` 구현 (axum HTTP Stream Load 엔드포인트 — 포트 8040, TxID 수신, 컬럼 데이터 전달, Commit)
+- [x] T067 [US2] `query-node/src/ingestion/async_insert.rs` 구현 (Async INSERT Buffer — QN 메모리 누적, 임계값/타임아웃 도달 시 배치 플러시, 종료 시 데이터 보존)
+- [x] T068 [US2] `storage-node/src/partition.rs` 구현 (Auto Partition — INSERT 시 매핑 파티션 부재 시 QN에 파티션 생성 요청, 일/월/연 시간 단위)
 
 **체크포인트**: Redpanda → Routine Load → 쿼리 가능 end-to-end 흐름 확인, `SHOW ROUTINE LOAD` 상태 조회
 

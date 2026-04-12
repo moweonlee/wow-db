@@ -6,6 +6,7 @@ mod executor;
 mod grpc;
 mod runtime_filter;
 mod shuffle;
+mod ingestion;
 
 use anyhow::Result;
 use tracing::info;
