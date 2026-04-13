@@ -48,6 +48,9 @@ reqwest = { version = "0.12", features = ["json"] }
 # Metrics
 prometheus = "0.13"
 
+# Regex (LIKE 구현용)
+regex = "1"
+
 [features]
 default   = []
 kafka     = ["rdkafka"]

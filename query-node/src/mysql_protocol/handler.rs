@@ -20,6 +20,10 @@ use uuid::Uuid;
 
 use super::result_set::build_columns;
 use super::schema_cmds::handle_schema_command;
+use crate::executor::insert_exec::execute_insert;
+use crate::executor::mem_store::MEM_STORE;
+use crate::executor::select_exec::execute_select;
+use crate::executor::analytics_exec::{execute_funnel_count, execute_cohort_analysis, execute_path_analysis};
 use crate::meta::cube::CubeManager;
 use crate::raft::RaftManager;
 use crate::session_mv::manager::SmvManager;
@@ -160,6 +164,24 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
             return rw.finish().await.map_err(Into::into);
         }
 
+        // CREATE SESSION MATERIALIZED VIEW
+        if lower.contains("session materialized view") || lower.contains("session mv") {
+            // CREATE SESSION MATERIALIZED VIEW <name> ON <cube> ...
+            let words: Vec<&str> = sql.split_whitespace().collect();
+            let mv_name = words.iter().enumerate()
+                .find(|(_, w)| w.to_lowercase() == "view")
+                .and_then(|(i, _)| words.get(i+1))
+                .map(|s| s.trim_matches('`').trim_end_matches(';').to_string())
+                .unwrap_or_else(|| "session_mv".to_string());
+            info!(mv = %mv_name, "Session MV created (stub)");
+            // SMV 메타 등록
+            let key = format!("smv:{mv_name}");
+            let _ = self.raft.write(crate::raft::RaftCommand::UpsertKv {
+                key, value: sql.to_string()
+            }).await;
+            return results.completed(OkResponse::default()).await.map_err(Into::into);
+        }
+
         // CREATE CUBE DDL
         if lower.starts_with("create cube") {
             let if_not_exists = lower.contains("if not exists");
@@ -202,6 +224,85 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
                 }
                 _ => return results.error(ErrorKind::ER_BAD_TABLE_ERROR, format!("Unknown cube: {name}").as_bytes()).await.map_err(Into::into),
             }
+        }
+
+        // ── INSERT ────────────────────────────────────────────────────────────
+        if lower.starts_with("insert ") {
+            match execute_insert(sql) {
+                Ok(r) => return results.completed(OkResponse {
+                    affected_rows: r.rows_affected,
+                    ..Default::default()
+                }).await.map_err(Into::into),
+                Err(e) => return results.error(ErrorKind::ER_PARSE_ERROR, e.as_bytes()).await.map_err(Into::into),
+            }
+        }
+
+        // ── WOW-DB 분석 함수 (FUNNEL_COUNT, COHORT_ANALYSIS, PATH_ANALYSIS) ──
+        let analytics_fn = if lower.contains("funnel_count(") {
+            Some(execute_funnel_count(sql))
+        } else if lower.contains("cohort_analysis(") {
+            Some(execute_cohort_analysis(sql))
+        } else if lower.contains("path_analysis(") {
+            Some(execute_path_analysis(sql))
+        } else {
+            None
+        };
+
+        if let Some(analytics_result) = analytics_fn {
+            match analytics_result {
+                Ok(sel) => {
+                    let col_defs: Vec<_> = sel.columns.iter()
+                        .map(|c| build_columns(c, ColumnType::MYSQL_TYPE_VAR_STRING))
+                        .collect();
+                    let mut rw = results.start(&col_defs).await?;
+                    for row in &sel.rows {
+                        let strs: Vec<Option<String>> = row.iter().map(|v| match v {
+                            serde_json::Value::Null    => None,
+                            serde_json::Value::String(s) => Some(s.clone()),
+                            other => Some(other.to_string()),
+                        }).collect();
+                        let refs: Vec<Option<&str>> = strs.iter().map(|s| s.as_deref()).collect();
+                        rw.write_row(refs).await?;
+                    }
+                    return rw.finish().await.map_err(Into::into);
+                }
+                Err(e) => {
+                    return results.error(ErrorKind::ER_PARSE_ERROR, e.as_bytes())
+                        .await.map_err(Into::into);
+                }
+            }
+        }
+
+        // ── SELECT ────────────────────────────────────────────────────────────
+        if lower.starts_with("select ") {
+            match execute_select(sql) {
+                Ok(sel) => {
+                    let col_defs: Vec<_> = sel.columns.iter()
+                        .map(|c| build_columns(c, ColumnType::MYSQL_TYPE_VAR_STRING))
+                        .collect();
+                    let mut rw = results.start(&col_defs).await?;
+                    for row in &sel.rows {
+                        let strs: Vec<Option<String>> = row.iter().map(|v| match v {
+                            serde_json::Value::Null    => None,
+                            serde_json::Value::String(s) => Some(s.clone()),
+                            other => Some(other.to_string()),
+                        }).collect();
+                        let refs: Vec<Option<&str>> = strs.iter().map(|s| s.as_deref()).collect();
+                        rw.write_row(refs).await?;
+                    }
+                    return rw.finish().await.map_err(Into::into);
+                }
+                Err(e) => return results.error(ErrorKind::ER_PARSE_ERROR, e.as_bytes()).await.map_err(Into::into),
+            }
+        }
+
+        // ── SELECT 에 걸리지 않는 시스템 변수 쿼리 (SELECT 이외 경로) ─────────
+
+        // ── DELETE ────────────────────────────────────────────────────────────
+        if lower.starts_with("delete from") || lower.starts_with("truncate") {
+            let table = lower.split_whitespace().last().unwrap_or("").trim_end_matches(';').to_string();
+            MEM_STORE.drop_table(&table);
+            return results.completed(OkResponse::default()).await.map_err(Into::into);
         }
 
         // WOW-DB 쿼리 실행 (스텁 — Phase D에서 실행 엔진 연동)

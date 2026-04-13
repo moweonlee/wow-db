@@ -2500,6 +2500,7 @@ dependencies = [
  "prost-build",
  "protoc-bin-vendored",
  "rdkafka",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

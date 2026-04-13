@@ -15,6 +15,7 @@ mod web_ui;
 mod profiler;
 mod monitoring;
 mod resource_group;
+mod executor;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
