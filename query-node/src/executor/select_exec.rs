@@ -78,13 +78,26 @@ pub fn execute_select(sql: &str) -> Result<SelectResult, String> {
     let select_items: Vec<_> = select.projection.iter().collect();
 
     let mut result = if group_by_cols.is_empty() {
-        project_rows(&select_items, &rows)?
+        project_rows(&select_items, &rows, select.distinct.is_some())?
     } else {
         execute_group_by(&select_items, &rows, &group_by_cols)?
     };
 
-    // HAVING
-    // (간단 구현: GROUP BY 결과 행에 대해 HAVING 조건 적용)
+    // HAVING — GROUP BY 결과 행에 HAVING 조건 적용
+    if let Some(having_expr) = &select.having {
+        let col_names = result.columns.clone();
+        result.rows = result.rows.into_iter().filter(|row| {
+            // 결과 행을 Row(HashMap)로 변환해 eval_expr 재사용
+            let mut fake_row: Row = std::collections::HashMap::new();
+            for (col, val) in col_names.iter().zip(row.iter()) {
+                // alias 없는 집계 함수명도 컬럼명으로 등록
+                fake_row.insert(col.clone(), val.clone());
+                // COUNT(*) → count(*) 소문자도 등록
+                fake_row.insert(col.to_lowercase(), val.clone());
+            }
+            eval_expr(having_expr, &fake_row).as_bool()
+        }).collect();
+    }
 
     // ORDER BY
     if let Some(order_by) = &query.order_by {
@@ -170,6 +183,7 @@ fn execute_group_by(
 fn project_rows(
     items: &[&sqlparser::ast::SelectItem],
     rows: &[Row],
+    distinct: bool,
 ) -> Result<SelectResult, String> {
     let has_wildcard = items.iter().any(|i| matches!(i, sqlparser::ast::SelectItem::Wildcard(_)));
 
@@ -229,7 +243,18 @@ fn project_rows(
         return Ok(SelectResult { columns: col_names, rows: vec![agg_row] });
     }
 
-    Ok(SelectResult { columns: col_names, rows: result })
+    // DISTINCT 중복 제거
+    let final_rows = if distinct {
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        result.into_iter().filter(|row| {
+            let key = row.iter().map(|v| v.to_string()).collect::<Vec<_>>().join("\x00");
+            seen.insert(key)
+        }).collect()
+    } else {
+        result
+    };
+
+    Ok(SelectResult { columns: col_names, rows: final_rows })
 }
 
 // ── 표현식 평가 ───────────────────────────────────────────────────────────────
@@ -508,10 +533,25 @@ fn eval_aggregate(expr: &sqlparser::ast::Expr, group_rows: &[&Row]) -> Value {
 // ── ORDER BY ─────────────────────────────────────────────────────────────────
 
 fn apply_order_by(result: &mut SelectResult, order_by: &[sqlparser::ast::OrderByExpr]) {
+    // 여러 ORDER BY 키를 순서대로 처리 (primary, secondary, ...)
+    // stable_sort를 반복해 multi-key sort 구현
     for ob in order_by.iter().rev() {
-        let col_name = expr_to_col_name(&ob.expr);
         let asc = ob.asc.unwrap_or(true);
-        if let Some(idx) = result.columns.iter().position(|c| c == &col_name) {
+        // 컬럼 인덱스 결정: 숫자 리터럴(위치) 또는 컬럼명/별칭
+        let idx_opt = match &ob.expr {
+            sqlparser::ast::Expr::Value(sqlparser::ast::Value::Number(n, _)) => {
+                n.parse::<usize>().ok().and_then(|p| if p > 0 { Some(p-1) } else { None })
+            }
+            other => {
+                let col_name = expr_to_col_name(other);
+                result.columns.iter().position(|c| c.to_lowercase() == col_name.to_lowercase())
+                    .or_else(|| {
+                        // alias 없이 집계식 그대로도 시도
+                        result.columns.iter().position(|c| c == &col_name)
+                    })
+            }
+        };
+        if let Some(idx) = idx_opt {
             result.rows.sort_by(|a, b| {
                 let ord = cmp_json(
                     a.get(idx).unwrap_or(&Value::Null),
