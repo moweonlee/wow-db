@@ -37,10 +37,13 @@ pub fn execute_select(sql: &str) -> Result<SelectResult, String> {
         _ => return Err("Unsupported query body".into()),
     };
 
-    // FROM 절 — 테이블명
+    // FROM 절 — 테이블명 (alias 없이 실제 테이블명)
     let table_name = select.from.first()
         .and_then(|t| match &t.relation {
-            TableFactor::Table { name, .. } => Some(name.to_string()),
+            TableFactor::Table { name, .. } => {
+                // 마지막 파트 (schema.table → table)
+                Some(name.0.last().map(|i| i.value.clone()).unwrap_or_default())
+            }
             _ => None,
         })
         .unwrap_or_default();
@@ -58,8 +61,36 @@ pub fn execute_select(sql: &str) -> Result<SelectResult, String> {
         return Ok(SelectResult { columns: col_names, rows: vec![out_row] });
     }
 
-    // 전체 행 스캔
-    let mut rows: Vec<Row> = MEM_STORE.scan(&table_name);
+    // JOIN 처리: FROM 절의 테이블 및 JOIN 목록 수집
+    let from_item = &select.from[0];
+    let left_alias = match &from_item.relation {
+        TableFactor::Table { alias, .. } => alias.as_ref().map(|a| a.name.value.clone()),
+        _ => None,
+    };
+
+    // 전체 행 스캔 (기본 테이블)
+    let raw_base_rows: Vec<Row> = MEM_STORE.scan(&table_name);
+
+    // 기본 테이블 alias가 있으면 alias.col 키도 추가
+    let base_rows: Vec<Row> = if let Some(ref alias) = left_alias {
+        raw_base_rows.into_iter().map(|mut row| {
+            let keys: Vec<_> = row.keys().cloned().collect();
+            for k in keys {
+                let v = row[&k].clone();
+                row.insert(format!("{}.{}", alias, k), v);
+            }
+            row
+        }).collect()
+    } else {
+        raw_base_rows
+    };
+
+    let mut rows: Vec<Row> = if from_item.joins.is_empty() {
+        base_rows
+    } else {
+        // JOIN 수행: nested loop join
+        apply_joins(base_rows, &from_item.joins, left_alias.as_deref())?
+    };
 
     // WHERE 필터
     if let Some(ref where_expr) = select.selection {
@@ -111,6 +142,72 @@ pub fn execute_select(sql: &str) -> Result<SelectResult, String> {
         }
     }
 
+    Ok(result)
+}
+
+// ── JOIN 처리 ─────────────────────────────────────────────────────────────────
+
+/// 기본 테이블 rows에 JOIN 목록을 순서대로 적용
+fn apply_joins(
+    left_rows: Vec<Row>,
+    joins: &[sqlparser::ast::Join],
+    _left_alias: Option<&str>,
+) -> Result<Vec<Row>, String> {
+    use sqlparser::ast::{Join, JoinOperator, JoinConstraint, TableFactor};
+
+    let mut result = left_rows;
+
+    for join in joins {
+        // 오른쪽 테이블명 추출
+        let right_table = match &join.relation {
+            TableFactor::Table { name, .. } => name.to_string(),
+            _ => return Err("Unsupported JOIN table type".into()),
+        };
+        let right_alias = match &join.relation {
+            TableFactor::Table { alias, .. } => alias.as_ref().map(|a| a.name.value.clone()),
+            _ => None,
+        };
+        let right_rows = MEM_STORE.scan(&right_table);
+
+        // ON 조건 추출
+        let on_expr = match &join.join_operator {
+            JoinOperator::Inner(JoinConstraint::On(expr))      => Some(expr.clone()),
+            JoinOperator::LeftOuter(JoinConstraint::On(expr))  => Some(expr.clone()),
+            JoinOperator::RightOuter(JoinConstraint::On(expr)) => Some(expr.clone()),
+            JoinOperator::CrossJoin => None,
+            _ => None,
+        };
+        let is_left = matches!(&join.join_operator, JoinOperator::LeftOuter(_));
+
+        // 두 테이블 중 컬럼명이 겹칠 경우 alias.col 형식으로 추가 등록
+        let mut new_result: Vec<Row> = Vec::new();
+        for left_row in &result {
+            let mut matched = false;
+            for right_row in &right_rows {
+                // 두 행 병합: right alias가 있으면 alias.col 키로도 등록
+                let mut merged = left_row.clone();
+                for (k, v) in right_row.iter() {
+                    // 기본 키
+                    merged.entry(k.clone()).or_insert_with(|| v.clone());
+                    // alias.col 형식도 등록
+                    if let Some(alias) = &right_alias {
+                        merged.insert(format!("{}.{}", alias, k), v.clone());
+                    }
+                }
+                // ON 조건 평가
+                let include = on_expr.as_ref().map(|e| eval_expr(e, &merged).as_bool()).unwrap_or(true);
+                if include {
+                    new_result.push(merged);
+                    matched = true;
+                }
+            }
+            // LEFT JOIN: 매칭 행이 없으면 left_row만으로 NULL 행 추가
+            if is_left && !matched {
+                new_result.push(left_row.clone());
+            }
+        }
+        result = new_result;
+    }
     Ok(result)
 }
 
@@ -305,7 +402,9 @@ fn eval_expr(expr: &sqlparser::ast::Expr, row: &Row) -> EvalResult {
         }
         E::CompoundIdentifier(parts) => {
             let col = parts.last().map(|i| i.value.trim_matches('`').to_string()).unwrap_or_default();
-            match row.get(&col) {
+            // alias.col 형식: "alias.col" 키로 먼저 찾고, 없으면 col로 찾기
+            let full_key = parts.iter().map(|i| i.value.trim_matches('`')).collect::<Vec<_>>().join(".");
+            match row.get(&full_key).or_else(|| row.get(&col)) {
                 Some(v) => EvalResult::Val(v.clone()),
                 None    => EvalResult::Null,
             }
@@ -421,8 +520,10 @@ fn eval_function(f: &sqlparser::ast::Function, row: &Row) -> EvalResult {
         "LENGTH" | "CHAR_LENGTH" => first_arg_expr(&f.args).map(|e| {
             EvalResult::Val(serde_json::json!(json_to_str(&eval_expr(e, row).into_value()).len()))
         }).unwrap_or(EvalResult::Null),
-        "NOW" | "CURRENT_TIMESTAMP" => {
-            EvalResult::Val(Value::String(chrono::Utc::now().to_rfc3339()))
+        "NOW" | "CURRENT_TIMESTAMP" | "SYSDATE" => {
+            // MySQL 호환 datetime 포맷: 'YYYY-MM-DD HH:MM:SS'
+            let now = chrono::Utc::now();
+            EvalResult::Val(Value::String(now.format("%Y-%m-%d %H:%M:%S").to_string()))
         }
         "COALESCE" => {
             if let sqlparser::ast::FunctionArguments::List(list) = &f.args {
@@ -561,8 +662,15 @@ fn eval_aggregate(expr: &sqlparser::ast::Expr, group_rows: &[&Row]) -> Value {
             }
         }
         "SUM" => col_expr.map(|e| {
-            let s: f64 = group_rows.iter().filter_map(|r| eval_expr(e, r).as_f64()).sum();
-            serde_json::json!(s)
+            let vals: Vec<Value> = group_rows.iter().map(|r| eval_expr(e, r).into_value()).collect();
+            // 모든 값이 정수이면 정수 합계 반환
+            if vals.iter().all(|v| matches!(v, Value::Number(n) if n.is_i64() || n.is_u64()) || matches!(v, Value::Null)) {
+                let s: i64 = vals.iter().filter_map(|v| match v { Value::Number(n) => n.as_i64(), _ => None }).sum();
+                serde_json::json!(s)
+            } else {
+                let s: f64 = vals.iter().filter_map(|v| match v { Value::Number(n) => n.as_f64(), _ => None }).sum();
+                serde_json::json!(s)
+            }
         }).unwrap_or(Value::Null),
         "AVG" => col_expr.map(|e| {
             let vals: Vec<f64> = group_rows.iter().filter_map(|r| eval_expr(e, r).as_f64()).collect();

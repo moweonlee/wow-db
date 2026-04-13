@@ -674,6 +674,31 @@ USER KEY user_id
 SESSION TIMEOUT 1800
 NAME page_events_sessions;
 
+-- ── JOIN 테스트 ───────────────────────────────────────────────────
+-- [Q89b] INNER JOIN: 구매 이벤트 + 사용자 프로필
+SELECT p.user_id, u.plan, u.country, p.category, p.amount
+FROM purchase_events p
+JOIN user_profiles u ON p.user_id = u.user_id
+WHERE p.amount >= 500000
+ORDER BY p.amount DESC
+LIMIT 5;
+
+-- [Q89c] LEFT JOIN: 모든 사용자 + 구매 정보 (구매 없는 사용자 포함)
+SELECT u.user_id, u.plan, COUNT(p.order_id) AS purchase_count
+FROM user_profiles u
+LEFT JOIN purchase_events p ON u.user_id = p.user_id
+GROUP BY u.user_id, u.plan
+ORDER BY purchase_count DESC
+LIMIT 8;
+
+-- [Q89d] JOIN + GROUP BY + HAVING
+SELECT u.country, COUNT(DISTINCT p.user_id) AS buyers, SUM(p.amount) AS revenue
+FROM purchase_events p
+JOIN user_profiles u ON p.user_id = u.user_id
+GROUP BY u.country
+HAVING revenue > 500000
+ORDER BY revenue DESC;
+
 -- ── 최종 검증 ─────────────────────────────────────────────────────
 -- [Q90] SHOW TABLES
 SHOW TABLES;

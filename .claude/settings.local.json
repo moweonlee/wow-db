@@ -48,7 +48,11 @@
       "Bash(docker stop:*)",
       "Bash(docker rm:*)",
       "Bash(grep -r \"charset\\\\|CHARSET\\\\|utf8\\\\|latin\" ~/.cargo/registry/src/index.crates.io-*/opensrv-mysql-0.4*/src/*.rs)",
-      "Bash(xxd)"
+      "Bash(xxd)",
+      "Bash(grep -A1 -E \"\\(total_pages|page_events_cnt|purchase_cnt|user_cnt|product_cnt|session_cnt|ab_cnt|search_cnt|error_cnt|metric_cnt|click_cnt|^two$\\)\")",
+      "Bash(grep -B1 -A5 \"^category.*revenue$\" /tmp/full_results.txt)",
+      "Bash(grep -A1 -E \"\\(page_events_cnt|purchase_cnt|user_cnt|product_cnt|session_cnt|ab_cnt|search_cnt|error_cnt|metric_cnt|click_cnt|^two$\\)\" /tmp/full_results2.txt)",
+      "Bash(grep -A1 \"current_time\\\\|^ts$\" /tmp/full_results2.txt)"
     ]
   }
 }
