@@ -10,6 +10,20 @@ CREATE DATABASE IF NOT EXISTS analytics;
 USE analytics;
 
 -- ────────────────────────────────────────────────────────────────────
+-- [0b] 테이블 초기화 (멱등 실행 보장)
+-- ────────────────────────────────────────────────────────────────────
+DELETE FROM page_events;
+DELETE FROM purchase_events;
+DELETE FROM user_profiles;
+DELETE FROM products;
+DELETE FROM session_stats;
+DELETE FROM ab_test_events;
+DELETE FROM search_events;
+DELETE FROM error_events;
+DELETE FROM daily_metrics;
+DELETE FROM click_events;
+
+-- ────────────────────────────────────────────────────────────────────
 -- [1] CREATE CUBE x10 (DDL 테스트)
 -- ────────────────────────────────────────────────────────────────────
 

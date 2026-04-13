@@ -465,9 +465,46 @@ fn eval_function(f: &sqlparser::ast::Function, row: &Row) -> EvalResult {
             EvalResult::Val(Value::String(s))
         }
         "ROUND" => {
-            if let Some(e) = first_arg_expr(&f.args) {
-                if let Some(n) = eval_expr(e, row).as_f64() {
-                    return EvalResult::Val(serde_json::json!((n * 100.0).round() / 100.0));
+            if let sqlparser::ast::FunctionArguments::List(list) = &f.args {
+                let exprs: Vec<&sqlparser::ast::Expr> = list.args.iter().filter_map(|a| match a {
+                    sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(e)) => Some(e),
+                    _ => None,
+                }).collect();
+                if let Some(n) = exprs.first().and_then(|e| eval_expr(e, row).as_f64()) {
+                    let decimals = exprs.get(1).and_then(|e| eval_expr(e, row).as_f64()).unwrap_or(0.0) as i32;
+                    let factor = 10f64.powi(decimals);
+                    let result = (n * factor).round() / factor;
+                    // 소수점 없는 경우 정수 반환
+                    if decimals <= 0 && result.fract() == 0.0 {
+                        return EvalResult::Val(serde_json::json!(result as i64));
+                    }
+                    return EvalResult::Val(serde_json::json!(result));
+                }
+            }
+            EvalResult::Null
+        }
+        "DATE_FORMAT" => {
+            // DATE_FORMAT(date, format) — 간단한 포맷 지원
+            if let sqlparser::ast::FunctionArguments::List(list) = &f.args {
+                let exprs: Vec<&sqlparser::ast::Expr> = list.args.iter().filter_map(|a| match a {
+                    sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(e)) => Some(e),
+                    _ => None,
+                }).collect();
+                if exprs.len() >= 2 {
+                    let date_str = json_to_str(&eval_expr(exprs[0], row).into_value());
+                    let fmt_str = json_to_str(&eval_expr(exprs[1], row).into_value());
+                    // 날짜 앞 10자만 추출 (YYYY-MM-DD)
+                    let date_part = if date_str.len() >= 10 { &date_str[..10] } else { &date_str };
+                    let parts: Vec<&str> = date_part.split('-').collect();
+                    let (y, m, d) = (
+                        parts.get(0).copied().unwrap_or(""),
+                        parts.get(1).copied().unwrap_or(""),
+                        parts.get(2).copied().unwrap_or(""),
+                    );
+                    let result = fmt_str
+                        .replace("%Y", y).replace("%m", m).replace("%d", d)
+                        .replace("%y", if y.len() >= 4 { &y[2..] } else { y });
+                    return EvalResult::Val(Value::String(result));
                 }
             }
             EvalResult::Null
@@ -497,10 +534,23 @@ fn eval_aggregate(expr: &sqlparser::ast::Expr, group_rows: &[&Row]) -> Value {
 
     let col_expr = first_arg_expr(&func.args);
 
+    // COUNT(DISTINCT col) 여부 확인
+    let is_distinct = matches!(&func.args, sqlparser::ast::FunctionArguments::List(list) if list.distinct);
+
     match name.as_str() {
         "COUNT" => {
             if is_wildcard || col_expr.is_none() {
                 serde_json::json!(group_rows.len() as i64)
+            } else if is_distinct {
+                // COUNT(DISTINCT col): 유니크 비-NULL 값 카운트
+                let mut seen = std::collections::HashSet::new();
+                let cnt = group_rows.iter().filter(|r| {
+                    let v = eval_expr(col_expr.unwrap(), r).into_value();
+                    if matches!(&v, Value::Null) { return false; }
+                    let key = json_to_sort_str(&v);
+                    seen.insert(key)
+                }).count();
+                serde_json::json!(cnt as i64)
             } else {
                 let cnt = group_rows.iter().filter(|r| {
                     let v = eval_expr(col_expr.unwrap(), r);
@@ -594,7 +644,16 @@ pub fn select_item_header(item: &sqlparser::ast::SelectItem) -> String {
 pub fn sql_value_to_json(v: &sqlparser::ast::Value) -> Value {
     use sqlparser::ast::Value::*;
     match v {
-        Number(s, _) => s.parse::<f64>().map(|n| serde_json::json!(n)).unwrap_or(Value::String(s.clone())),
+        Number(s, _) => {
+            // 정수 우선 파싱, 실패 시 f64
+            if let Ok(n) = s.parse::<i64>() {
+                serde_json::json!(n)
+            } else if let Ok(n) = s.parse::<f64>() {
+                serde_json::json!(n)
+            } else {
+                Value::String(s.clone())
+            }
+        }
         SingleQuotedString(s) | DoubleQuotedString(s) =>
             serde_json::from_str::<Value>(s).unwrap_or(Value::String(s.clone())),
         Boolean(b) => Value::Bool(*b),
@@ -651,7 +710,17 @@ fn cmp_json(a: &Value, b: &Value) -> std::cmp::Ordering {
 
 fn numeric_op(a: &EvalResult, b: &EvalResult, op: impl Fn(f64, f64) -> f64) -> EvalResult {
     match (a.as_f64(), b.as_f64()) {
-        (Some(x), Some(y)) => EvalResult::Val(serde_json::json!(op(x, y))),
+        (Some(x), Some(y)) => {
+            let result = op(x, y);
+            // 정수 피연산자 + 정수 결과이면 정수로 반환
+            let a_is_int = matches!(a, EvalResult::Val(Value::Number(n)) if n.is_i64() || n.is_u64());
+            let b_is_int = matches!(b, EvalResult::Val(Value::Number(n)) if n.is_i64() || n.is_u64());
+            if a_is_int && b_is_int && result.fract() == 0.0 && result.abs() < 9007199254740992.0 {
+                EvalResult::Val(serde_json::json!(result as i64))
+            } else {
+                EvalResult::Val(serde_json::json!(result))
+            }
+        }
         _ => EvalResult::Null,
     }
 }

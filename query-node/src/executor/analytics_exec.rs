@@ -348,7 +348,6 @@ pub fn execute_path_analysis(sql: &str) -> Result<SelectResult, String> {
         events.sort_by_key(|(ts, _)| *ts);
     }
 
-    let total_users = user_events.len().max(1) as f64;
     let mut path_counts: HashMap<String, u64> = HashMap::new();
 
     for events in user_events.values() {
@@ -360,11 +359,15 @@ pub fn execute_path_analysis(sql: &str) -> Result<SelectResult, String> {
         }
     }
 
+    // 전체 경로 발생 횟수를 분모로 사용 (사용자 수가 아니라 총 path 발생 수)
+    let total_paths: u64 = path_counts.values().sum();
+    let total_paths_f = total_paths.max(1) as f64;
+
     let mut result_rows: Vec<Vec<Value>> = path_counts.iter()
         .map(|(path, count)| vec![
             Value::String(path.clone()),
             Value::Number(serde_json::Number::from(*count)),
-            Value::String(format!("{:.1}%", *count as f64 / total_users * 100.0)),
+            Value::String(format!("{:.1}%", *count as f64 / total_paths_f * 100.0)),
         ])
         .collect();
 

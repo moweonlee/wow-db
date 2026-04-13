@@ -47,7 +47,8 @@
       "Bash(docker build:*)",
       "Bash(docker stop:*)",
       "Bash(docker rm:*)",
-      "Bash(grep -r \"charset\\\\|CHARSET\\\\|utf8\\\\|latin\" ~/.cargo/registry/src/index.crates.io-*/opensrv-mysql-0.4*/src/*.rs)"
+      "Bash(grep -r \"charset\\\\|CHARSET\\\\|utf8\\\\|latin\" ~/.cargo/registry/src/index.crates.io-*/opensrv-mysql-0.4*/src/*.rs)",
+      "Bash(xxd)"
     ]
   }
 }
