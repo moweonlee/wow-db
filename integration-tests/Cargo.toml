@@ -51,3 +51,7 @@ required-features = ["integration"]
 name              = "failover_tests"
 path              = "tests/failover_tests.rs"
 required-features = ["integration"]
+
+[[test]]
+name = "throughput_bench"
+path = "benches/throughput.rs"

@@ -44,6 +44,10 @@ crc32fast = "1"
 # Zero-copy buffers
 bytes = "1"
 
+# HTTP health server
+axum = { version = "0.7" }
+tokio-util = { version = "0.7" }
+
 # Skip-list for MemTable
 crossbeam-skiplist = "0.1"
 

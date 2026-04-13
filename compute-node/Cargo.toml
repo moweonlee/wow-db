@@ -37,6 +37,9 @@ rayon = "1"
 # Crossbeam for concurrent structures (pipeline channels)
 crossbeam-channel = "0.5"
 
+# HTTP health server
+axum = { version = "0.7" }
+
 [build-dependencies]
 tonic-build = "0.12"
 prost-build = "0.13"

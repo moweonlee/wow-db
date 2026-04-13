@@ -107,6 +107,22 @@ impl TabletManager {
         }
     }
 
+    /// Cube의 모든 Tablet 목록
+    pub async fn list_for_cube(&self, cube_id: &str) -> Result<Vec<TabletInfo>> {
+        let sm = self.raft.sm.read().await;
+        let mut result = Vec::new();
+        for (k, v) in &sm.kv {
+            if k.starts_with("tablet:") {
+                if let Ok(info) = serde_json::from_str::<TabletInfo>(v) {
+                    if info.cube_id.to_string() == cube_id {
+                        result.push(info);
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+
     /// Cube의 특정 파티션 내 모든 Tablet 목록
     pub async fn list_for_partition(
         &self,

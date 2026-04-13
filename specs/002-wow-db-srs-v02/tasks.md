@@ -133,16 +133,16 @@
 
 **독립 테스트**: CREATE CUBE (JSON 컬럼 포함) → INSERT → Compaction 후 Flat JSON 컬럼 쿼리 확인
 
-- [ ] T069 [US4] `query-node/src/sql_parser/cube_ddl.rs` 구현 (전체 CREATE CUBE 문법 — PARTITION BY RANGE, AUTO PARTITION, ORDER BY, DISTRIBUTED BY HASH, COLOCATE WITH, STORAGE BACKEND)
-- [ ] T070 [P] [US4] `query-node/src/meta/alter_cube.rs` 구현 (ALTER CUBE ADD/DROP COLUMN — 스키마 버전 관리, Raft 복제)
-- [ ] T071 [P] [US4] `query-node/src/meta/drop_cube.rs` 구현 (DROP CUBE — Tablet 삭제 코디네이션, Raft 메타 정리)
-- [ ] T072 [US4] `storage-node/src/backend/s3.rs` 구현 (object_store 기반 S3/MinIO 백엔드 — SSTable PUT/GET/DELETE, 로컬 LRU 캐시 레이어)
-- [ ] T073 [US4] `storage-node/src/columnar/flat_json.rs` 구현 (Flat JSON 자동 컬럼 추출 — Compaction 시 key 출현율 분석, 임계값 이상 key → 독립 `.col` 파일, `_flat_meta.json` 갱신)
-- [ ] T074 [P] [US4] `storage-node/src/ttl.rs` 구현 (TTL 만료 — Compaction 시 파티션 단위 행 자동 삭제)
-- [ ] T075 [P] [US4] `query-node/src/meta/preagg_mv.rs` 구현 (CREATE MATERIALIZED VIEW AS SELECT GROUP BY 파싱 및 메타데이터 등록)
-- [ ] T076 [US4] `compute-node/src/mv_refresh.rs` 구현 (Pre-aggregation MV INSERT 시점/주기 갱신 실행기)
-- [ ] T077 [P] [US4] `storage-node/src/index/set_index.rs` 구현 (per-Granule SET 인덱스)
-- [ ] T078 [P] [US4] `storage-node/src/index/ngrambf.rs` 구현 (per-Granule NGRAMBF_V1 인덱스 — N-gram Bloom Filter, 텍스트 LIKE 쿼리 가속)
+- [x] T069 [US4] `query-node/src/sql_parser/cube_ddl.rs` 구현 (전체 CREATE CUBE 문법 — PARTITION BY RANGE, AUTO PARTITION, ORDER BY, DISTRIBUTED BY HASH, COLOCATE WITH, STORAGE BACKEND)
+- [x] T070 [P] [US4] `query-node/src/meta/alter_cube.rs` 구현 (ALTER CUBE ADD/DROP COLUMN — 스키마 버전 관리, Raft 복제)
+- [x] T071 [P] [US4] `query-node/src/meta/drop_cube.rs` 구현 (DROP CUBE — Tablet 삭제 코디네이션, Raft 메타 정리)
+- [x] T072 [US4] `storage-node/src/backend/s3.rs` 구현 (object_store 기반 S3/MinIO 백엔드 — SSTable PUT/GET/DELETE, 로컬 LRU 캐시 레이어)
+- [x] T073 [US4] `storage-node/src/columnar/flat_json.rs` 구현 (Flat JSON 자동 컬럼 추출 — Compaction 시 key 출현율 분석, 임계값 이상 key → 독립 `.col` 파일, `_flat_meta.json` 갱신)
+- [x] T074 [P] [US4] `storage-node/src/ttl.rs` 구현 (TTL 만료 — Compaction 시 파티션 단위 행 자동 삭제)
+- [x] T075 [P] [US4] `query-node/src/meta/preagg_mv.rs` 구현 (CREATE MATERIALIZED VIEW AS SELECT GROUP BY 파싱 및 메타데이터 등록)
+- [x] T076 [US4] `compute-node/src/mv_refresh.rs` 구현 (Pre-aggregation MV INSERT 시점/주기 갱신 실행기)
+- [x] T077 [P] [US4] `storage-node/src/index/set_index.rs` 구현 (per-Granule SET 인덱스)
+- [x] T078 [P] [US4] `storage-node/src/index/ngrambf.rs` 구현 (per-Granule NGRAMBF_V1 인덱스 — N-gram Bloom Filter, 텍스트 LIKE 쿼리 가속)
 
 **체크포인트**: ALTER CUBE로 컬럼 추가 후 기존 데이터 쿼리 유지 확인, Flat JSON 컬럼 자동 생성 확인
 
@@ -154,13 +154,13 @@
 
 **독립 테스트**: `http://localhost:8080` 접속 → SMV 마법사 → 생성 완료 후 샘플 세션 데이터 표시 확인
 
-- [ ] T079 [US3] `query-node/src/sql_parser/smv_ddl.rs` 구현 (CREATE SESSION MATERIALIZED VIEW 문법 파싱 — FROM, USER KEY, SESSION TIMEOUT, REFRESH)
-- [ ] T080 [US3] `query-node/src/session_mv/manager.rs` 구현 (SMV 라이프사이클 — 생성/삭제, 갱신 스케줄 관리, 구체화 진행 상태 추적)
-- [ ] T081 [US3] `compute-node/src/analytics/sessionize.rs` 구현 (SMV 구체화 실행기 — User Key 기준 이벤트 그룹화, Timeout 기반 세션 경계 결정, session_id UUID 생성)
-- [ ] T082 [US3] `query-node/src/web_ui/server.rs` 구현 (axum HTTP/WebSocket 서버 — 포트 8080, 정적 파일 서빙, API 라우팅)
-- [ ] T083 [P] [US3] `query-node/src/web_ui/api.rs` 구현 (Web UI REST API — Cube 목록, 컬럼 목록, Cube 생성 엔드포인트)
-- [ ] T084 [US3] `query-node/src/web_ui/smv_wizard.rs` 구현 (SMV 마법사 API — User Key 드롭다운, 타임아웃 프리셋, DDL 미리보기 생성, 확정 시 SMV 생성 실행)
-- [ ] T085 [P] [US3] `query-node/src/web_ui/sql_editor.rs` 구현 (Web SQL 에디터 — SQL 실행, 결과 스트리밍, 쿼리 히스토리 표시)
+- [x] T079 [US3] `query-node/src/sql_parser/smv_ddl.rs` 구현 (CREATE SESSION MATERIALIZED VIEW 문법 파싱 — FROM, USER KEY, SESSION TIMEOUT, REFRESH)
+- [x] T080 [US3] `query-node/src/session_mv/manager.rs` 구현 (SMV 라이프사이클 — 생성/삭제, 갱신 스케줄 관리, 구체화 진행 상태 추적)
+- [x] T081 [US3] `compute-node/src/analytics/sessionize.rs` 구현 (SMV 구체화 실행기 — User Key 기준 이벤트 그룹화, Timeout 기반 세션 경계 결정, session_id UUID 생성)
+- [x] T082 [US3] `query-node/src/web_ui/server.rs` 구현 (axum HTTP/WebSocket 서버 — 포트 8080, 정적 파일 서빙, API 라우팅)
+- [x] T083 [P] [US3] `query-node/src/web_ui/api.rs` 구현 (Web UI REST API — Cube 목록, 컬럼 목록, Cube 생성 엔드포인트)
+- [x] T084 [US3] `query-node/src/web_ui/smv_wizard.rs` 구현 (SMV 마법사 API — User Key 드롭다운, 타임아웃 프리셋, DDL 미리보기 생성, 확정 시 SMV 생성 실행)
+- [x] T085 [P] [US3] `query-node/src/web_ui/sql_editor.rs` 구현 (Web SQL 에디터 — SQL 실행, 결과 스트리밍, 쿼리 히스토리 표시)
 
 **체크포인트**: Web UI에서 SMV 마법사 전체 흐름(선택→미리보기→생성→샘플) 확인
 
@@ -172,10 +172,10 @@
 
 **독립 테스트**: `mysql-connector-python`으로 접속 후 `SHOW TABLES; SELECT * FROM page_events LIMIT 10;` 성공 확인
 
-- [ ] T086 [US5] `query-node/src/mysql_protocol/handler.rs` 구현 (opensrv-mysql 완전 구현 — MySQL 8.0 handshake, 인증, COM_QUERY, COM_STMT_PREPARE 처리)
-- [ ] T087 [P] [US5] `query-node/src/mysql_protocol/result_set.rs` 구현 (MySQL 결과셋 직렬화 — ColumnDef 패킷, Row 패킷, EOF 패킷 표준 포맷)
-- [ ] T088 [P] [US5] `query-node/src/mysql_protocol/schema_cmds.rs` 구현 (SHOW TABLES, SHOW DATABASES, DESCRIBE, INFORMATION_SCHEMA 가상 테이블)
-- [ ] T089 [US5] `query-node/src/sql_parser/mysql_compat.rs` 구현 (MySQL 8.0 호환 DDL/DML 처리 — SET, USE, SHOW VARIABLES, Prepared Statement)
+- [x] T086 [US5] `query-node/src/mysql_protocol/handler.rs` 구현 (opensrv-mysql 완전 구현 — MySQL 8.0 handshake, 인증, COM_QUERY, COM_STMT_PREPARE 처리)
+- [x] T087 [P] [US5] `query-node/src/mysql_protocol/result_set.rs` 구현 (MySQL 결과셋 직렬화 — ColumnDef 패킷, Row 패킷, EOF 패킷 표준 포맷)
+- [x] T088 [P] [US5] `query-node/src/mysql_protocol/schema_cmds.rs` 구현 (SHOW TABLES, SHOW DATABASES, DESCRIBE, INFORMATION_SCHEMA 가상 테이블)
+- [x] T089 [US5] `query-node/src/sql_parser/mysql_compat.rs` 구현 (MySQL 8.0 호환 DDL/DML 처리 — SET, USE, SHOW VARIABLES, Prepared Statement)
 
 **체크포인트**: `mysql -h 127.0.0.1 -P 9030 -u admin -p`, Python `mysql.connector.connect()`, JDBC URL 각각 연결 성공
 
@@ -187,10 +187,10 @@
 
 **독립 테스트**: `http://localhost:8080/profiler`에서 최근 쿼리 목록·단계별 소요 시간 확인
 
-- [ ] T090 [US6] `query-node/src/profiler.rs` 구현 (Query Profiler — Circular Buffer 1,000건, query_id/SQL text/시작시각/단계별 메트릭/총 소요시간 기록)
-- [ ] T091 [P] [US6] `query-node/src/monitoring.rs` 구현 (Prometheus `/metrics` 엔드포인트 — 노드 상태, 쿼리 처리량, 수집 속도, 메모리/CPU 사용률)
-- [ ] T092 [P] [US6] `query-node/src/web_ui/monitoring.rs` 구현 (Web UI 모니터링 대시보드 API — 전체 노드 상태, 역할, 리소스 사용률)
-- [ ] T093 [US6] `query-node/src/resource_group.rs` 구현 (Resource Group 정책 적용 — CPU/메모리/동시 쿼리 수/타임아웃 제한, 사용자/롤 매핑)
+- [x] T090 [US6] `query-node/src/profiler.rs` 구현 (Query Profiler — Circular Buffer 1,000건, query_id/SQL text/시작시각/단계별 메트릭/총 소요시간 기록)
+- [x] T091 [P] [US6] `query-node/src/monitoring.rs` 구현 (Prometheus `/metrics` 엔드포인트 — 노드 상태, 쿼리 처리량, 수집 속도, 메모리/CPU 사용률)
+- [x] T092 [P] [US6] `query-node/src/web_ui/monitoring.rs` 구현 (Web UI 모니터링 대시보드 API — 전체 노드 상태, 역할, 리소스 사용률)
+- [x] T093 [US6] `query-node/src/resource_group.rs` 구현 (Resource Group 정책 적용 — CPU/메모리/동시 쿼리 수/타임아웃 제한, 사용자/롤 매핑)
 
 **체크포인트**: Prometheus `curl http://localhost:8080/metrics` 응답 확인, Web UI Profiler에서 최근 10개 쿼리 표시 확인
 
@@ -200,12 +200,12 @@
 
 **목적**: Spec FR 중 핵심 경로 이후에 구현 가능한 고급 기능
 
-- [ ] T094 [P] `storage-node/src/backend/hdfs.rs` 구현 (opendal + hdfs-native-client HDFS 백엔드 — Kerberos GSSAPI 인증, keytab 자동 갱신)
-- [ ] T095 [P] `storage-node/src/tiering.rs` 구현 (Tiered Storage — Hot(NVMe)→Cold(S3) 자동 이동, 파티션 age 기반 트리거)
-- [ ] T096 [P] `query-node/src/meta/global_dict.rs` 구현 (Global Dictionary — 저기수 문자열 컬럼 클러스터 전체 공유 정수 사전, QN Raft KV 저장)
-- [ ] T097 [P] `compute-node/src/result_cache.rs` 구현 (Query Result Cache — 동일 LogicalPlan + 파티션 버전 기준 Tablet 단위 집계 결과 CN 메모리 캐시)
-- [ ] T098 [P] `query-node/src/meta/external_table.rs` 구현 (External Table — S3, HDFS, Iceberg/Hive Metastore 가상 테이블 메타데이터 등록)
-- [ ] T099 [P] `query-node/src/meta/colocate.rs` 구현 (Colocate Group — 동일 분산 키/버킷 수 Cube 동일 SN 버킷 배치, 그룹 내 Join 네트워크 Shuffle 제거)
+- [x] T094 [P] `storage-node/src/backend/hdfs.rs` 구현 (opendal + hdfs-native-client HDFS 백엔드 — Kerberos GSSAPI 인증, keytab 자동 갱신)
+- [x] T095 [P] `storage-node/src/tiering.rs` 구현 (Tiered Storage — Hot(NVMe)→Cold(S3) 자동 이동, 파티션 age 기반 트리거)
+- [x] T096 [P] `query-node/src/meta/global_dict.rs` 구현 (Global Dictionary — 저기수 문자열 컬럼 클러스터 전체 공유 정수 사전, QN Raft KV 저장)
+- [x] T097 [P] `compute-node/src/result_cache.rs` 구현 (Query Result Cache — 동일 LogicalPlan + 파티션 버전 기준 Tablet 단위 집계 결과 CN 메모리 캐시)
+- [x] T098 [P] `query-node/src/meta/external_table.rs` 구현 (External Table — S3, HDFS, Iceberg/Hive Metastore 가상 테이블 메타데이터 등록)
+- [x] T099 [P] `query-node/src/meta/colocate.rs` 구현 (Colocate Group — 동일 분산 키/버킷 수 Cube 동일 SN 버킷 배치, 그룹 내 Join 네트워크 Shuffle 제거)
 
 ---
 
@@ -213,13 +213,13 @@
 
 **목적**: 전체 스택 통합 검증, 성능 벤치마크
 
-- [ ] T100 `integration-tests/tests/ddl_tests.rs` 구현 (CREATE CUBE, ALTER CUBE, DROP CUBE, CREATE SESSION MV, CREATE MV DDL 통합 테스트)
-- [ ] T101 [P] `integration-tests/tests/ingestion_tests.rs` 구현 (Kafka Routine Load, Spark Stream Load, MySQL INSERT, Async INSERT Buffer 통합 테스트)
-- [ ] T102 [P] `integration-tests/tests/analytics_tests.rs` 구현 (FUNNEL_COUNT, COHORT_ANALYSIS, PATH_ANALYSIS 쿼리 정확성 통합 테스트)
-- [ ] T103 [P] `integration-tests/tests/compat_tests.rs` 구현 (mysql-connector-python, JDBC, MySQL CLI 연결 및 쿼리 호환성 테스트)
-- [ ] T104 [P] `integration-tests/tests/failover_tests.rs` 구현 (SN 단일 장애 복구, QN Raft Leader 전환, 진행 중 쿼리 재시도 시나리오)
-- [ ] T105 `integration-tests/benches/throughput.rs` 구현 (수집 처리량 벤치마크 — SC-001: 200억 레코드 목표, SC-005: 60초 수집 레이턴시)
-- [ ] T106 [P] `quickstart.md` 기반 로컬 검증 실행 (`docker compose up → CREATE CUBE → INSERT → FUNNEL 쿼리` 전체 플로우 smoke test)
+- [x] T100 `integration-tests/tests/ddl_tests.rs` 구현 (CREATE CUBE, ALTER CUBE, DROP CUBE, CREATE SESSION MV, CREATE MV DDL 통합 테스트)
+- [x] T101 [P] `integration-tests/tests/ingestion_tests.rs` 구현 (Kafka Routine Load, Spark Stream Load, MySQL INSERT, Async INSERT Buffer 통합 테스트)
+- [x] T102 [P] `integration-tests/tests/analytics_tests.rs` 구현 (FUNNEL_COUNT, COHORT_ANALYSIS, PATH_ANALYSIS 쿼리 정확성 통합 테스트)
+- [x] T103 [P] `integration-tests/tests/compat_tests.rs` 구현 (mysql-connector-python, JDBC, MySQL CLI 연결 및 쿼리 호환성 테스트)
+- [x] T104 [P] `integration-tests/tests/failover_tests.rs` 구현 (SN 단일 장애 복구, QN Raft Leader 전환, 진행 중 쿼리 재시도 시나리오)
+- [x] T105 `integration-tests/benches/throughput.rs` 구현 (수집 처리량 벤치마크 — SC-001: 200억 레코드 목표, SC-005: 60초 수집 레이턴시)
+- [x] T106 [P] `quickstart.md` 기반 로컬 검증 실행 (`docker compose up → CREATE CUBE → INSERT → FUNNEL 쿼리` 전체 플로우 smoke test)
 
 ---
 

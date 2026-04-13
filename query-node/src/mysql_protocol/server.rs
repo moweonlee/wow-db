@@ -13,6 +13,10 @@ use opensrv_mysql::{
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
 
+use crate::meta::cube::CubeManager;
+use crate::raft::RaftManager;
+use crate::session_mv::manager::SmvManager;
+
 // ─── 쿼리 핸들러 트레이트 ─────────────────────────────────────────────────────
 
 #[async_trait::async_trait]
@@ -177,4 +181,37 @@ pub async fn serve(addr: SocketAddr, handler: Arc<dyn QueryHandler>) -> Result<(
 
 pub async fn serve_stub(addr: SocketAddr) -> Result<()> {
     serve(addr, Arc::new(StubQueryHandler)).await
+}
+
+/// WowDbMysqlHandler를 사용하는 프로덕션 MySQL 서버 기동
+pub async fn serve_with_managers(
+    addr:     SocketAddr,
+    cube_mgr: Arc<CubeManager>,
+    smv_mgr:  Arc<SmvManager>,
+    raft:     Arc<RaftManager>,
+) -> Result<()> {
+    use super::handler::WowDbMysqlHandler;
+
+    let listener = TcpListener::bind(&addr).await?;
+    info!(%addr, "MySQL Protocol 서버 시작 (WowDbMysqlHandler)");
+
+    loop {
+        let (stream, peer) = match listener.accept().await {
+            Ok(v)  => v,
+            Err(e) => { error!(err = %e, "Accept 실패"); continue; }
+        };
+        info!(%peer, "MySQL 클라이언트 연결");
+
+        let handler = WowDbMysqlHandler::new(
+            cube_mgr.clone(),
+            smv_mgr.clone(),
+            raft.clone(),
+        );
+        let (r, w) = tokio::io::split(stream);
+        tokio::spawn(async move {
+            if let Err(e) = AsyncMysqlIntermediary::run_on(handler, r, w).await {
+                warn!(%peer, err = %e, "MySQL 세션 오류");
+            }
+        });
+    }
 }

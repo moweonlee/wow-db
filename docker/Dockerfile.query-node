@@ -1,7 +1,7 @@
 # WOW-DB Query Node — 멀티스테이지 빌드 (cargo-chef 의존성 캐시)
 
 # ── Stage 1: cargo-chef 설치 ──────────────────────────────
-FROM rust:1.87-bookworm AS chef
+FROM rust:1.88-bookworm AS chef
 RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y protobuf-compiler libssl-dev pkg-config && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
@@ -31,10 +31,11 @@ RUN apt-get update && apt-get install -y \
 COPY --from=builder /app/target/release/query-node /usr/local/bin/query-node
 
 # 포트 선언
-EXPOSE 9030  # MySQL Wire Protocol
-EXPOSE 8080  # Web UI (HTTP/WebSocket)
-EXPOSE 9010  # Raft 합의 (QN 간)
-EXPOSE 9011  # QN ↔ CN/SN 내부 gRPC
+# 9030: MySQL, 8080: Web UI, 9010: Raft, 9011: gRPC
+EXPOSE 9030
+EXPOSE 8080
+EXPOSE 9010
+EXPOSE 9011
 
 ENV RUST_LOG=query_node=info,shared=info
 

@@ -45,8 +45,8 @@ services:
     image: minio/minio:latest
     profiles: ["full", "infra", "storage"]
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Web Console
+      - "9000:9000"
+      - "9001:9001"
     volumes:
       - minio-data:/data
     environment:
@@ -65,9 +65,9 @@ services:
     image: redpandadata/redpanda:v24.2.7
     profiles: ["full", "infra"]
     ports:
-      - "9092:9092"   # Kafka API
-      - "9644:9644"   # Admin API
-      - "8081:8081"   # Schema Registry
+      - "9092:9092"
+      - "9644:9644"
+      - "8081:8081"
     command:
       - redpanda
       - start
@@ -217,10 +217,10 @@ services:
     <<: *qn-common
     container_name: wowdb-qn-1
     ports:
-      - "9030:9030"   # MySQL Protocol (기본 노출)
-      - "8080:8080"   # Web UI (기본 노출)
-      - "9010:9010"   # Raft (내부)
-      - "9011:9011"   # gRPC Meta (내부)
+      - "9030:9030"
+      - "8080:8080"
+      - "9010:9010"
+      - "9011:9011"
     environment:
       NODE_ID: "qn-1"
       RUST_LOG: "query_node=info,shared=info"
@@ -305,9 +305,6 @@ services:
       start_period: 30s
     networks:
       - wowdb-net
-
-  # ──── Docker Compose Watch 설정 ──────────────────────────
-  # docker compose watch 사용 시 소스 변경 감지
 
 volumes:
   minio-data:

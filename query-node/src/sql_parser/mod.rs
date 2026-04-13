@@ -3,6 +3,9 @@
 
 pub mod analytics;
 pub mod routineload;
+pub mod cube_ddl;
+pub mod smv_ddl;
+pub mod mysql_compat;
 
 use anyhow::{bail, Result};
 use sqlparser::{

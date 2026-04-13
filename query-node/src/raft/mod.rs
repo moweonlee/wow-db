@@ -48,6 +48,10 @@ pub enum RaftCommand {
     SessionSet { key: String, value: String },
     /// 세션 토큰 삭제
     SessionDel { key: String },
+    /// 범용 KV 쓰기
+    UpsertKv { key: String, value: String },
+    /// 범용 KV 삭제
+    DeleteKv { key: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +93,12 @@ impl MetaStateMachine {
             }
             RaftCommand::SessionDel { key } => {
                 self.kv.remove(&format!("session:{key}"));
+            }
+            RaftCommand::UpsertKv { key, value } => {
+                self.kv.insert(key.clone(), value.clone());
+            }
+            RaftCommand::DeleteKv { key } => {
+                self.kv.remove(key);
             }
         }
     }
@@ -156,6 +166,21 @@ impl RaftManager {
     /// 상태 머신 직접 접근 (메타 관리자 전용)
     pub fn state_machine(&self) -> Arc<RwLock<MetaStateMachine>> {
         self.sm.clone()
+    }
+
+    /// 로컬(단일 노드) RaftManager 생성 — 테스트용
+    pub fn new_local() -> Self {
+        Self::new(1)
+    }
+
+    /// prefix로 시작하는 모든 KV 항목 반환
+    pub async fn scan_prefix(&self, prefix: &str) -> Vec<(String, String)> {
+        self.sm.read().await
+            .kv
+            .range(prefix.to_string()..)
+            .take_while(|(k, _)| k.starts_with(prefix))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 }
 
