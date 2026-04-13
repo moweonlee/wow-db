@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-use crate::lsm::bloom::{GranuleBloomIndex, SsTableBloom};
+use crate::lsm::bloom::{GranuleBloomIndex, SsTableBloom}; // GranuleBloomIndex used below
 
 pub const DEFAULT_GRANULE_SIZE: usize = 8192;
 
@@ -34,7 +34,7 @@ impl BloomIndexBuilder {
                 .filter_map(|v| v.as_deref())
                 .collect();
 
-            let mut bf = SsTableBloom::new(non_null.len().max(1));
+            let mut bf = SsTableBloom::with_defaults(non_null.len().max(1));
             for key in &non_null {
                 bf.insert(key);
             }

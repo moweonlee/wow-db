@@ -155,7 +155,7 @@ impl SsTableBloom {
 
     /// 키 존재 여부 (false positive 가능, false negative 불가)
     pub fn may_contain(&self, key: &[u8]) -> bool {
-        self.hash_indices(key).all(|idx| self.bitmap.get(idx))
+        self.hash_indices(key).iter().all(|&idx| self.bitmap.get(idx))
     }
 
     /// 직렬화 (`.bloom` 파일 포맷 — `lsm-engine.md §13`)

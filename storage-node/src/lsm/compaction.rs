@@ -75,6 +75,11 @@ impl PartitionCompactor {
         self.levels.write_control()
     }
 
+    /// 현재 L0 파일 수 반환 (테스트 및 모니터링용)
+    pub fn l0_count(&self) -> usize {
+        self.levels.l0_count()
+    }
+
     /// Compaction 필요 여부 + 가장 우선순위 높은 레벨 반환
     pub fn pick_compaction(&self) -> Option<CompactionJob> {
         let lvl = self.levels.highest_priority_level()?;

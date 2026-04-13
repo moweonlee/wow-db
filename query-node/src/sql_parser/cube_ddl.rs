@@ -53,6 +53,9 @@ pub fn parse_create_cube_full(sql: &str) -> Result<CreateCubeStmt> {
     // PROPERTIES
     let properties = parse_properties(sql);
 
+    // Sort Key 검증 (FR-026)
+    validate_sort_key(&order_by, &columns)?;
+
     Ok(CreateCubeStmt {
         name,
         database: None,
@@ -63,6 +66,134 @@ pub fn parse_create_cube_full(sql: &str) -> Result<CreateCubeStmt> {
         properties,
         if_not_exists,
     })
+}
+
+// ─── Sort Key 검증 (FR-026) ───────────────────────────────────────────────────
+
+/// Sort Key 제약 검증
+/// - 최대 4개 컬럼
+/// - 직렬화 크기 합계 128 bytes 이하
+/// - JSON 타입 컬럼 금지
+/// - STRING(VARCHAR) 길이 > 64 bytes면 경고
+pub fn validate_sort_key(order_by: &[String], columns: &[CubeColumnDef]) -> Result<()> {
+    // 1. 최대 4개 컬럼
+    if order_by.len() > 4 {
+        return Err(anyhow!(
+            "Sort Key는 최대 4개 컬럼까지 허용됩니다. 지정된 컬럼 수: {} (컬럼: {:?})",
+            order_by.len(),
+            order_by
+        ));
+    }
+
+    // ORDER BY가 없으면 검증 불필요
+    if order_by.is_empty() {
+        return Ok(());
+    }
+
+    // 컬럼 타입 맵 구성
+    let col_map: std::collections::HashMap<&str, &str> = columns
+        .iter()
+        .map(|c| (c.name.as_str(), c.data_type.as_str()))
+        .collect();
+
+    let mut total_serialized_bytes: usize = 0;
+
+    for col_name in order_by {
+        let col_name_lower = col_name.to_lowercase();
+        let data_type = col_map
+            .get(col_name_lower.as_str())
+            .or_else(|| col_map.get(col_name.as_str()))
+            .copied()
+            .unwrap_or("UNKNOWN");
+        let type_upper = data_type.to_uppercase();
+
+        // 2. JSON 타입 금지
+        if type_upper == "JSON" || type_upper.starts_with("JSON") {
+            return Err(anyhow!(
+                "Sort Key 컬럼 '{}' 은 JSON 타입을 허용하지 않습니다. \
+                 정렬 기준이 불명확하고 비교 비용이 예측 불가합니다.",
+                col_name
+            ));
+        }
+
+        // 3. 직렬화 크기 계산
+        let col_bytes = sort_key_serialized_size(&type_upper);
+
+        // 4. STRING(VARCHAR) 길이 > 64 bytes 경고
+        if let Some(varchar_len) = extract_varchar_len(&type_upper) {
+            if varchar_len > 64 {
+                warn!(
+                    column = %col_name,
+                    declared_len = varchar_len,
+                    "Sort Key 컬럼 '{}'의 VARCHAR 길이가 64 bytes를 초과합니다. \
+                     Compaction 성능에 영향을 줄 수 있습니다. 가능하면 64 bytes 이하로 줄이세요.",
+                    col_name
+                );
+            }
+        }
+
+        total_serialized_bytes += col_bytes;
+    }
+
+    // 5. 직렬화 크기 합계 128 bytes 이하
+    if total_serialized_bytes > 128 {
+        return Err(anyhow!(
+            "Sort Key 직렬화 크기 합계 {}  bytes가 128 bytes 제한을 초과합니다. \
+             캐시라인(2 × 64B) 내 비교 완료를 위해 128 bytes 이하로 정의하세요.",
+            total_serialized_bytes
+        ));
+    }
+
+    Ok(())
+}
+
+/// Sort Key 컬럼의 byte-comparable 직렬화 크기 추정 (bytes)
+fn sort_key_serialized_size(type_upper: &str) -> usize {
+    if type_upper.starts_with("DATETIME") || type_upper.starts_with("TIMESTAMP") {
+        8  // i64 epoch microseconds
+    } else if type_upper.starts_with("DATE") {
+        4  // i32 epoch days
+    } else if type_upper == "BIGINT" || type_upper == "UBIGINT" || type_upper == "INT64" {
+        8
+    } else if type_upper == "INT" || type_upper == "INTEGER" || type_upper == "INT32" {
+        4
+    } else if type_upper == "SMALLINT" || type_upper == "INT16" {
+        2
+    } else if type_upper == "TINYINT" || type_upper == "INT8" {
+        1
+    } else if type_upper == "FLOAT" {
+        4
+    } else if type_upper == "DOUBLE" || type_upper == "FLOAT64" {
+        8
+    } else if type_upper == "BOOLEAN" || type_upper == "BOOL" {
+        1
+    } else if let Some(len) = extract_varchar_len(type_upper) {
+        // VARCHAR(N): 1 byte NULL prefix + min(N, 64) bytes data
+        1 + len.min(64)
+    } else if type_upper.starts_with("VARCHAR") || type_upper.starts_with("STRING") || type_upper.starts_with("TEXT") {
+        // 길이 미지정 VARCHAR → 보수적으로 최대 65 bytes
+        65
+    } else {
+        // 알 수 없는 타입 → 보수적으로 8 bytes
+        8
+    }
+}
+
+/// VARCHAR(N) / CHAR(N)에서 N 추출
+fn extract_varchar_len(type_upper: &str) -> Option<usize> {
+    let ty = if type_upper.starts_with("VARCHAR") {
+        &type_upper["VARCHAR".len()..]
+    } else if type_upper.starts_with("CHAR") {
+        &type_upper["CHAR".len()..]
+    } else {
+        return None;
+    };
+    let ty = ty.trim();
+    if ty.starts_with('(') && ty.ends_with(')') {
+        ty[1..ty.len()-1].trim().parse::<usize>().ok()
+    } else {
+        None
+    }
 }
 
 /// ALTER CUBE 파서
@@ -497,5 +628,76 @@ mod tests {
         let dist = parse_distribution(sql).unwrap();
         assert_eq!(dist.columns, vec!["user_id"]);
         assert_eq!(dist.buckets, 64);
+    }
+
+    // ─── Sort Key 검증 테스트 (FR-026) ─────────────────────────────────────
+
+    fn col(name: &str, ty: &str) -> CubeColumnDef {
+        CubeColumnDef {
+            name:      name.to_string(),
+            data_type: ty.to_string(),
+            nullable:  true,
+            encoding:  None,
+            comment:   None,
+        }
+    }
+
+    #[test]
+    fn test_sort_key_valid() {
+        let cols = vec![col("device_id", "VARCHAR(64)"), col("event_time", "DATETIME")];
+        // device_id: 1+64=65, event_time: 8 → total=73 ≤ 128
+        assert!(validate_sort_key(&["device_id".to_string(), "event_time".to_string()], &cols).is_ok());
+    }
+
+    #[test]
+    fn test_sort_key_too_many_columns() {
+        let cols: Vec<CubeColumnDef> = (0..5).map(|i| col(&format!("c{i}"), "INT")).collect();
+        let order_by: Vec<String> = (0..5).map(|i| format!("c{i}")).collect();
+        let err = validate_sort_key(&order_by, &cols).unwrap_err();
+        assert!(err.to_string().contains("최대 4개"), "err: {}", err);
+    }
+
+    #[test]
+    fn test_sort_key_json_forbidden() {
+        let cols = vec![col("props", "JSON"), col("ts", "DATETIME")];
+        let err = validate_sort_key(&["props".to_string()], &cols).unwrap_err();
+        assert!(err.to_string().contains("JSON"), "err: {}", err);
+    }
+
+    #[test]
+    fn test_sort_key_serialized_size_overflow() {
+        // 4 × VARCHAR(64) = 4 × (1+64) = 260 bytes → 초과
+        let cols: Vec<CubeColumnDef> = (0..4).map(|i| col(&format!("c{i}"), "VARCHAR(64)")).collect();
+        let order_by: Vec<String> = (0..4).map(|i| format!("c{i}")).collect();
+        let err = validate_sort_key(&order_by, &cols).unwrap_err();
+        assert!(err.to_string().contains("128 bytes"), "err: {}", err);
+    }
+
+    #[test]
+    fn test_sort_key_in_create_cube_ddl() {
+        // 정상: device_id VARCHAR(32) + event_time DATETIME → 33+8=41 bytes ≤ 128
+        let sql = r#"
+            CREATE CUBE events (
+                event_time DATETIME NOT NULL,
+                device_id  VARCHAR(32) NOT NULL
+            )
+            ORDER BY (device_id, event_time)
+            DISTRIBUTED BY HASH(device_id) BUCKETS 32
+        "#;
+        assert!(parse_create_cube_full(sql).is_ok());
+    }
+
+    #[test]
+    fn test_sort_key_json_in_create_cube_rejected() {
+        let sql = r#"
+            CREATE CUBE events (
+                event_time DATETIME NOT NULL,
+                props      JSON
+            )
+            ORDER BY (props, event_time)
+            DISTRIBUTED BY HASH(event_time) BUCKETS 32
+        "#;
+        let err = parse_create_cube_full(sql).unwrap_err();
+        assert!(err.to_string().contains("JSON"), "err: {}", err);
     }
 }
