@@ -54,6 +54,9 @@ crossbeam-skiplist = "0.1"
 # Bloom filter
 bloomfilter = "1"
 
+# xxHash3 (SIMD-accelerated, Bloom Filter 해시 함수)
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
 [features]
 default    = []
 io-uring   = ["tokio-uring"]
