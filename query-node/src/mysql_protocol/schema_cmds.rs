@@ -132,9 +132,30 @@ pub async fn handle_schema_command(
         }
     }
 
+    // SHOW CUBES
+    if upper.starts_with("SHOW CUBES") {
+        let cubes = cube_mgr.list().await.unwrap_or_default();
+        let rows = cubes.iter().map(|c| vec![
+            Some(c.name.clone()),
+            Some(format!("{}.{}", current_db, c.name)),
+            Some(format!("{:?}", c.partition_key)),
+            Some(format!("HASH({}), {} buckets", c.distribution.column, c.distribution.bucket_count)),
+        ]).collect();
+        return Some(QueryOutput::Rows {
+            columns: vec![
+                ColumnMeta { name: "Cube".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "Full_Name".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "Partition".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "Distribution".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ],
+            rows,
+        });
+    }
+
     // SHOW STATUS / SHOW VARIABLES
     if upper.starts_with("SHOW STATUS") || upper.starts_with("SHOW VARIABLES") ||
-       upper.starts_with("SHOW GLOBAL") || upper.starts_with("SHOW SESSION")
+       upper.starts_with("SHOW GLOBAL") ||
+       (upper.starts_with("SHOW SESSION") && !upper.contains("MATERIALIZED") && !upper.contains("VIEW"))
     {
         return Some(QueryOutput::Rows {
             columns: vec![
