@@ -36,7 +36,9 @@
       "Bash(curl -s http://localhost:8080/health)",
       "Bash(python3 -m json.tool)",
       "Bash(curl -s http://localhost:8080/api/v1/cluster)",
-      "Bash(curl -s http://localhost:8080/metrics)"
+      "Bash(curl -s http://localhost:8080/metrics)",
+      "Bash(powershell.exe -File \"D:/projects/wow-db/.specify/scripts/powershell/check-prerequisites.ps1\" -Json -RequireTasks -IncludeTasks)",
+      "Bash(xargs grep:*)"
     ]
   }
 }
