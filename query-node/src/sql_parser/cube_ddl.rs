@@ -1,7 +1,9 @@
 // T069: 전체 CREATE CUBE 문법 파서
 // PARTITION BY RANGE, AUTO PARTITION, ORDER BY, DISTRIBUTED BY HASH, COLOCATE WITH, STORAGE BACKEND
+// T116: Sort Key 검증 — FR-026: 최대 4 컬럼, 128 bytes, JSON 금지, STRING 64 bytes 경고
 
 use anyhow::{anyhow, Result};
+use tracing::warn;
 
 use super::{
     CubeColumnDef, CubeDistribution, CubePartitionBy, CreateCubeStmt, WowDbCustom,
