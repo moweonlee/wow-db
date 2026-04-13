@@ -889,6 +889,6 @@ mod tests {
         execute_insert("INSERT INTO ord_test (n) VALUES (3), (1), (2)").unwrap();
         let r = execute_select("SELECT n FROM ord_test ORDER BY n ASC LIMIT 2").unwrap();
         assert_eq!(r.rows.len(), 2);
-        assert_eq!(r.rows[0][0], serde_json::json!(1.0));
+        assert_eq!(r.rows[0][0], serde_json::json!(1));
     }
 }
