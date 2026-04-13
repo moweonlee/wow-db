@@ -265,6 +265,76 @@
 
 ---
 
+## Phase 12: 클러스터 보호 — Metadata 일관성 및 디스크 보호 (FR-033~FR-036)
+
+**목적**: 모든 QN이 동일한 메타데이터를 제공하는 단일 시스템 이미지 보장, 디스크 용량 초과 시 데이터 손실 방지  
+**참조**: `specs/002-wow-db-srs-v02/design/readonly-mode.md`, FR-033~FR-036
+
+### Query Node — 단일 시스템 이미지 (FR-033, FR-034)
+
+- [ ] T118 `query-node/src/meta/cache.rs` 구현 (MetadataCacheEntry — Raft 인덱스 기반 캐시 무효화, DDL 변경은 write-through 즉시 무효화, CBO 통계는 max_staleness_ms=500ms 후 re-fetch, 버전 불일치 시 Raft Leader에서 강제 재조회)
+- [ ] T119 [P] `query-node/src/meta/session_store.rs` 구현 (WebSession — Raft KV `/sessions/{token}` CRUD, UUID v4 토큰 발급, 24시간 TTL, 모든 QN에서 동일 토큰 검증 가능, QN 재시작 후 세션 유지, FR-035)
+
+### Storage Node — 디스크 용량 감시 (FR-036)
+
+- [ ] T120 `storage-node/src/disk_monitor.rs` 구현 (DiskMonitor — statvfs/GetDiskFreeSpaceEx 기반 디스크 사용량 폴링, 5초 주기, disk_full_threshold=0.95 초과 시 QN Leader에 ReportDiskFull gRPC 전송, disk_recovery_threshold=0.85 이하 시 ReportDiskRecovered gRPC 전송, DiskMonitorConfig 설정 가능)
+- [ ] T121 [P] `query-node/src/disk_monitor.rs` 구현 (Query Node 전용 DiskMonitor — Raft WAL 디스크 및 스냅샷 디스크 모니터링, 동일 임계값 적용)
+
+### Query Node — Read-Only 상태 관리 (FR-036)
+
+- [ ] T122 `query-node/src/meta/cluster_guard.rs` 구현 (ClusterGuard — ClusterReadOnlyState Raft KV 직렬화/역직렬화, add_reason/remove_reason으로 다중 원인 관리, check_write_allowed() 메서드, ReadOnlyError → MySQL ER_OPTION_PREVENTS_STATEMENT(1290) 변환)
+- [ ] T123 `query-node/src/mysql_protocol/` 수정 (쓰기 요청 처리 전 ClusterGuard.check_write_allowed() 호출 추가 — INSERT/DDL/LOAD DATA 핸들러, Read-Only 시 ERROR 1290 HY000 반환, SELECT/SHOW/DESCRIBE는 통과)
+- [ ] T124 [P] `proto/meta.proto` 수정 (MetaService에 ReportDiskFull, ReportDiskRecovered RPC 추가, DiskCapacityReport 메시지 정의 — node_id, path, usage_ratio 필드)
+
+### Integration Tests — 디스크 보호 검증
+
+- [ ] T125 `storage-node/tests/disk_full_tests.rs` 구현 (Read-Only 모드 통합 테스트 — ① 95% 임계값 초과 시 ClusterReadOnlyState.enabled=true 검증, ② Read-Only 상태에서 INSERT 거부 및 SELECT 허용 검증, ③ 85% 이하 복구 시 정상 모드 자동 전환 검증, ④ 복수 노드 DiskFull 시 모든 노드 복구 후 해제 검증)
+
+**체크포인트**: `cargo test -p storage-node -- disk_full` 전체 통과, Prometheus `wowdb_cluster_read_only` 메트릭 정상 노출
+
+---
+
+## Phase 13: 쿼리 실행 단위 및 논리-물리 매핑 (FR-037~FR-042)
+
+**목적**: QN 논리 단위(Table/Partition/Shard)와 SN 물리 단위(Part/Granule/ColumnFile)의 계층 확립, 계층별 CBO 통계 저장, CN-SN 간 Shard 스캔 프로토콜 구현  
+**참조**: `specs/002-wow-db-srs-v02/design/logical-to-physical-mapping.md`, `design/query-execution-model.md`
+
+### Shared — 통계 타입 정의 [P]
+
+- [ ] T126 [P] `shared/src/types.rs` 확장 (논리-물리 단위 타입 추가 — TableStats, PartitionStats, ShardStats, ColumnStats, Histogram, PartRef 구조체, LsmScanRange, ScanStats, ShardScanRequest 타입 정의, FR-037~FR-040)
+
+### Proto — Shard 스캔 프로토콜 [P]
+
+- [ ] T127 [P] `proto/storage.proto` 확장 (ShardScanRequest/Response 메시지 추가 — shard_id, columns, predicates, scan_range(min_level/max_level), runtime_filter, bloom_probe_keys 필드; 스트리밍 응답: PartListResponse(PartMeta 목록), RecordBatchChunk, ScanStats; FR-041, FR-042)
+
+### Query Node — Raft KV 통계 계층
+
+- [ ] T128 `query-node/src/meta/stats.rs` 구현 (CBO 통계 계층적 저장 — Raft KV CRUD: /stats/{table_id}, /stats/{table_id}/{partition_id}, /stats/{table_id}/{partition_id}/{shard_id}; MemTable Flush/Compaction 완료 시 SN이 QN에 보고 → Raft KV 증분 갱신; ANALYZE TABLE 시 ShardStats 전체 재계산; FR-040)
+- [ ] T129 [P] `query-node/src/meta/shard_map.rs` 구현 (Shard → SN 매핑 조회 — Raft KV /tablets/{shard_id}에서 ShardReplica 목록 조회, Leader replica 우선 선택, QN 로컬 캐시 TTL 500ms, DDL/Tablet 재배치 시 즉시 무효화, FR-039)
+
+### Query Node — Physical Planner 확장
+
+- [ ] T130 `query-node/src/planner/physical.rs` 수정 (Fragment 생성에 ShardScan 포함 — ShardScan 구조체에 shard_id, sn_endpoint, columns(projection), predicates(pushdown), scan_range, runtime_filter 필드 추가; Shard → CN 할당: Data Locality → Load Balance → Colocate Group 우선순위; FR-041)
+- [ ] T131 [P] `query-node/src/planner/cbo/partition_prune.rs` 구현 (Partition Pruning — WHERE predicate와 PartitionStats.partition_key_min/max 비교로 범위 밖 Partition 조기 제거; Pruning 완료 후 해당 Partition의 Shard 목록 조회; FR-037)
+
+### Compute Node — Shard Scan Executor
+
+- [ ] T132 `compute-node/src/executor/shard_scan.rs` 구현 (ShardScanStage 구현 — SN gRPC 엔드포인트에 ShardScanRequest 전송, PartListResponse 수신 후 CN 측 Part min/max Sort Key 필터링, RecordBatch 스트림 수신; 복수 Shard 병렬 스캔(tokio::spawn per shard); FR-041)
+- [ ] T133 [P] `compute-node/src/executor/pipeline.rs` 수정 (Fragment 파이프라인에 ShardScanStage 통합 — ShardScanStage → SIMDFilterStage → VectorizedAggStage → ExchangeStage 순서; Backpressure: tokio::mpsc 채널 크기로 CN 내 stage 간 배압 제어; FR-041)
+
+### Storage Node — Shard 스캔 실행기
+
+- [ ] T134 `storage-node/src/grpc/scan.rs` 수정 (ShardScanRequest 처리 구현 — MANIFEST에서 활성 Part 목록 조회 후 PartListResponse 반환; Part별 min/max Sort Key 스킵; SSTable-Level Bloom Filter 검사(bloom_probe_keys); Granule MINMAX 스킵(.min_max 파일); 남은 Granule .col 파일 읽기 → Arrow2 RecordBatch 스트리밍; L0 Multi-Version Read(sequence_num 기반 중복 제거); ScanStats 최종 반환; FR-042)
+- [ ] T135 [P] `storage-node/src/partition/stats_reporter.rs` 구현 (SN → QN 통계 보고 — MemTable Flush 완료 시 ShardStats 증분 갱신 값을 QN Leader에 gRPC 보고; Part min/max Sort Key를 MANIFEST에 기록; Compaction 완료 시 삭제/추가된 Part 반영한 통계 재계산 후 보고; FR-040)
+
+### Integration Tests — 논리-물리 매핑 검증
+
+- [ ] T136 `storage-node/tests/logical_physical_mapping_tests.rs` 구현 (매핑 정확성 검증 — ① Part min/max Sort Key 기반 스킵 검증(predicate 범위 밖 Part는 0 rows 반환), ② Granule MINMAX 스킵 검증(스킵 카운터 ScanStats에 정확히 반영), ③ L0 Multi-Version Read 검증(동일 Sort Key에서 최신 sequence_num 값 우선), ④ Column Projection 검증(요청하지 않은 컬럼 파일 미개방), ⑤ Bloom Filter 스킵 통합 검증)
+
+**체크포인트**: `cargo test -p storage-node -- logical_physical` 전체 통과, FragmentMetric의 parts_skipped > 0 확인 (스킵 최적화 동작 증명)
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase 의존성

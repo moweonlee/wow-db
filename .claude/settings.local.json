@@ -53,7 +53,10 @@
       "Bash(grep -B1 -A5 \"^category.*revenue$\" /tmp/full_results.txt)",
       "Bash(grep -A1 -E \"\\(page_events_cnt|purchase_cnt|user_cnt|product_cnt|session_cnt|ab_cnt|search_cnt|error_cnt|metric_cnt|click_cnt|^two$\\)\" /tmp/full_results2.txt)",
       "Bash(grep -A1 \"current_time\\\\|^ts$\" /tmp/full_results2.txt)",
-      "Bash(powershell.exe -NonInteractive -File \".specify/scripts/powershell/check-prerequisites.ps1\" -Json -RequireTasks -IncludeTasks)"
+      "Bash(powershell.exe -NonInteractive -File \".specify/scripts/powershell/check-prerequisites.ps1\" -Json -RequireTasks -IncludeTasks)",
+      "Bash(ls -la \"D:\\\\projects\\\\wow-db\\\\specs\\\\002-wow-db-srs-v02\\\\\\\\\")",
+      "Bash(powershell.exe -File \".specify/scripts/powershell/check-prerequisites.ps1\" -Json -RequireTasks -IncludeTasks)",
+      "Bash(ls D:/projects/wow-db/storage-node/src/partition*)"
     ]
   }
 }

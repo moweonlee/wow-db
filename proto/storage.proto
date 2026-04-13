@@ -5,8 +5,15 @@ import "compute.proto";
 
 // CN → SN: Tablet 읽기/쓰기 (포트 9060)
 service StorageService {
-    // 컬럼 청크 읽기 (Tablet 스캔)
+    // 컬럼 청크 읽기 (Tablet 스캔 — 레거시)
     rpc ScanTablet(ScanRequest) returns (stream ScanBatch);
+
+    // Shard 스캔 (논리-물리 매핑 기반, FR-041/042)
+    // 응답 스트림: PartListResponse → RecordBatchChunk* → ScanStatsResponse
+    rpc ScanShard(ShardScanRequest) returns (stream ShardScanResponse);
+
+    // SN → QN 통계 보고 (FR-040)
+    rpc ReportShardStats(ShardStatsReport) returns (ShardStatsAck);
 
     // 데이터 쓰기 (WAL + MemTable)
     rpc WriteRows(WriteRequest) returns (WriteResponse);
@@ -99,4 +106,91 @@ message TabletMetaResponse {
     uint64 size_bytes   = 5;
     string state        = 6;   // "normal" | "compacting" | "offline"
     uint64 lsn          = 7;
+}
+
+// ─── Shard 스캔 프로토콜 (FR-041, FR-042) ────────────────────────────────────
+
+// CN → SN: Shard 스캔 요청
+message ShardScanRequest {
+    bytes  shard_id               = 1;   // UUID bytes (16B)
+    string shard_dir              = 2;   // SN 로컬 물리 경로
+    repeated string columns       = 3;   // Column Projection (빈 배열=전체)
+    repeated ShardPredicate predicates = 4;
+    LsmScanRange scan_range       = 5;
+    repeated bytes bloom_probe_keys = 6; // Point Lookup Bloom 검사용
+}
+
+message LsmScanRange {
+    uint32 min_level = 1;   // 기본 0
+    uint32 max_level = 2;   // 기본 6
+}
+
+message ShardPredicate {
+    string column = 1;
+    string op     = 2;   // "eq"|"ne"|"lt"|"le"|"gt"|"ge"|"is_null"|"is_not_null"
+    bytes  value  = 3;   // 직렬화된 Value (optional)
+}
+
+// SN → CN: Shard 스캔 응답 스트림
+// 스트림 순서: PartListResponse → RecordBatchChunk* → ScanStatsResponse
+message ShardScanResponse {
+    oneof payload {
+        PartListResponse  part_list  = 1;   // 첫 번째: 활성 Part 목록
+        RecordBatchChunk  batch      = 2;   // 데이터 청크들
+        ScanStatsResponse stats      = 3;   // 마지막: 스캔 통계
+    }
+}
+
+message PartListResponse {
+    repeated PartMeta parts = 1;
+}
+
+message PartMeta {
+    bytes  part_id       = 1;   // UUID bytes
+    uint32 level         = 2;
+    uint64 sequence_num  = 3;
+    uint64 row_count     = 4;
+    bytes  min_sort_key  = 5;
+    bytes  max_sort_key  = 6;
+    uint64 size_bytes    = 7;
+}
+
+message RecordBatchChunk {
+    bytes  ipc_batch   = 1;   // Arrow IPC 포맷 RecordBatch
+    uint64 rows        = 2;
+    bool   is_last     = 3;
+}
+
+message ScanStatsResponse {
+    uint32 parts_scanned    = 1;
+    uint32 parts_skipped    = 2;
+    uint64 granules_read    = 3;
+    uint64 granules_skipped = 4;
+    uint64 rows_returned    = 5;
+    uint64 bytes_read       = 6;
+}
+
+// ─── SN → QN 통계 보고 (FR-040) ──────────────────────────────────────────────
+
+message ShardStatsReport {
+    bytes  shard_id      = 1;   // UUID bytes
+    bytes  table_id      = 2;
+    bytes  partition_id  = 3;
+    uint64 row_count     = 4;
+    uint64 size_bytes    = 5;
+    repeated ColumnStatEntry column_stats = 6;
+    bool   is_incremental = 7;  // true=증분, false=전체 재계산
+}
+
+message ColumnStatEntry {
+    string column     = 1;
+    bytes  min_val    = 2;   // 직렬화된 Value
+    bytes  max_val    = 3;
+    uint64 ndv        = 4;   // Number of Distinct Values (HLL 추정)
+    uint64 null_count = 5;
+}
+
+message ShardStatsAck {
+    bool   success = 1;
+    string error   = 2;
 }

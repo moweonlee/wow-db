@@ -468,3 +468,210 @@ pub const PROFILER_BUFFER_SIZE: usize = 1000;
 
 /// MemTable flush 임계값 (기본 64MB)
 pub const DEFAULT_MEMTABLE_SIZE_BYTES: usize = 64 * 1024 * 1024;
+
+// ──────────────────────────────────────────────────────────────────
+// T126: 논리-물리 매핑 및 쿼리 실행 단위 타입 (FR-037~FR-042)
+// ──────────────────────────────────────────────────────────────────
+
+// ──── 논리 단위 CBO 통계 ────────────────────────────────────────
+
+/// 테이블 수준 통계 (Raft KV: /stats/{table_id})
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TableStats {
+    pub row_count:     u64,
+    pub size_bytes:    u64,
+    pub last_analyzed: Option<Timestamp>,
+}
+
+/// 파티션 수준 통계 (Raft KV: /stats/{table_id}/{partition_id})
+/// Partition Pruning의 1차 필터로 사용됨
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PartitionStats {
+    pub row_count:         u64,
+    pub size_bytes:        u64,
+    /// WHERE 절 범위 pruning을 위한 파티션 키 min/max
+    pub partition_key_min: Option<Value>,
+    pub partition_key_max: Option<Value>,
+}
+
+/// Shard 내 단일 컬럼 통계 (ShardStats.column_stats의 값 타입)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ShardColumnStats {
+    pub min_val:    Option<Value>,
+    pub max_val:    Option<Value>,
+    pub ndv:        Option<u64>,   // HyperLogLog 추정 (Number of Distinct Values)
+    pub null_count: u64,
+    pub histogram:  Option<Histogram>,
+}
+
+/// Shard 수준 통계 (Raft KV: /stats/{table_id}/{partition_id}/{shard_id})
+/// CBO Join 순서 결정, Aggregation 전략 선택, Predicate Selectivity 추정에 사용
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShardStats {
+    pub row_count:    u64,
+    pub size_bytes:   u64,
+    /// 컬럼별 통계 (key = 컬럼 이름)
+    pub column_stats: HashMap<String, ShardColumnStats>,
+    pub updated_at:   Timestamp,
+}
+
+impl Default for ShardStats {
+    fn default() -> Self {
+        Self {
+            row_count:    0,
+            size_bytes:   0,
+            column_stats: HashMap::new(),
+            updated_at:   Utc::now(),
+        }
+    }
+}
+
+// ──── 물리 단위 (Part / Granule) ────────────────────────────────
+
+/// Part(=SSTable) 메타데이터 — MANIFEST에 저장, SN 로컬
+/// Compute Node가 스캔 요청 전 min/max Sort Key 범위 스킵 판단에 사용
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartRef {
+    pub part_id:        Uuid,
+    /// LSM 레벨 (0=L0, 1~6=L1~L6)
+    pub level:          u32,
+    /// 파티션 내 단조 증가 시퀀스 번호 (동일 Sort Key 중 최신값 결정)
+    pub sequence_num:   u64,
+    /// Compaction 세대 (0=flush, N=N번째 compaction 출력)
+    pub generation:     u64,
+    /// 이 Part 생성에 병합된 입력 Part ID 목록 (flush=빈 배열)
+    pub compacted_from: Vec<Uuid>,
+    pub row_count:      u64,
+    pub size_bytes:     u64,
+    /// Sort Key 직렬화 최솟값 — Predicate 범위 스킵 판단용
+    pub min_sort_key:   Vec<u8>,
+    /// Sort Key 직렬화 최댓값
+    pub max_sort_key:   Vec<u8>,
+}
+
+impl PartRef {
+    /// Sort Key 범위를 기반으로 이 Part를 스킵할 수 있는지 판단
+    /// predicate_min/max: None이면 범위 제한 없음
+    pub fn can_skip_by_sort_key(
+        &self,
+        predicate_min: Option<&[u8]>,
+        predicate_max: Option<&[u8]>,
+    ) -> bool {
+        if let Some(p_min) = predicate_min {
+            if self.max_sort_key.as_slice() < p_min {
+                return true; // Part 전체가 predicate 범위 앞
+            }
+        }
+        if let Some(p_max) = predicate_max {
+            if self.min_sort_key.as_slice() > p_max {
+                return true; // Part 전체가 predicate 범위 뒤
+            }
+        }
+        false
+    }
+}
+
+// ──── LSM 스캔 범위 ──────────────────────────────────────────────
+
+/// CN → SN Shard 스캔 시 스캔할 LSM 레벨 범위
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LsmScanRange {
+    pub min_level: u32,
+    pub max_level: u32,
+}
+
+impl Default for LsmScanRange {
+    fn default() -> Self {
+        Self { min_level: 0, max_level: 6 }
+    }
+}
+
+impl LsmScanRange {
+    pub fn all_levels() -> Self { Self::default() }
+    pub fn l0_only()    -> Self { Self { min_level: 0, max_level: 0 } }
+    pub fn l1_plus()    -> Self { Self { min_level: 1, max_level: 6 } }
+
+    pub fn contains(&self, level: u32) -> bool {
+        level >= self.min_level && level <= self.max_level
+    }
+}
+
+// ──── 스캔 통계 ──────────────────────────────────────────────────
+
+/// SN → CN 스캔 완료 시 반환되는 통계 (skipping 효율 측정용)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ScanStats {
+    pub parts_scanned:    u32,
+    pub parts_skipped:    u32,
+    pub granules_read:    u64,
+    pub granules_skipped: u64,
+    pub rows_returned:    u64,
+    pub bytes_read:       u64,
+}
+
+impl ScanStats {
+    pub fn skip_ratio_parts(&self) -> f64 {
+        let total = self.parts_scanned + self.parts_skipped;
+        if total == 0 { 0.0 } else { self.parts_skipped as f64 / total as f64 }
+    }
+
+    pub fn skip_ratio_granules(&self) -> f64 {
+        let total = self.granules_read + self.granules_skipped;
+        if total == 0 { 0.0 } else { self.granules_skipped as f64 / total as f64 }
+    }
+}
+
+// ──── Shard Predicate (CN → SN pushdown 필터) ───────────────────
+
+/// Predicate 비교 연산자
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ShardPredicateOp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    IsNull,
+    IsNotNull,
+}
+
+/// CN이 SN에 pushdown하는 컬럼 필터 조건
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShardPredicate {
+    pub column: String,
+    pub op:     ShardPredicateOp,
+    /// IsNull/IsNotNull에서는 None
+    pub value:  Option<Value>,
+}
+
+impl ShardPredicate {
+    pub fn eq(column: impl Into<String>, value: Value) -> Self {
+        Self { column: column.into(), op: ShardPredicateOp::Eq, value: Some(value) }
+    }
+    pub fn range_ge(column: impl Into<String>, value: Value) -> Self {
+        Self { column: column.into(), op: ShardPredicateOp::Ge, value: Some(value) }
+    }
+    pub fn range_lt(column: impl Into<String>, value: Value) -> Self {
+        Self { column: column.into(), op: ShardPredicateOp::Lt, value: Some(value) }
+    }
+}
+
+// ──── Shard 스캔 요청 ────────────────────────────────────────────
+
+/// CN → SN Shard 스캔 요청 (Rust 내부 표현 — gRPC 전송 전 직렬화)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShardScanRequest {
+    /// 대상 Shard ID
+    pub shard_id:  Uuid,
+    /// Shard의 SN 상 물리 디렉토리 경로
+    pub shard_dir: std::path::PathBuf,
+    /// Column Projection — 빈 배열이면 전체 컬럼
+    pub columns:   Vec<String>,
+    /// Pushdown 필터 — SN 스캔 시 적용
+    pub predicates: Vec<ShardPredicate>,
+    /// 스캔할 LSM 레벨 범위
+    pub scan_range: LsmScanRange,
+    /// Point Lookup용 Bloom Filter 프로브 키 목록
+    pub bloom_probe_keys: Vec<Vec<u8>>,
+}

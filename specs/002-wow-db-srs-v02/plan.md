@@ -53,6 +53,13 @@ WOW-DB는 200억+ 레코드 규모의 웹 이벤트 분석에 특화된 MySQL �
 - LSM Leveled Compaction: L0 overlapping 허용, L1+ non-overlapping 불변 조건
 - L0 파일 수 트리거: compact=4, slowdown=8, stop=12
 - Bloom Filter: xxHash3, 10 bits/key (FPR 1%), SSTable-level + Granule-level 2-tier
+- Single System Image: 모든 QN은 Raft 쿼럼 커밋 후 동일한 메타데이터 반영 (FR-033)
+- Metadata Cache Staleness: DDL=write-through, CBO 통계 최대 500ms 지연 허용 (FR-034)
+- Session Token: Raft KV 저장, 모든 QN에서 검증 가능, 24h TTL (FR-035)
+- Disk Full → Read-Only: SN 데이터 디스크 또는 QN Raft WAL 디스크 ≥ 95% 시 클러스터 전체 쓰기 차단 (FR-036)
+- 논리 단위 계층: QN은 Table/Partition/Shard 단위로 스케줄링, CBO 통계도 이 단위로 저장 (FR-037, FR-040)
+- 물리 단위 계층: SN은 Part/Granule/ColumnFile 단위로 스캔, Shard 스캔 프로토콜은 gRPC ShardScanRequest (FR-038, FR-039, FR-042)
+- CN-SN 스캔 계약: ShardScanRequest에 column projection + predicate pushdown + runtime filter 포함, SN은 Part→Granule→ColumnFile 4단계 필터링 (FR-041, FR-042)
 
 **Scale/Scope**: 200억+ 레코드, 최대 30개 SN, 16개 CN, 5개 QN
 
@@ -81,17 +88,20 @@ WOW-DB는 200억+ 레코드 규모의 웹 이벤트 분석에 특화된 MySQL �
 
 ```text
 specs/002-wow-db-srs-v02/
-├── spec.md           ✅ 요구사항 명세
+├── spec.md           ✅ 요구사항 명세 (FR-001~FR-036)
 ├── plan.md           ✅ 이 파일 (구현 계획)
 ├── research.md       ✅ Phase 0 기술 스택 결정 (§13~15: LSM/Bloom/SortKey)
-├── data-model.md     ✅ Phase 1 데이터 모델 (§2.4~2.8: LSM 내부 구조 상세)
+├── data-model.md     ✅ Phase 1 데이터 모델 (§2.4~2.8: LSM 내부, §6: 클러스터 보호 엔티티)
 ├── quickstart.md     ✅ Phase 1 빠른 시작
 ├── contracts/
 │   ├── grpc-interfaces.md  ✅ gRPC 인터페이스 계약
 │   └── sql-extensions.md  ✅ SQL 확장 문법 계약
 ├── design/
-│   └── lsm-engine.md ✅ LSM Engine 상세 설계 (Leveling, Bloom Filter, Sort Key, 물리 파일 포맷)
-└── tasks.md          ✅ 구현 태스크 목록 (Phase 11: LSM Engine 강화 T107~T117)
+│   ├── lsm-engine.md                ✅ LSM Engine 상세 설계 (Leveling, Bloom Filter, Sort Key, 물리 파일 포맷)
+│   ├── readonly-mode.md             ✅ 디스크 초과 → Read-Only 모드 상세 설계 (FR-036)
+│   ├── query-execution-model.md     ✅ 쿼리 실행 모델 (QN→CN→SN 3계층, Fragment, Exchange, 분석 쿼리) (FR-037, FR-041)
+│   └── logical-to-physical-mapping.md ✅ 논리-물리 단위 매핑 (Table/Partition/Shard → Part/Granule/ColumnFile, CBO 통계 계층) (FR-037~FR-042)
+└── tasks.md          ✅ 구현 태스크 목록 (Phase 11: T107~T117, Phase 12: T118~T125, Phase 13: T126~T136)
 ```
 
 ### Source Code (Repository Root)

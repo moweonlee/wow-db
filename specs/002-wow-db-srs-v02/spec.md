@@ -168,6 +168,69 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 - **FR-031**: SSTable 물리 파일(`.col`, `.bloom`, `.min_max`)은 파일 헤더에 magic bytes, 포맷 버전 번호, SSTable sequence_num을 포함해야 하며, 버전 불일치 시 로딩을 거부해야 한다.
 - **FR-032**: Storage Node는 MANIFEST 파일을 통해 현재 활성 SSTable 전체 목록을 원자적으로 관리해야 하며, 크래시 복구 시 MANIFEST만으로 전체 LSM 상태를 복원할 수 있어야 한다.
 
+### Query Node 메타데이터 일관성 요구사항
+
+- **FR-033**: **단일 시스템 이미지(Single System Image) 보장** — 클라이언트가 어떤 Query Node에 접속하더라도 동일한 Cube 스키마, 파티션 목록, Tablet 위치 정보, CBO 통계를 조회할 수 있어야 한다. DDL(CREATE/ALTER/DROP CUBE)이 Raft quorum 쓰기로 커밋되면, 해당 변경은 이후 어떤 QN에서 발행하는 메타데이터 조회에도 즉시 반영되어야 한다. QN 간 메타데이터 뷰의 불일치는 허용하지 않는다.
+
+- **FR-034**: **메타데이터 캐시 Staleness 상한** — QN의 로컬 메타데이터 캐시는 스키마 버전(`CubeSchema.version`)을 기준으로 TTL 무효화를 적용해야 한다. DDL 변경(CREATE/ALTER/DROP CUBE)은 캐시 즉시 무효화(write-through) 방식으로 처리해야 하며, CBO 통계(min/max/NDV/Histogram)의 최대 staleness는 설정 가능(기본 500ms)해야 한다. 캐시의 스키마 버전이 Raft 메타스토어의 최신 버전과 불일치하는 경우 즉시 재조회해야 한다.
+
+- **FR-035**: **세션 토큰 클러스터 공유** — Web Client 세션 토큰은 Raft KV(`/sessions/{token}`)에 저장되어야 하며, 클러스터 내 모든 QN에서 유효성 검증이 가능해야 한다. 특정 QN이 재시작되더라도 기존 웹 세션이 유지되어야 하며, 토큰 만료는 Raft KV의 TTL(기본 24시간, 설정 가능)로 관리되어야 한다.
+
+### 클러스터 보호 요구사항
+
+- **FR-036**: **디스크 용량 초과 시 읽기 전용 모드(Read-Only Mode)** — Storage Node의 데이터 디스크 또는 Query Node의 Raft WAL 디스크의 사용률이 설정된 임계값(기본 95%, `disk_full_threshold`)을 초과하여 새로운 데이터·메타데이터를 기록할 수 없는 상태가 감지되면, 클러스터 전체는 즉시 읽기 전용 모드로 전환되어야 한다.
+  - **쓰기 차단 대상**: INSERT, CREATE CUBE, ALTER CUBE, DROP CUBE, Kafka Routine Load 수집, Spark Stream Load, Async INSERT, Compaction 출력 쓰기
+  - **정상 처리 대상**: SELECT, SHOW CUBES, DESCRIBE, EXPLAIN, SHOW STATUS 등 모든 읽기 전용 연산
+  - **클라이언트 오류 응답**: MySQL 호환 에러 — `ERROR 1290 (HY000): The WOW-DB server is running in read-only mode so it cannot execute this statement`
+  - **자동 복귀**: 디스크 사용률이 회복 임계값(기본 85%, `disk_recovery_threshold`) 이하로 감소하면 쓰기 가능 상태로 자동 복귀해야 한다
+  - **Prometheus 지표**: `wowdb_cluster_read_only{reason="disk_full"}` 메트릭을 노출해야 하며, 읽기 전용 진입 시 값 1, 복귀 시 값 0으로 설정되어야 한다
+  - **상세 설계**: `specs/002-wow-db-srs-v02/design/readonly-mode.md` 참조
+
+### 쿼리 실행 단위 및 논리-물리 매핑 요구사항
+
+- **FR-037**: **논리 단위 계층 (Query Node 관점)** — Query Node는 데이터를 세 계층의 논리 단위로 인식하고 스케줄링 결정을 내려야 한다.
+  - **Table** (= Cube): 최상위 논리 엔티티. SQL에서 FROM 절에 명시되는 단위
+  - **Partition**: Table을 시간 범위 또는 키 범위로 나눈 논리 분할 단위. CBO의 Partition Pruning 최소 단위
+  - **Shard** (= Tablet): Partition 내에서 분산 키(distribution key)의 해시 버킷으로 나눈 스케줄링 최소 단위. Fragment가 CN에 할당될 때의 기본 단위이며, 각 Shard는 하나 이상의 Storage Node에 복제본을 가진다
+  - CBO 통계는 이 세 계층 모두에서 독립적으로 저장·조회되어야 한다
+
+- **FR-038**: **물리 단위 계층 (Storage Node 관점)** — Storage Node는 데이터를 네 계층의 물리 단위로 관리하며, Compute Node의 스캔 요청은 이 단위 기준으로 명령을 내려야 한다.
+  - **Shard Directory**: Storage Node 파일시스템 상의 물리 디렉토리. 논리 Shard 하나에 1:1 대응
+  - **Part** (= SSTable): LSM-Tree의 한 레벨 내 개별 정렬 파일. Compute Node가 스캔을 요청하는 최소 단위. 각 Part는 자신의 min/max Sort Key 범위를 가진다
+  - **Granule**: Part 내의 고정 행 블록(기본 8,192행). Data Skipping Index(MINMAX/BLOOM)의 최소 단위. Predicate 평가로 건너뛸 수 있는 최소 IO 단위
+  - **Column File** (`.col`, `.bloom`, `.min_max`): Granule별 컬럼 데이터 파일. 쿼리가 필요한 컬럼만 IO 발생
+
+- **FR-039**: **논리-물리 매핑 해석** — Query Node는 논리 계획(Table/Partition/Shard)을 물리 계획(SN NodeId/Shard Directory/Part 목록)으로 변환할 수 있어야 한다.
+  - **Shard → SN 매핑**: QN은 Raft 메타데이터에서 `Shard ID → (SN NodeId, Shard Directory 경로)` 매핑을 조회한다
+  - **Shard → Part 목록**: CN이 스캔 명령을 실행할 때, SN은 해당 Shard의 MANIFEST를 기반으로 현재 활성 Part 목록을 반환한다. CN은 반환된 Part 목록 중 min/max Sort Key와 쿼리 predicate를 비교하여 스캔 대상을 추려낸다
+  - **Part → Column File**: SN은 CN의 column projection 요청에 따라 필요한 `.col` 파일만 읽는다
+  - **상세 설계**: `specs/002-wow-db-srs-v02/design/logical-to-physical-mapping.md` 참조
+
+- **FR-040**: **CBO 통계 계층적 저장** — CBO 통계는 논리 단위 계층(Table/Partition/Shard)과 물리 단위(Part) 모두에서 저장·관리되어야 한다.
+  - **Table 수준** (Raft KV `/stats/{cube_id}`): 전체 row_count, size_bytes, last_analyzed
+  - **Partition 수준** (Raft KV `/stats/{cube_id}/{partition_id}`): row_count, size_bytes, partition key min/max
+  - **Shard 수준** (Raft KV `/stats/{cube_id}/{partition_id}/{shard_id}`): row_count, size_bytes, 컬럼별 min/max/NDV/null_count/Histogram
+  - **Part 수준** (MANIFEST 내 SstRef 필드): row_count, min_sort_key, max_sort_key (Raft KV 비저장, SN 로컬)
+  - CBO Optimizer는 Partition Pruning 시 Partition 수준 통계를, Join 순서 결정 시 Shard 수준 통계를, 파일 스킵 시 Part 수준 통계를 각각 활용해야 한다
+
+- **FR-041**: **CN Fragment 스케줄링 (Shard 단위)** — Physical Planner는 각 Shard를 하나의 CN에 할당하는 Fragment를 생성해야 하며, 각 Fragment에는 다음 정보가 포함되어야 한다.
+  - `shard_id`: 대상 Shard 식별자
+  - `sn_endpoint`: Shard 데이터를 보유하는 SN의 gRPC 엔드포인트
+  - `columns`: 필요한 컬럼 이름 목록 (Column Projection)
+  - `predicates`: SN Scan에 Pushdown할 필터 표현식
+  - `runtime_filter`: Hash Join Build Side에서 생성된 Bloom/MinMax 필터 (있는 경우)
+  - `scan_range`: 스캔할 LSM 레벨 범위 (기본: 전체 레벨, Full Compaction 이후 L6만 지정 가능)
+  - 하나의 CN은 여러 Fragment(Shard)를 병렬 파이프라인으로 처리할 수 있어야 한다
+
+- **FR-042**: **SN 스캔 실행 (Part 수준)** — Storage Node의 스캔 실행기는 CN으로부터 Shard 스캔 요청을 수신하면 다음 순서로 처리해야 한다.
+  1. MANIFEST에서 해당 Shard의 활성 Part 목록 조회 (레벨별)
+  2. Part의 min/max Sort Key와 쿼리 predicate 비교 → 범위 밖 Part 즉시 스킵
+  3. 남은 Part에 대해 SSTable-level Bloom Filter 검사 → false면 해당 Part 스킵
+  4. 통과한 Part의 각 Granule에 대해 MINMAX Index 검사 → predicate 범위 밖 Granule 스킵
+  5. 남은 Granule의 Column File(`.col`)에서 필요한 컬럼 데이터 블록만 읽어 Arrow2 RecordBatch 형태로 CN에 스트리밍 반환
+  6. L0 Part는 key range 겹침이 있으므로 동일 Sort Key에 대해 최신 sequence_num의 값을 우선 사용 (Multi-Version Read)
+  - **상세 설계**: `specs/002-wow-db-srs-v02/design/logical-to-physical-mapping.md` 및 `design/query-execution-model.md` 참조
+
 ### 핵심 엔티티
 
 - **이벤트(Event)**: 웹 서비스에서 사용자가 발생시킨 단일 행동 단위. 타임스탬프, 사용자 식별자, 이벤트 타입명, 선택적 properties 페이로드를 포함한다.

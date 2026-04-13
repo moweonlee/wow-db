@@ -495,6 +495,7 @@ PhysOp {
 | `/routine_load/{job_id}` | `RoutineLoadJob` | Kafka 수집 잡 |
 | `/sessions/{token}` | `WebSession` | Web UI 세션 토큰 |
 | `/resource_groups/{name}` | `ResourceGroup` | 리소스 정책 |
+| `/cluster/read_only_state` | `ClusterReadOnlyState` | 클러스터 Read-Only 모드 상태 (FR-036) |
 
 ---
 
@@ -522,4 +523,201 @@ PhysOp {
 [Created] --시작--> [Running] --일시중지--> [Paused] --재개--> [Running]
 [Running] --오류--> [Error] --재시도--> [Running]
 [Running|Paused] --취소--> [Cancelled]
+```
+
+---
+
+## 6. 쿼리 실행 단위 엔티티 (FR-037~FR-042)
+
+### 6.1 TableStats (테이블 수준 통계)
+
+```
+// Raft KV 키: /stats/{table_id}
+TableStats {
+    row_count:     u64,          // 전체 행 수
+    size_bytes:    u64,          // 전체 물리 크기 (압축 포함)
+    last_analyzed: Timestamp,    // ANALYZE TABLE 마지막 실행 시각
+}
+```
+
+### 6.2 PartitionStats (파티션 수준 통계)
+
+```
+// Raft KV 키: /stats/{table_id}/{partition_id}
+PartitionStats {
+    row_count:          u64,
+    size_bytes:         u64,
+    partition_key_min:  Value,   // Partition Pruning용 최솟값
+    partition_key_max:  Value,   // Partition Pruning용 최댓값
+}
+```
+
+### 6.3 ShardStats (Shard 수준 통계 — CBO 핵심 통계)
+
+```
+// Raft KV 키: /stats/{table_id}/{partition_id}/{shard_id}
+ShardStats {
+    row_count:     u64,
+    size_bytes:    u64,
+    column_stats:  HashMap<ColumnName, ColumnStats>,
+}
+
+ColumnStats {
+    min_val:    Value,
+    max_val:    Value,
+    ndv:        u64,          // Number of Distinct Values (HyperLogLog 추정)
+    null_count: u64,
+    histogram:  Option<Histogram>,  // 100 버킷, ANALYZE TABLE 후 생성
+}
+
+Histogram {
+    buckets:    Vec<(Value, Value, u64)>,  // (lower_bound, upper_bound, row_count)
+    method:     HistogramMethod,           // Equi-Height | Equi-Width
+}
+```
+
+### 6.4 PartRef (= SstRef — 물리 Part 메타데이터)
+
+```
+// MANIFEST 내 저장 (SN 로컬, Raft KV 미저장)
+PartRef {
+    part_id:        Uuid,          // = sst_id
+    level:          u32,           // 0~6 (L0=겹침 허용, L1+=비중첩 불변)
+    sequence_num:   u64,           // 단조 증가 (동일 Sort Key에서 최신값 결정)
+    generation:     u64,           // 0=flush 결과, N=N번째 Compaction 결과
+    compacted_from: Vec<Uuid>,     // 병합된 입력 Part ID 목록 (flush=빈 배열)
+    row_count:      u64,
+    size_bytes:     u64,
+    min_sort_key:   Vec<u8>,       // Sort Key 직렬화 최솟값 (스킵 판단용)
+    max_sort_key:   Vec<u8>,       // Sort Key 직렬화 최댓값
+    columns:        Vec<String>,   // 포함된 컬럼 이름 목록
+    path:           PathBuf,       // SN 상의 Part 디렉토리 경로
+}
+```
+
+### 6.5 GranuleIndex (Granule 수준 인덱스 — `.min_max` 파일)
+
+```
+// .min_max 파일 내 저장 (SN 로컬)
+GranuleIndex {
+    granule_index:  u32,               // Part 내 0-based 인덱스
+    row_offset:     u64,               // .col 파일 내 바이트 오프셋
+    row_count:      u16,               // 기본 8,192행
+    col_min_max:    HashMap<ColumnName, (Value, Value)>,  // 컬럼별 min/max
+}
+```
+
+### 6.6 ShardScanRequest (CN → SN 스캔 요청)
+
+```
+// gRPC 메시지 (proto/storage.proto)
+ShardScanRequest {
+    shard_id:          Uuid,
+    columns:           Vec<String>,      // Column Projection (필요한 컬럼만)
+    predicates:        Vec<Predicate>,   // Pushdown 필터
+    scan_range:        LsmScanRange,     // {min_level, max_level}
+    runtime_filter:    Option<RuntimeFilter>,
+    bloom_probe_keys:  Vec<Vec<u8>>,     // Point Lookup Bloom 검사용
+}
+
+LsmScanRange {
+    min_level: u32,   // 기본 0 (L0부터)
+    max_level: u32,   // 기본 6 (L6까지)
+}
+
+// 스캔 처리 결과 통계 (SN → CN 응답 마지막 메시지)
+ScanStats {
+    parts_scanned:    u32,
+    parts_skipped:    u32,    // Sort Key 범위 + Bloom으로 스킵된 Part 수
+    granules_read:    u64,
+    granules_skipped: u64,    // MINMAX로 스킵된 Granule 수
+    rows_returned:    u64,
+    bytes_read:       u64,
+}
+```
+
+---
+
+## 7. 클러스터 보호 엔티티 (FR-033~FR-036)
+
+### 6.1 ClusterReadOnlyState (클러스터 Read-Only 상태)
+
+```
+// Raft KV 키: /cluster/read_only_state
+ClusterReadOnlyState {
+    enabled:    bool,               // true = Read-Only 모드 활성
+    reasons:    Vec<ReadOnlyReason>, // 원인 목록 (복수 원인 가능)
+    entered_at: Option<Timestamp>,  // 최초 진입 시각 (disabled 시 None)
+    updated_at: Timestamp,          // 마지막 갱신 시각
+}
+
+ReadOnlyReason {
+    variant:   ReadOnlyVariant,
+    node_id:   NodeId,              // 원인 노드 ID
+    path:      String,              // 문제가 된 디렉토리 경로
+    usage:     f64,                 // 측정된 사용률 (0.0~1.0)
+    timestamp: Timestamp,           // 감지 시각
+}
+
+// ReadOnlyVariant:
+//   DiskFull       — 디스크 사용량 ≥ disk_full_threshold (기본 95%)
+//   ManualOverride — 관리자 수동 활성화 (SET GLOBAL wowdb_read_only = ON)
+```
+
+**상태 전이**:
+```
+[정상] --DiskFull 감지 (≥95%)--> [Read-Only]
+[Read-Only] --디스크 복구 (<85%) + 모든 reason 제거--> [정상]
+[정상] --SET GLOBAL wowdb_read_only=ON--> [Read-Only (ManualOverride)]
+[Read-Only (ManualOverride)] --SET GLOBAL wowdb_read_only=OFF--> [정상]
+[Read-Only (DiskFull+ManualOverride)] --두 reason 모두 제거 필요--> [정상]
+```
+
+### 6.2 DiskCapacityMonitor (디스크 용량 감시 설정)
+
+```
+// 각 SN/QN 노드의 로컬 설정 — Raft KV 미저장 (노드 로컬 config)
+DiskCapacityMonitor {
+    data_dir:                PathBuf,   // 데이터 저장 경로
+    wal_dir:                 Option<PathBuf>,  // WAL 경로 (None=data_dir와 동일)
+    disk_full_threshold:     f64,       // Read-Only 진입 임계값 (기본 0.95)
+    disk_recovery_threshold: f64,       // Read-Only 해제 임계값 (기본 0.85)
+    check_interval_ms:       u64,       // 폴링 주기 (기본 5_000ms)
+}
+
+DiskUsageSample {
+    path:        PathBuf,
+    total_bytes: u64,
+    used_bytes:  u64,
+    usage_ratio: f64,   // used_bytes / total_bytes
+    sampled_at:  Instant,
+}
+```
+
+### 6.3 WebSession (세션 토큰 — FR-035)
+
+```
+// Raft KV 키: /sessions/{token}
+// TTL: 24시간 (Raft KV 레벨 만료 적용)
+WebSession {
+    token:      String,         // 불투명 토큰 (UUID v4)
+    user_id:    String,         // 로그인한 사용자
+    created_at: Timestamp,
+    expires_at: Timestamp,      // created_at + 24h
+    last_seen:  Timestamp,      // 마지막 요청 시각
+    issuing_qn: NodeId,         // 발급한 QN (어느 QN에서도 검증 가능)
+}
+```
+
+### 6.4 MetadataCacheEntry (메타데이터 캐시 — FR-034)
+
+```
+// QN 로컬 인메모리 캐시 (Raft KV 미저장)
+MetadataCacheEntry<T> {
+    value:      T,
+    raft_index: u64,        // 캐시된 Raft 로그 인덱스
+    cached_at:  Instant,
+    // DDL 변경은 write-through (캐시 즉시 무효화)
+    // CBO 통계는 max_staleness_ms(기본 500ms) 후 re-fetch
+}
 ```
