@@ -80,7 +80,67 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
             return results.completed(OkResponse::default()).await.map_err(Into::into);
         }
 
-        // 스키마 명령 처리 (SHOW, DESCRIBE 등)
+        // CREATE DATABASE [IF NOT EXISTS] <name>
+        if lower.starts_with("create database") || lower.starts_with("create schema") {
+            let if_not_exists = lower.contains("if not exists");
+            let name = extract_db_name(&lower, if if_not_exists { "exists" } else if lower.starts_with("create schema") { "schema" } else { "database" });
+            if name.is_empty() {
+                return results.error(ErrorKind::ER_PARSE_ERROR, b"Missing database name").await.map_err(Into::into);
+            }
+            let key = format!("db:{name}");
+            if if_not_exists && self.raft.read(&key).await.is_some() {
+                return results.completed(OkResponse::default()).await.map_err(Into::into);
+            }
+            self.raft.write(crate::raft::RaftCommand::UpsertKv { key, value: "1".to_string() }).await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            info!(db = %name, "Database created");
+            return results.completed(OkResponse::default()).await.map_err(Into::into);
+        }
+
+        // DROP DATABASE [IF EXISTS] <name>
+        if lower.starts_with("drop database") || lower.starts_with("drop schema") {
+            let if_exists = lower.contains("if exists");
+            let name = extract_db_name(&lower, if if_exists { "exists" } else if lower.starts_with("drop schema") { "schema" } else { "database" });
+            let key = format!("db:{name}");
+            if self.raft.read(&key).await.is_none() {
+                if if_exists {
+                    return results.completed(OkResponse::default()).await.map_err(Into::into);
+                }
+                return results.error(ErrorKind::ER_DB_DROP_EXISTS, format!("Unknown database '{name}'").as_bytes()).await.map_err(Into::into);
+            }
+            self.raft.write(crate::raft::RaftCommand::DeleteKv { key }).await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            info!(db = %name, "Database dropped");
+            return results.completed(OkResponse::default()).await.map_err(Into::into);
+        }
+
+        // SHOW DATABASES — Raft KV 에서 동적으로 읽기
+        if lower.trim_end_matches(';') == "show databases" {
+            let sm = self.raft.sm.read().await;
+            let mut dbs: Vec<String> = sm.kv.keys()
+                .filter(|k| k.starts_with("db:"))
+                .map(|k| k[3..].to_string())
+                .collect();
+            drop(sm);
+            dbs.sort();
+            // 시스템 DB 항상 포함
+            let mut rows = vec![
+                vec![Some("default".to_string())],
+                vec![Some("information_schema".to_string())],
+            ];
+            for db in dbs {
+                if db != "default" && db != "information_schema" {
+                    rows.push(vec![Some(db)]);
+                }
+            }
+            let output = QueryOutput::Rows {
+                columns: vec![ColumnMeta { name: "Database".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING }],
+                rows,
+            };
+            return write_output(results, output).await;
+        }
+
+        // 스키마 명령 처리 (SHOW TABLES, DESCRIBE 등)
         if let Some(output) = handle_schema_command(sql, &self.cube_mgr, &self.current_db()).await {
             return write_output(results, output).await;
         }
@@ -244,6 +304,20 @@ async fn write_output<W: tokio::io::AsyncWrite + Send + Unpin>(
                 .map_err(Into::into)
         }
     }
+}
+
+// ─── DB 이름 추출 헬퍼 ───────────────────────────────────────────────────────
+
+/// "create database foo" → "foo", "create database if not exists foo" → "foo"
+fn extract_db_name(lower_sql: &str, after_keyword: &str) -> String {
+    let pos = lower_sql.find(after_keyword).unwrap_or(0) + after_keyword.len();
+    lower_sql[pos..]
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches('`')
+        .trim_end_matches(';')
+        .to_string()
 }
 
 // ─── CreateCubeStmt → CubeSchema 변환 ────────────────────────────────────────
