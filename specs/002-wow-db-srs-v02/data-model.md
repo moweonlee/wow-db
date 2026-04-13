@@ -205,43 +205,230 @@ MemTable {
 ```
 SSTable {
     metadata:  SstMeta {
-        sst_id:      Uuid,
-        level:       u8,         // 0 = L0 (flush), 1+ = Compaction 결과
-        partition_id: Uuid,
-        sort_key_min: SortKey,
-        sort_key_max: SortKey,
-        row_count:    u64,
-        created_at:   Timestamp,
+        sst_id:         Uuid,
+        level:          u8,         // 0 = L0 (flush), 1+ = Compaction 결과
+        sequence_num:   u64,        // 파티션 내 단조 증가 시퀀스 번호
+                                    // flush 또는 compaction 완료 시 할당
+                                    // 읽기 시 동일 key에 대해 최신 seq 우선
+        generation:     u64,        // Compaction 세대 번호
+                                    // 0 = MemTable flush 결과 (원본)
+                                    // N = N번째 Compaction 거친 결과
+        partition_id:   Uuid,
+        sort_key_min:   SortKey,
+        sort_key_max:   SortKey,
+        row_count:      u64,
+        size_bytes:     u64,
+        created_at:     Timestamp,
+        compacted_from: Vec<Uuid>,  // 이 SSTable 생성 시 병합된 입력 SSTable ID들
+                                    // flush의 경우 빈 배열
     },
     columns:   HashMap<ColumnName, ColumnFile>,
-    bloom:     BloomFilter,      // per-SSTable Bloom (Sort Key 기준 point lookup)
+    bloom:     BloomFilter,      // per-SSTable Bloom (Sort Key 기준)
     min_max:   MinMaxIndex,      // CBO용 컬럼별 min/max
 }
 
-// 디스크 레이아웃:
+// 디스크 레이아웃 (파티션 기준):
 // partition=p_YYYY_MM/
-// ├── <column_name>/
-// │   ├── <sst_id>.col        ← 압축된 컬럼 데이터
-// │   ├── <sst_id>.bloom
-// │   └── <sst_id>.min_max
-// └── _meta/
-//     ├── schema.json
-//     └── stats.json
+// └── lsm/
+//     ├── L0/
+//     │   └── <sst_id>/          ← L0: 파일들 간 key range 겹침 허용
+//     │       ├── _meta.json     ← SstMeta 직렬화 (JSON)
+//     │       ├── <col>.col      ← 압축된 컬럼 데이터 (LZ4/ZSTD)
+//     │       ├── <col>.bloom    ← Bloom Filter (xxHash3, 10 bits/key)
+//     │       └── <col>.min_max  ← Granule별 MINMAX 인덱스
+//     ├── L1/
+//     │   └── <sst_id>/          ← L1+: 파티션 내 key range 비중첩 불변 조건
+//     ├── L2/ ... L6/
+//     └── MANIFEST               ← 현재 레벨별 활성 SSTable 목록 (원자적 갱신)
 ```
 
 ### 2.3 Granule (Data Skipping 단위)
 
 ```
 Granule {
-    granule_id:   u32,          // SSTable 내 순서
-    row_offset:   u64,
+    granule_id:   u32,          // SSTable 내 순서 (0-based)
+    row_offset:   u64,          // 파일 내 바이트 오프셋
     row_count:    u16,          // 기본 8,192행
     // 각 컬럼의 per-Granule 인덱스:
     minmax:  Option<(Value, Value)>,
-    bloom:   Option<BloomFilter>,   // BLOOM_FILTER 인덱스
-    set:     Option<HashSet<Value>>, // SET 인덱스
+    bloom:   Option<BloomFilter>,      // BLOOM_FILTER 인덱스
+    set:     Option<HashSet<Value>>,   // SET 인덱스
     ngrambf: Option<NGramBloomFilter>, // NGRAMBF_V1
 }
+```
+
+### 2.4 Compaction 레벨 구조
+
+```
+CompactionConfig {
+    // L0 파일 수 기반 트리거
+    level0_file_compaction_trigger: usize,  // 기본 4  (L0→L1 compact 시작)
+    level0_slowdown_write_trigger:  usize,  // 기본 8  (쓰기 속도 제한)
+    level0_stop_write_trigger:      usize,  // 기본 12 (쓰기 중단, 배압)
+
+    // L1+ 크기 기반 트리거
+    level1_max_bytes:    u64,   // 기본 256MB
+    level_multiplier:    u32,   // 기본 10 (Ln max = L1 × 10^(n-1))
+    max_levels:          u8,    // 기본 7 (L0~L6)
+    target_file_size_mb: u64,   // 기본 64MB (Compaction 출력 SSTable 목표 크기)
+}
+
+LevelState {
+    level:        u8,           // 0~6
+    max_bytes:    u64,          // CompactionConfig 수식으로 계산
+    // L0: 파일 수 제한 기반 / L1+: 크기 기반
+    sstables:     Vec<SstMeta>, // L0: 겹침 허용, L1+: 비중첩 불변 조건
+    total_bytes:  u64,
+    // 다음 compact 대상 (least recently compacted):
+    compaction_score: f64,      // total_bytes / max_bytes (>1.0 이면 compact 필요)
+}
+
+// 레벨별 최대 크기 및 예상 SSTable 수 (target_file_size=64MB 기준):
+// L0: 무제한 (파일 수로 제어)
+// L1: 256 MB  → SSTable ~4개
+// L2: 2.5 GB  → SSTable ~40개
+// L3: 25 GB   → SSTable ~390개
+// L4: 250 GB  → SSTable ~3,900개
+// L5: 2.5 TB  → SSTable ~39,000개
+// L6: 무제한  → 최종 수렴 레벨 (Full Compaction 목적지)
+```
+
+### 2.5 Bloom Filter 설정
+
+```
+BloomFilterConfig {
+    hash_fn:             HashFn,   // xxHash3 (128-bit, SIMD-friendly, 기본)
+    bits_per_key:        u8,       // 10 = FPR 1% (기본), 14 = FPR 0.1%
+    false_positive_rate: f64,      // 0.01 (1%)
+    // hash 함수 수 k = bits_per_key × ln(2) ≈ 7 (bits=10 기준)
+    // xxHash3 128-bit 출력을 k개 구간으로 분할하여 k개 해시 함수 시뮬레이션
+}
+```
+
+### 2.6 Sort Key 제약 조건
+
+```
+// CubeSchema.sort_key 에 적용되는 검증 규칙 (DDL 파싱 시 강제):
+SortKeyConstraints {
+    max_columns:     usize,  // 4 (초과 시 DDL 에러)
+    max_bytes:       usize,  // 128 bytes (직렬화 크기 초과 시 DDL 에러)
+    string_max_len:  usize,  // 64 bytes (STRING 컬럼 Sort Key 시 적용)
+    allowed_types:   &[DataType],  // INT64, FLOAT64, DATETIME, STRING, BOOLEAN
+    // JSON 컬럼은 Sort Key 불허
+    null_ordering:   NullOrdering, // NullsFirst (NULL을 최솟값으로 처리)
+}
+
+// 직렬화 크기 계산:
+// INT64    → 8 bytes (빅엔디언, 부호 비트 flip)
+// FLOAT64  → 8 bytes (IEEE 754 빅엔디언 + 부호 처리)
+// DATETIME → 8 bytes (Unix timestamp nanoseconds)
+// BOOLEAN  → 1 byte
+// STRING   → min(actual_len, string_max_len) bytes + 1 NULL 종료자
+// NULLABLE → +1 byte prefix (0x00=NULL, 0x01=NonNull)
+```
+
+### 2.7 물리 컬럼 파일 포맷 (`.col` 바이너리 레이아웃)
+
+```
+// .col 파일 바이너리 구조 (총 파일)
+┌──────────────────────────────────────────────┐
+│ MAGIC [8 bytes]  "WOWDBCOL"                  │
+│ VERSION [4 bytes] 파일 포맷 버전 (현재 1)    │
+│ FLAGS [4 bytes]  압축 방식, 인코딩 플래그     │
+│ COLUMN_ID [64 bytes] 컬럼 이름 (UTF-8 패딩)  │
+│ SST_SEQUENCE [8 bytes] SSTable sequence_num  │
+│ ROW_COUNT [8 bytes]                          │
+│ GRANULE_COUNT [4 bytes]                      │
+│ GRANULE_SIZE [4 bytes] 기본 8192             │
+│ RESERVED [16 bytes]                          │
+├──────────────────────────────────────────────┤ ← 헤더 총 120 bytes
+│ GRANULE_OFFSET_TABLE                         │
+│  - GRANULE_COUNT × 16 bytes                  │
+│  - 각 항목: [8B offset | 8B compressed_len]  │
+├──────────────────────────────────────────────┤
+│ DATA BLOCKS (Granule별 압축 블록)            │
+│  Granule_0:                                  │
+│    [4B block_len][N B 압축 데이터]           │
+│  Granule_1: ...                              │
+│  ...                                         │
+├──────────────────────────────────────────────┤
+│ FOOTER                                       │
+│  [8B offset_table_offset]                    │
+│  [4B CRC32 of header+offset_table]           │
+│  [8 bytes] "WOWDBEND"                        │
+└──────────────────────────────────────────────┘ ← 푸터 총 20 bytes
+
+// .bloom 파일 바이너리 구조
+┌──────────────────────────────────────────────┐
+│ MAGIC [8 bytes]  "WOWBLOOM"                  │
+│ VERSION [4 bytes]                            │
+│ SST_SEQUENCE [8 bytes]                       │
+│ BITS_PER_KEY [1 byte]                        │
+│ HASH_FN [1 byte]  0=xxHash3, 1=MurmurHash3  │
+│ NUM_HASH_FUNCS [1 byte]  k 값               │
+│ RESERVED [5 bytes]                           │
+│ BIT_ARRAY_LEN [8 bytes]  비트 배열 크기     │
+├──────────────────────────────────────────────┤ ← 헤더 총 36 bytes
+│ BIT_ARRAY [BIT_ARRAY_LEN / 8 bytes]          │
+├──────────────────────────────────────────────┤
+│ CRC32 [4 bytes]  비트 배열 체크섬            │
+└──────────────────────────────────────────────┘
+
+// .min_max 파일 바이너리 구조 (Granule별 MINMAX 인덱스)
+┌──────────────────────────────────────────────┐
+│ MAGIC [8 bytes]  "WOWMINMX"                  │
+│ VERSION [4 bytes]                            │
+│ SST_SEQUENCE [8 bytes]                       │
+│ GRANULE_COUNT [4 bytes]                      │
+│ VALUE_TYPE [1 byte]  DataType 코드           │
+│ RESERVED [7 bytes]                           │
+├──────────────────────────────────────────────┤ ← 헤더 총 32 bytes
+│ GRANULE_ENTRIES                              │
+│  각 항목 (고정 크기 또는 가변):              │
+│  [8B min_val | 8B max_val | 1B null_flag]    │
+│  STRING 타입: [2B len | N B data] × 2        │
+└──────────────────────────────────────────────┘
+```
+
+### 2.8 SSTable 버전 진행 및 Compaction 수렴
+
+```
+// SSTable sequence_num 할당 규칙:
+// - 파티션 내 전역 AtomicU64 카운터에서 단조 증가로 할당
+// - MemTable flush 시: 1개의 새 sequence_num 할당 → L0 SSTable 생성
+// - Compaction 완료 시: 출력 SSTable 수만큼 새 sequence_num 할당
+//   → 입력 SSTable(들)은 MANIFEST에서 제거 후 파일 삭제
+
+// generation 번호 예시:
+// gen=0: MemTable flush → L0 SSTable (원본 데이터)
+// gen=1: L0→L1 compact → L1 SSTable (1회 merge됨)
+// gen=2: L1→L2 compact → L2 SSTable (2회 merge됨)
+// ...
+// gen=N: L(N-1)→LN compact → 최종 수렴 SSTable
+
+// MANIFEST 파일 (원자적 갱신):
+// - 현재 활성 SSTable 전체 목록 (레벨, ID, key range, sequence_num)
+// - Compaction 완료 시 단일 파일 교체 (rename 원자적 조작)
+// - 크래시 복구 시 MANIFEST만 읽으면 전체 상태 복원 가능
+
+// Full Compaction 수렴:
+// 새 쓰기가 없는 상태에서 충분한 시간이 지나면:
+//
+//   L0: 0개 파일 (모두 L1으로 merge)
+//   L1: 4개 파일 (256MB / 64MB)
+//   L2: 40개 파일
+//   ...
+//   L6: 모든 데이터 → 단일 정렬된 key space
+//
+// 최종 수렴 상태에서:
+//   - 전체 데이터가 L6에만 존재 (비중첩 정렬)
+//   - 읽기 증폭 최소 (L6 SSTable 1~2개만 확인)
+//   - CBO 통계 최신화 → 최적 파티션 pruning
+//
+// Full Compaction 명시적 트리거:
+//   OPTIMIZE TABLE <cube_name> FORCE;  (관리 명령)
+//   → 파티션별 강제 full compaction (모든 레벨 → L6 단일 통합)
+//   → 주의: 매우 높은 I/O 부하, 운영 시간 외 실행 권장
 ```
 
 ---

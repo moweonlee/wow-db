@@ -47,8 +47,12 @@ WOW-DB는 200억+ 레코드 규모의 웹 이벤트 분석에 특화된 MySQL �
 - Storage-Compute 분리: CN과 SN 독립 확장 가능
 - MySQL 8.0 Wire Protocol 완전 호환
 - HDFS 사용 시 Kerberos 인증 필수
-- LSM Merge는 파티션 경계 내에서만 발생
+- LSM Merge는 파티션 경계 내에서만 발생 (inter-partition merge 금지)
 - QN은 홀수 개 (최소 3개) Raft 클러스터 구성
+- LSM Sort Key: 최대 4개 컬럼, 직렬화 크기 128 bytes 이하 (DDL 시 강제 검증)
+- LSM Leveled Compaction: L0 overlapping 허용, L1+ non-overlapping 불변 조건
+- L0 파일 수 트리거: compact=4, slowdown=8, stop=12
+- Bloom Filter: xxHash3, 10 bits/key (FPR 1%), SSTable-level + Granule-level 2-tier
 
 **Scale/Scope**: 200억+ 레코드, 최대 30개 SN, 16개 CN, 5개 QN
 
@@ -79,13 +83,15 @@ WOW-DB는 200억+ 레코드 규모의 웹 이벤트 분석에 특화된 MySQL �
 specs/002-wow-db-srs-v02/
 ├── spec.md           ✅ 요구사항 명세
 ├── plan.md           ✅ 이 파일 (구현 계획)
-├── research.md       ✅ Phase 0 기술 스택 결정
-├── data-model.md     ✅ Phase 1 데이터 모델
+├── research.md       ✅ Phase 0 기술 스택 결정 (§13~15: LSM/Bloom/SortKey)
+├── data-model.md     ✅ Phase 1 데이터 모델 (§2.4~2.8: LSM 내부 구조 상세)
 ├── quickstart.md     ✅ Phase 1 빠른 시작
 ├── contracts/
 │   ├── grpc-interfaces.md  ✅ gRPC 인터페이스 계약
 │   └── sql-extensions.md  ✅ SQL 확장 문법 계약
-└── tasks.md          ⬜ Phase 2 (/speckit.tasks 명령으로 생성)
+├── design/
+│   └── lsm-engine.md ✅ LSM Engine 상세 설계 (Leveling, Bloom Filter, Sort Key, 물리 파일 포맷)
+└── tasks.md          ✅ 구현 태스크 목록 (Phase 11: LSM Engine 강화 T107~T117)
 ```
 
 ### Source Code (Repository Root)

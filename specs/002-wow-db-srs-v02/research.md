@@ -151,6 +151,78 @@ Write Path:
 
 ---
 
+## 13. LSM Compaction 전략
+
+### 결정: Leveled Compaction (RocksDB 방식)
+
+| 비교 항목 | Leveled | Tiered (Size-Tiered) |
+|---|---|---|
+| **Write Amplification** | 10~30× | 2~3× |
+| **Read Amplification** | 1~2 SSTable/쿼리 | 3~5× (overlap 많음) |
+| **Space Amplification** | ~1.1× | ~3× (임시 공간) |
+| **사용처** | RocksDB, StarRocks | ClickHouse MergeTree, Cassandra |
+
+**WOW-DB Leveled 선택 근거:**
+- WOW-DB는 분석 읽기(FUNNEL/COHORT/PATH)가 쓰기보다 중요
+- Leveled: L1+ 내 key range 비중첩 → 단일 키 조회 시 최대 1개 SSTable 확인
+- 이벤트 데이터의 append-only 특성으로 WA는 실측 5~10× (이론 최악 30× 보다 낮음)
+- `Tiered 배제`: 읽기 증폭 3~5× 증가는 분석 쿼리에 직접적 레이턴시 증가 초래
+
+**LSM 핵심 불변 조건:**
+- L0: SSTable 간 key range 겹침 허용 (MemTable flush 특성상 불가피)
+- L1+: 동일 레벨 내 SSTable key range 절대 비중첩 (Leveled Compaction 정의)
+- Compaction은 파티션 경계 내에서만 발생 (inter-partition merge 금지)
+
+**멀티레벨 구조:**
+- L1 = 256MB, Lk = L1 × 10^(k-1), max L6 = 무제한 (최종 수렴 레벨)
+- L0 compaction trigger = 4 파일 (slowdown=8, stop=12)
+
+**상세 설계**: `specs/002-wow-db-srs-v02/design/lsm-engine.md` §4 참조
+
+---
+
+## 14. Bloom Filter 파라미터
+
+### 결정: xxHash3, 10 bits/key (FPR 1%), 2-Tier 캐스케이드
+
+| 항목 | 선택 | 근거 |
+|---|---|---|
+| **Hash 함수** | xxHash3 128-bit | SIMD-accelerated (AVX2, ~60 GB/s), non-cryptographic Bloom에 최적 |
+| **bits/key** | 10 (기본) / 14 (고선택도) | FPR 1% = 10 bits, FPR 0.1% = 14 bits |
+| **계층** | SSTable-level + Granule-level | 2단계 캐스케이드로 불필요한 데이터 블록 읽기 최소화 |
+| **MurmurHash3 배제** | SIMD 미지원 | xxHash3 대비 처리량 3× 낮음 |
+
+**2-Tier 캐스케이드:**
+- Tier-1 (SSTable-level): Sort Key 기준 → Compaction 시 key 존재 확인 + Point lookup
+- Tier-2 (Granule-level): 사용자 정의 컬럼 → BLOOM_FILTER 스킵핑 인덱스
+
+**Compaction 시 Bloom 재생성 필수**: 입력 SSTable bloom을 merge하지 않고 출력 레코드 기반으로 새로 빌드. TTL 삭제/중복 제거로 실제 레코드 수가 변경되기 때문.
+
+**Block Cache 분리**: Filter 블록 풀(전체의 20%)을 데이터 블록 풀과 독립 관리, 우선 보존 정책 적용.
+
+**상세 설계**: `specs/002-wow-db-srs-v02/design/lsm-engine.md` §7 참조
+
+---
+
+## 15. Sort Key 제약 및 직렬화
+
+### 결정: 최대 4개 컬럼, 직렬화 크기 128 bytes 이하 강제
+
+| 항목 | 제약 | 근거 |
+|---|---|---|
+| **최대 컬럼 수** | 4개 | 실용적 웹 분석 패턴에 충분, 비교 비용 제어 |
+| **최대 크기** | 128 bytes | 캐시라인 2개(128B) 이내 비교 완료 → Compaction CPU 효율 |
+| **STRING 최대** | 64 bytes | 긴 URL/Device ID 제한으로 Compaction 예측 가능성 확보 |
+| **JSON 불허** | Sort Key에 JSON 타입 금지 | 정렬 기준 불명확, 비교 비용 통제 불가 |
+
+**웹 분석 권장 패턴**: `ORDER BY (device_id, event_time)` — 사용자별 이벤트 물리적 집중으로 Funnel/Cohort I/O 최소화.
+
+**직렬화**: Byte-comparable 형식 (빅엔디언, 부호 비트 flip, NULL prefix 1 byte).
+
+**상세 설계**: `specs/002-wow-db-srs-v02/design/lsm-engine.md` §8 참조
+
+---
+
 ## 기술 스택 요약
 
 | 계층 | 크레이트/도구 | 비고 |

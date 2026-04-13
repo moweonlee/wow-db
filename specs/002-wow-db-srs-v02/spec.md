@@ -158,6 +158,16 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 - **FR-024**: 시스템은 Hash Join의 Build Side에서 생성한 Bloom/In-list/MinMax 필터를 Probe Side CN 및 DN 스캔에 동적으로 전파하여 스캔량을 감소시키는 Runtime Filter를 지원해야 한다.
 - **FR-025**: 시스템은 동일한 논리 플랜과 파티션 버전에 대한 Tablet 단위 집계 결과를 CN 메모리에 캐시하는 Query Result Cache를 제공해야 한다.
 
+### LSM 엔진 동작 요구사항
+
+- **FR-026**: `CREATE CUBE`의 `ORDER BY` 절(Sort Key)은 최대 4개 컬럼을 허용하며, 직렬화된 키 크기가 128 bytes를 초과하면 DDL 에러를 반환해야 한다. JSON 타입 컬럼은 Sort Key에 사용할 수 없다.
+- **FR-027**: LSM Compaction은 파티션 경계 내에서만 발생해야 한다. 서로 다른 파티션의 SSTable을 병합하는 Compaction은 절대 발생하지 않아야 한다.
+- **FR-028**: Leveled Compaction에서 Level-1 이상의 동일 레벨 내 SSTable들은 Sort Key 범위가 서로 겹치지 않는 불변 조건을 항상 만족해야 한다. Level-0 SSTable은 key range 겹침이 허용된다.
+- **FR-029**: Storage Node는 SSTable당 Bloom Filter를 유지해야 하며, Compaction으로 새 SSTable이 생성될 때 이전 Bloom Filter를 재사용하지 않고 출력 레코드 기반으로 새로 빌드해야 한다.
+- **FR-030**: 관리자는 `OPTIMIZE TABLE <cube_name> FORCE` 명령으로 특정 Cube의 파티션별 Full Compaction(모든 레벨 → L6 단일 통합)을 명시적으로 트리거할 수 있어야 한다.
+- **FR-031**: SSTable 물리 파일(`.col`, `.bloom`, `.min_max`)은 파일 헤더에 magic bytes, 포맷 버전 번호, SSTable sequence_num을 포함해야 하며, 버전 불일치 시 로딩을 거부해야 한다.
+- **FR-032**: Storage Node는 MANIFEST 파일을 통해 현재 활성 SSTable 전체 목록을 원자적으로 관리해야 하며, 크래시 복구 시 MANIFEST만으로 전체 LSM 상태를 복원할 수 있어야 한다.
+
 ### 핵심 엔티티
 
 - **이벤트(Event)**: 웹 서비스에서 사용자가 발생시킨 단일 행동 단위. 타임스탬프, 사용자 식별자, 이벤트 타입명, 선택적 properties 페이로드를 포함한다.

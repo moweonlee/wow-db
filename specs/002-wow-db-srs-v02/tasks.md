@@ -223,6 +223,48 @@
 
 ---
 
+## Phase 11: LSM Engine 강화 (LSM Hardening)
+
+**목적**: LSM 상세 설계(`design/lsm-engine.md`)에서 도출된 미구현 사항 및 스펙 누락 항목 구현  
+**근거**: FR-026~FR-032, 2026-04-14 LSM 전문가 검토 결과 반영  
+**선행 조건**: Phase 2 (T023~T025 WAL/MemTable/SSTable 기반 구현) 완료 후 시작
+
+### Storage Node — 멀티레벨 Compaction
+
+- [ ] T107 `storage-node/src/lsm/levels.rs` 구현 (LevelState 구조체 — L0~L6, 레벨별 max_bytes = 256MB × 10^(level-1), CompactionConfig, compaction_score 계산, L1+ non-overlapping 불변 조건 런타임 검증)
+- [ ] T108 `storage-node/src/lsm/compaction.rs` 전면 수정 (현재 L0→L1만 구현된 것을 멀티레벨로 확장 — L0→L1→L2→LN Leveled Compaction, least-recently-compacted 파일 선택, target_file_size 분할, 입력 SSTable list에서 key range overlap 선택 로직)
+- [ ] T109 `storage-node/src/lsm/compaction.rs` TTL 통합 수정 (Compaction 시 행 단위 TTL 필터링 — `ttl_column_value < now() - ttl_duration` 조건으로 만료 행 출력 제외, FR-027 파티션 경계 위반 방어 코드 추가)
+- [ ] T110 `storage-node/src/lsm/manifest.rs` 구현 (MANIFEST 파일 원자적 관리 — 활성 SSTable 전체 목록 직렬화/역직렬화, Compaction 완료 시 atomic rename 갱신, 크래시 복구 시 MANIFEST 기반 복원, FR-032)
+
+### Storage Node — SSTable 물리 파일 포맷
+
+- [ ] T111 `storage-node/src/lsm/sstable.rs` 수정 (물리 파일 포맷 v1 구현 — `.col` 헤더: magic "WOWDBCOL" + VERSION(4B) + SST_SEQUENCE(8B) + GRANULE_OFFSET_TABLE + FOOTER CRC32, `.bloom` 헤더: magic "WOWBLOOM" + VERSION + BITS_PER_KEY + HASH_FN, `.min_max` 헤더: magic "WOWMINMX", 버전 불일치 시 로딩 거부, FR-031)
+- [ ] T112 `storage-node/src/lsm/sstable.rs` sequence_num 및 generation 필드 추가 (SstMeta에 sequence_num: u64, generation: u64, compacted_from: Vec<Uuid> 추가, 파티션 내 전역 AtomicU64로 단조 증가 sequence_num 할당)
+
+### Storage Node — Bloom Filter 파라미터
+
+- [ ] T113 [P] `storage-node/src/lsm/bloom.rs` 수정 (BloomFilterConfig 구조체 도입 — xxHash3 해시 함수, bits_per_key 설정 가능(10/14), k=bits_per_key×ln(2) 해시 함수 수 계산, Compaction 시 출력 레코드 기반 bloom 재생성 필수, SSTable-level bloom + Granule-level bloom 분리 명확화, FR-029)
+
+### Storage Node — Block Cache 분리
+
+- [ ] T114 [P] `storage-node/src/block_cache.rs` 수정 (3-Pool 분리 — DataBlockPool(70%)/FilterBlockPool(20%)/IndexBlockPool(10%), FilterBlock 우선 보존 정책: eviction 시 Data보다 Filter 블록 보호, 전체 캐시 크기 설정 기반 각 풀 크기 계산)
+
+### Storage Node — WAL Group Commit
+
+- [ ] T115 [P] `storage-node/src/lsm/wal.rs` 수정 (Group Commit 구현 — WalWriter에 pending_writes 버퍼 추가, flush_interval(기본 4ms)/max_batch_bytes(기본 4MB) 임계값 도달 시 단일 write+fdatasync, 세그먼트 retention 정책: flush 완료 후 연관 WAL 세그먼트 삭제)
+
+### Query Node — Sort Key DDL 검증
+
+- [ ] T116 `query-node/src/sql_parser/cube_ddl.rs` 수정 (Sort Key 검증 강제 — ORDER BY 컬럼 수 > 4 이면 DDL 에러, 직렬화 크기 > 128 bytes 이면 DDL 에러, JSON 타입 컬럼 Sort Key 사용 시 에러, STRING 컬럼 > 64 bytes 경고 메시지, FR-026)
+
+### Integration Tests — LSM 동작 검증
+
+- [ ] T117 `integration-tests/tests/lsm_behavior_tests.rs` 구현 (LSM 정확성 및 성능 검증 — ① L1+ key range non-overlapping 불변 조건: Compaction 후 MANIFEST 파싱하여 동일 레벨 SSTable 간 key range 교집합 없음 확인, ② Bloom FPR 측정: 1,000개 존재하지 않는 key 조회 시 false positive 1% 이하, ③ Sort Key 제약 위반 DDL 에러 반환 확인, ④ Full Compaction 후 L0~L5 파일 수 0 확인, ⑤ 크래시 복구: Storage Node 강제 종료 후 MANIFEST 기반 상태 복원 확인)
+
+**체크포인트**: `cargo test -p storage-node -- lsm` 전체 통과, L0→L1→L2 멀티레벨 compaction 로그 확인
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase 의존성
