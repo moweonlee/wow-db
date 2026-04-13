@@ -535,7 +535,8 @@ fn eval_aggregate(expr: &sqlparser::ast::Expr, group_rows: &[&Row]) -> Value {
     let col_expr = first_arg_expr(&func.args);
 
     // COUNT(DISTINCT col) 여부 확인
-    let is_distinct = matches!(&func.args, sqlparser::ast::FunctionArguments::List(list) if list.distinct);
+    let is_distinct = matches!(&func.args, sqlparser::ast::FunctionArguments::List(list)
+        if list.duplicate_treatment == Some(sqlparser::ast::DuplicateTreatment::Distinct));
 
     match name.as_str() {
         "COUNT" => {
