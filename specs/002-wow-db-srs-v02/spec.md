@@ -98,6 +98,23 @@
 
 ---
 
+### 사용자 스토리 7 - 데이터 분포 가시성 (우선순위: P2)
+
+플랫폼 엔지니어와 데이터 엔지니어는 각 Cube의 데이터가 Storage Node들에 어떻게 분산되어 있는지, 어떤 파티션에 얼마나 많은 데이터가 있는지, 어떤 분산 키로 어떤 Shard가 어느 SN에 위치하는지, 그리고 각 Shard의 LSM Part 수와 크기를 실시간으로 확인해야 한다.
+
+**이 우선순위인 이유**: 운영 중 데이터 불균형 감지, Compaction 상태 파악, Hot Shard 진단, 파티션 프루닝 효과 확인에 필수적이다. StarRocks의 `SHOW PARTITIONS`나 ClickHouse의 `system.parts` 테이블이 제공하는 수준의 운영 가시성이 요구된다.
+
+**독립 테스트**: `SHOW PARTITIONS FROM page_events` 실행 후 각 파티션의 row_count, size_bytes, shard_count가 실제 데이터와 일치하는지 확인하면 독립적으로 검증할 수 있다.
+
+**인수 시나리오**:
+
+1. **Given** 데이터가 로딩된 Cube `page_events`, **When** `SHOW PARTITIONS FROM page_events`를 실행하면, **Then** 각 파티션의 ID, 키 범위, row_count, size_bytes, shard_count, 티어 상태가 반환된다.
+2. **Given** 분산 키 `device_id`로 정의된 Cube, **When** `SHOW SHARDS FROM page_events`를 실행하면, **Then** 각 Shard의 shard_id, 소속 Storage Node, bucket_id, 역할(Leader/Follower), row_count, LSM part_count가 반환된다.
+3. **Given** 특정 파티션, **When** `SHOW PARTS FROM page_events PARTITION <partition_id>`를 실행하면, **Then** 해당 파티션의 모든 LSM Part 목록과 레벨, sort key 범위, 크기, Bloom Filter 크기가 반환된다.
+4. **Given** 클러스터 운영자, **When** `SHOW DISTRIBUTED STATUS FROM page_events`를 실행하면, **Then** 각 SN별 Shard 수, 총 데이터 크기, 평균 Part 수가 반환되어 데이터 편중 여부를 즉시 파악할 수 있다.
+
+---
+
 ### 사용자 스토리 6 - 클러스터 모니터링 및 쿼리 프로파일링 (우선순위: P3)
 
 WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 모니터링하고, 리소스 사용을 추적하며, 느린 쿼리를 진단하여 성능 SLA를 유지하고 장애를 신속하게 해결해야 한다.
@@ -230,6 +247,139 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
   5. 남은 Granule의 Column File(`.col`)에서 필요한 컬럼 데이터 블록만 읽어 Arrow2 RecordBatch 형태로 CN에 스트리밍 반환
   6. L0 Part는 key range 겹침이 있으므로 동일 Sort Key에 대해 최신 sequence_num의 값을 우선 사용 (Multi-Version Read)
   - **상세 설계**: `specs/002-wow-db-srs-v02/design/logical-to-physical-mapping.md` 및 `design/query-execution-model.md` 참조
+
+### 데이터 분포 가시성 요구사항 (FR-043~FR-046)
+
+- **FR-043**: **SHOW PARTITIONS — 파티션 분포 조회** — MySQL 클라이언트에서 `SHOW PARTITIONS FROM <cube>` 명령으로 해당 Cube의 모든 파티션 목록과 메타데이터를 조회할 수 있어야 한다.
+
+  **출력 컬럼**:
+  | 컬럼명 | 타입 | 설명 |
+  |--------|------|------|
+  | `partition_id` | STRING | 파티션 UUID |
+  | `range_start` | STRING | 파티션 키 범위 시작 (NULL이면 -∞) |
+  | `range_end` | STRING | 파티션 키 범위 끝 (NULL이면 +∞) |
+  | `row_count` | BIGINT | 해당 파티션의 총 레코드 수 (CBO 통계 기반) |
+  | `size_bytes` | BIGINT | 압축된 저장 크기 (bytes) |
+  | `shard_count` | INT | 이 파티션을 담당하는 Shard (Tablet) 수 |
+  | `part_count` | INT | 전체 활성 LSM Part 수 (모든 Shard 합산) |
+  | `tier` | STRING | `Hot` (NVMe) / `Cold` (S3/HDFS) |
+  | `created_at` | DATETIME | 파티션 생성 시각 |
+
+  **지원 구문**:
+  ```sql
+  -- 전체 파티션 목록
+  SHOW PARTITIONS FROM page_events;
+
+  -- 키 범위로 필터 (파티션 키가 event_time인 경우)
+  SHOW PARTITIONS FROM page_events WHERE range_start >= '2024-01-01';
+
+  -- 크기 기준 정렬
+  SHOW PARTITIONS FROM page_events ORDER BY size_bytes DESC LIMIT 10;
+  ```
+
+- **FR-044**: **SHOW SHARDS — Shard 분산 조회** — `SHOW SHARDS FROM <cube>` 명령으로 Cube의 모든 Shard(Tablet)와 각 Shard를 담당하는 Storage Node 정보를 조회할 수 있어야 한다. 분산 키별로 어떤 데이터가 어느 SN에 저장되어 있는지, 데이터 편중 여부를 확인하는 데 사용한다.
+
+  **출력 컬럼**:
+  | 컬럼명 | 타입 | 설명 |
+  |--------|------|------|
+  | `shard_id` | STRING | Shard UUID (= Tablet UUID) |
+  | `partition_id` | STRING | 소속 파티션 UUID |
+  | `partition_range` | STRING | 소속 파티션 범위 (`[start, end)` 형식) |
+  | `sn_node_id` | STRING | 담당 Storage Node ID (예: `sn-01`) |
+  | `sn_endpoint` | STRING | Storage Node gRPC 주소 (예: `10.0.0.1:9060`) |
+  | `bucket_id` | INT | 분산 키 해시 버킷 번호 |
+  | `role` | STRING | `Leader` 또는 `Follower` |
+  | `state` | STRING | `Normal` / `Compacting` / `Migrating` |
+  | `row_count` | BIGINT | 이 Shard의 레코드 수 |
+  | `size_bytes` | BIGINT | 이 Shard의 압축 저장 크기 |
+  | `part_count` | INT | 활성 LSM Part 수 |
+  | `lsn` | BIGINT | 최신 Log Sequence Number |
+
+  **지원 구문**:
+  ```sql
+  -- 전체 Shard 목록
+  SHOW SHARDS FROM page_events;
+
+  -- 특정 파티션의 Shard만
+  SHOW SHARDS FROM page_events PARTITION '<partition_id>';
+
+  -- 특정 SN의 Shard만 (데이터 편중 진단용)
+  SHOW SHARDS FROM page_events WHERE sn_node_id = 'sn-01';
+
+  -- 크기 기준 내림차순 (Hot Shard 파악)
+  SHOW SHARDS FROM page_events ORDER BY size_bytes DESC LIMIT 20;
+  ```
+
+- **FR-045**: **SHOW PARTS — LSM Part(SSTable) 조회** — `SHOW PARTS FROM <cube>` 명령으로 Cube의 모든 물리 LSM Part 목록과 각 Part의 레벨, Sort Key 범위, 크기, Bloom Filter 정보를 조회할 수 있어야 한다. `SHOW PARTS ON PARTITION <partition_id> FROM <cube>` 구문을 통해 특정 파티션으로 드릴다운이 가능해야 한다.
+
+  **계층 구조 (Drill-down)**:
+  ```
+  Cube
+    └─ SHOW PARTITIONS → Partition
+          └─ SHOW SHARDS → Shard (Tablet, SN별 분산 단위)
+                └─ SHOW PARTS → Part (LSM SSTable, 실제 파일 단위)
+  ```
+
+  **출력 컬럼**:
+  | 컬럼명 | 타입 | 설명 |
+  |--------|------|------|
+  | `part_id` | STRING | Part UUID |
+  | `shard_id` | STRING | 소속 Shard UUID |
+  | `partition_id` | STRING | 소속 파티션 UUID |
+  | `sn_node_id` | STRING | 위치한 Storage Node ID |
+  | `level` | INT | LSM 레벨 (0=Immutable MemTable flush, 1~6=Compacted) |
+  | `sequence_num` | BIGINT | 생성 순번 (L0 Multi-Version Read 기준) |
+  | `row_count` | BIGINT | 이 Part의 레코드 수 |
+  | `size_bytes` | BIGINT | 압축 크기 (bytes) |
+  | `min_sort_key` | STRING | Sort Key 최솟값 (CBO Pruning 기준) |
+  | `max_sort_key` | STRING | Sort Key 최댓값 (CBO Pruning 기준) |
+  | `bloom_size_bytes` | BIGINT | Bloom Filter 파일 크기 (bytes) |
+  | `created_at` | DATETIME | Part 생성 시각 (flush 완료 시각) |
+
+  **지원 구문**:
+  ```sql
+  -- 전체 Part 목록 (Cube 전체)
+  SHOW PARTS FROM page_events;
+
+  -- 특정 파티션의 Part만 (Partition 단위 drill-down)
+  SHOW PARTS FROM page_events PARTITION '<partition_id>';
+  -- 별칭 구문 (파티션 우선 명시 방식)
+  SHOW PARTS ON PARTITION '<partition_id>' FROM page_events;
+
+  -- 특정 Shard의 Part만 (Shard 단위 drill-down)
+  SHOW PARTS FROM page_events SHARD '<shard_id>';
+
+  -- L0 Part만 조회 (Compaction 지연 진단용)
+  SHOW PARTS FROM page_events WHERE level = 0;
+
+  -- 특정 SN의 Part만
+  SHOW PARTS FROM page_events WHERE sn_node_id = 'sn-01' ORDER BY size_bytes DESC;
+  ```
+
+  > **운영 팁**: `level = 0` Part가 많다면 Compaction이 지연되고 있는 것을 의미한다. `size_bytes`가 비정상적으로 큰 Part는 Hot Shard의 징후일 수 있다.
+
+- **FR-046**: **SHOW DISTRIBUTED STATUS — 노드별 분포 요약** — `SHOW DISTRIBUTED STATUS FROM <cube>` 명령으로 각 Storage Node가 담당하는 Shard 수, 총 데이터 크기, 행 수를 요약 조회할 수 있어야 한다. 데이터 편중(skew) 여부를 신속히 파악하는 데 사용한다.
+
+  **출력 컬럼**:
+  | 컬럼명 | 타입 | 설명 |
+  |--------|------|------|
+  | `sn_node_id` | STRING | Storage Node ID |
+  | `sn_endpoint` | STRING | Storage Node 주소 |
+  | `shard_count` | INT | 담당 Shard 수 (Leader + Follower 합산) |
+  | `leader_shard_count` | INT | Leader Shard 수 (쓰기 부하 기준) |
+  | `partition_count` | INT | 담당 파티션 수 |
+  | `row_count` | BIGINT | 총 레코드 수 |
+  | `size_bytes` | BIGINT | 총 저장 크기 |
+  | `avg_part_per_shard` | FLOAT | Shard당 평균 Part 수 (Compaction 상태 지표) |
+
+  **지원 구문**:
+  ```sql
+  -- 노드별 분포 요약
+  SHOW DISTRIBUTED STATUS FROM page_events;
+
+  -- 크기 기준 정렬 (가장 부하가 높은 SN 파악)
+  SHOW DISTRIBUTED STATUS FROM page_events ORDER BY size_bytes DESC;
+  ```
 
 ### 핵심 엔티티
 

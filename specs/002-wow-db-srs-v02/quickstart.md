@@ -211,7 +211,93 @@ curl http://localhost:8080/metrics
 
 ---
 
-## 9. 클러스터 종료 및 데이터 초기화
+## 9. 데이터 분포 가시성 — SHOW 명령 (FR-043~FR-046)
+
+WOW-DB는 데이터가 파티션·Shard·LSM Part 단위로 Storage Node에 어떻게 분산되어 있는지를 MySQL 클라이언트에서 직접 확인할 수 있는 계층별 SHOW 명령을 제공한다.
+
+```
+Cube
+  └─ SHOW PARTITIONS → Partition (시간/키 범위 단위)
+        └─ SHOW SHARDS → Shard/Tablet (SN 배치 단위, 분산 키 기준)
+              └─ SHOW PARTS → Part (LSM SSTable, 실제 물리 파일 단위)
+```
+
+### 9.1 SHOW PARTITIONS — 파티션 분포 조회
+
+```sql
+-- 전체 파티션 목록 (partition_id, 키 범위, row_count, size_bytes, shard_count, tier)
+SHOW PARTITIONS FROM page_events;
+
+-- 특정 범위 파티션 필터 (파티션 키가 event_time인 경우)
+SHOW PARTITIONS FROM page_events WHERE range_start >= '2024-01-01';
+
+-- 크기 내림차순 — 가장 큰 파티션 확인
+SHOW PARTITIONS FROM page_events ORDER BY size_bytes DESC LIMIT 10;
+```
+
+### 9.2 SHOW SHARDS — Shard 분산 조회
+
+```sql
+-- 전체 Shard 목록 (shard_id, 소속 SN, bucket_id, role, row_count, part_count)
+SHOW SHARDS FROM page_events;
+
+-- 특정 파티션의 Shard만
+SHOW SHARDS FROM page_events PARTITION '<partition_id>';
+
+-- 특정 SN에 몰린 Shard 파악 (데이터 편중 진단)
+SHOW SHARDS FROM page_events WHERE sn_node_id = 'sn-01';
+
+-- Hot Shard 파악 (크기 기준 내림차순)
+SHOW SHARDS FROM page_events ORDER BY size_bytes DESC LIMIT 20;
+```
+
+### 9.3 SHOW PARTS — LSM Part(SSTable) 조회
+
+```sql
+-- 전체 Part 목록 (part_id, shard_id, level, seq_num, sort key 범위, 크기)
+SHOW PARTS FROM page_events;
+
+-- 특정 파티션의 Part만 (Partition 단위 drill-down)
+SHOW PARTS FROM page_events PARTITION '<partition_id>';
+
+-- 파티션 우선 명시 방식 (별칭 구문)
+SHOW PARTS ON PARTITION '<partition_id>' FROM page_events;
+
+-- 특정 Shard의 Part만 (Shard 단위 drill-down)
+SHOW PARTS FROM page_events SHARD '<shard_id>';
+
+-- L0 Part만 조회 — 많으면 Compaction 지연 신호
+SHOW PARTS FROM page_events WHERE level = 0;
+
+-- 특정 SN의 대용량 Part 조회
+SHOW PARTS FROM page_events WHERE sn_node_id = 'sn-01' ORDER BY size_bytes DESC;
+```
+
+> **운영 팁**: `SHOW PARTS WHERE level = 0` 결과가 수백 개 이상이면 Compaction이 쓰기 속도를 따라가지 못하는 것을 의미한다. L0 Part 비율이 높으면 읽기 성능도 저하된다.
+
+### 9.4 SHOW DISTRIBUTED STATUS — 노드별 분포 요약
+
+```sql
+-- SN별 Shard 수, 총 크기, 행 수, 평균 Part 수 요약
+SHOW DISTRIBUTED STATUS FROM page_events;
+
+-- 가장 부하가 높은 SN 파악
+SHOW DISTRIBUTED STATUS FROM page_events ORDER BY size_bytes DESC;
+```
+
+**결과 예시**:
+
+| sn_node_id | sn_endpoint | shard_count | leader_shard_count | row_count | size_bytes | avg_part_per_shard |
+|------------|-------------|-------------|-------------------|-----------|------------|-------------------|
+| sn-01 | 10.0.0.1:9060 | 8 | 4 | 2,500,000,000 | 480 GB | 3.2 |
+| sn-02 | 10.0.0.2:9060 | 8 | 4 | 2,480,000,000 | 475 GB | 3.1 |
+| sn-03 | 10.0.0.3:9060 | 8 | 4 | 2,510,000,000 | 482 GB | 3.3 |
+
+> `shard_count`와 `size_bytes`가 특정 SN에 편중되어 있으면 분산 키 선택을 재검토해야 한다.
+
+---
+
+## 10. 클러스터 종료 및 데이터 초기화
 
 ```bash
 # 클러스터 종료 (데이터 유지)

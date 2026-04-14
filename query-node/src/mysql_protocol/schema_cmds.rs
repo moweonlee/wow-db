@@ -152,6 +152,92 @@ pub async fn handle_schema_command(
         });
     }
 
+    // ── SHOW PARTITIONS FROM <cube> (FR-043) ───────────────────────────────
+    // 구문: SHOW PARTITIONS FROM <cube> [WHERE ...] [ORDER BY ...] [LIMIT N]
+    if upper.starts_with("SHOW PARTITIONS FROM") || upper.starts_with("SHOW PARTITIONS") && upper.contains(" FROM ") {
+        let cube_name = extract_from_token(trimmed, "FROM");
+        // 파티션 메타는 Raft KV에 저장 (Phase E에서 실 데이터 연동)
+        // 현재는 Cube 존재 여부만 확인하고 컬럼 헤더 반환 (스텁)
+        let _cube_exists = cube_mgr.get_by_name(&cube_name).await.ok().flatten();
+        return Some(QueryOutput::Rows {
+            columns: vec![
+                ColumnMeta { name: "partition_id".to_string(),   col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "range_start".to_string(),    col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "range_end".to_string(),      col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "row_count".to_string(),      col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                ColumnMeta { name: "size_bytes".to_string(),     col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                ColumnMeta { name: "shard_count".to_string(),    col_type: ColumnType::MYSQL_TYPE_LONG },
+                ColumnMeta { name: "part_count".to_string(),     col_type: ColumnType::MYSQL_TYPE_LONG },
+                ColumnMeta { name: "tier".to_string(),           col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "created_at".to_string(),     col_type: ColumnType::MYSQL_TYPE_DATETIME },
+            ],
+            rows: vec![], // TODO: T138 PartitionInfoService 연동 후 실 데이터
+        });
+    }
+
+    // ── SHOW SHARDS FROM <cube> [PARTITION <pid>] (FR-044) ─────────────────
+    // 구문: SHOW SHARDS FROM <cube> [PARTITION '<partition_id>'] [WHERE ...]
+    if upper.starts_with("SHOW SHARDS FROM") || upper.starts_with("SHOW SHARDS") && upper.contains(" FROM ") {
+        return Some(QueryOutput::Rows {
+            columns: vec![
+                ColumnMeta { name: "shard_id".to_string(),        col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "partition_id".to_string(),    col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "partition_range".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "sn_node_id".to_string(),      col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "sn_endpoint".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "bucket_id".to_string(),       col_type: ColumnType::MYSQL_TYPE_LONG },
+                ColumnMeta { name: "role".to_string(),            col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "state".to_string(),           col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "row_count".to_string(),       col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                ColumnMeta { name: "size_bytes".to_string(),      col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                ColumnMeta { name: "part_count".to_string(),      col_type: ColumnType::MYSQL_TYPE_LONG },
+                ColumnMeta { name: "lsn".to_string(),             col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+            ],
+            rows: vec![], // TODO: T138 PartitionInfoService 연동 후 실 데이터
+        });
+    }
+
+    // ── SHOW PARTS FROM <cube> / SHOW PARTS ON PARTITION <pid> FROM <cube> (FR-045) ──
+    // 구문:
+    //   SHOW PARTS FROM <cube> [PARTITION '<pid>'] [SHARD '<sid>'] [WHERE ...]
+    //   SHOW PARTS ON PARTITION '<pid>' FROM <cube>
+    if upper.starts_with("SHOW PARTS") {
+        return Some(QueryOutput::Rows {
+            columns: vec![
+                ColumnMeta { name: "part_id".to_string(),          col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "shard_id".to_string(),         col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "partition_id".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "sn_node_id".to_string(),       col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "level".to_string(),            col_type: ColumnType::MYSQL_TYPE_LONG },
+                ColumnMeta { name: "sequence_num".to_string(),     col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                ColumnMeta { name: "row_count".to_string(),        col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                ColumnMeta { name: "size_bytes".to_string(),       col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                ColumnMeta { name: "min_sort_key".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "max_sort_key".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "bloom_size_bytes".to_string(), col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                ColumnMeta { name: "created_at".to_string(),       col_type: ColumnType::MYSQL_TYPE_DATETIME },
+            ],
+            rows: vec![], // TODO: T138 PartitionInfoService + SN gRPC 연동 후 실 데이터
+        });
+    }
+
+    // ── SHOW DISTRIBUTED STATUS FROM <cube> (FR-046) ───────────────────────
+    if upper.starts_with("SHOW DISTRIBUTED STATUS") || upper.starts_with("SHOW DISTRIBUTED") && upper.contains("STATUS") {
+        return Some(QueryOutput::Rows {
+            columns: vec![
+                ColumnMeta { name: "sn_node_id".to_string(),          col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "sn_endpoint".to_string(),         col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "shard_count".to_string(),         col_type: ColumnType::MYSQL_TYPE_LONG },
+                ColumnMeta { name: "leader_shard_count".to_string(),  col_type: ColumnType::MYSQL_TYPE_LONG },
+                ColumnMeta { name: "partition_count".to_string(),     col_type: ColumnType::MYSQL_TYPE_LONG },
+                ColumnMeta { name: "row_count".to_string(),           col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                ColumnMeta { name: "size_bytes".to_string(),          col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                ColumnMeta { name: "avg_part_per_shard".to_string(),  col_type: ColumnType::MYSQL_TYPE_FLOAT },
+            ],
+            rows: vec![], // TODO: T138 PartitionInfoService 연동 후 실 데이터
+        });
+    }
+
     // SHOW STATUS / SHOW VARIABLES
     if upper.starts_with("SHOW STATUS") || upper.starts_with("SHOW VARIABLES") ||
        upper.starts_with("SHOW GLOBAL") ||
@@ -181,6 +267,26 @@ fn extract_last_token(sql: &str) -> String {
         .trim_matches('`')
         .trim_matches('"')
         .to_string()
+}
+
+/// "SHOW PARTITIONS FROM page_events" → "page_events"
+/// keyword: "FROM", "PARTITION", "SHARD" 등
+fn extract_from_token(sql: &str, keyword: &str) -> String {
+    let upper = sql.to_uppercase();
+    let kw    = keyword.to_uppercase();
+    if let Some(pos) = upper.find(&kw) {
+        let after = &sql[pos + kw.len()..];
+        return after
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .trim_end_matches(';')
+            .trim_matches('`')
+            .trim_matches('\'')
+            .trim_matches('"')
+            .to_string();
+    }
+    String::new()
 }
 
 // ─── 단위 테스트 ──────────────────────────────────────────────────────────────
@@ -231,5 +337,111 @@ mod tests {
         assert_eq!(extract_last_token("SHOW TABLES FROM analytics"), "analytics");
         assert_eq!(extract_last_token("DESCRIBE `my_table`"), "my_table");
         assert_eq!(extract_last_token("DROP TABLE page_events;"), "page_events");
+    }
+
+    // ── T143: SHOW PARTITIONS/SHARDS/PARTS/DISTRIBUTED STATUS 테스트 ───────
+
+    #[tokio::test]
+    async fn test_show_partitions_returns_correct_columns() {
+        let mgr = make_cube_mgr();
+        let out = handle_schema_command("SHOW PARTITIONS FROM page_events", &mgr, "default")
+            .await
+            .unwrap();
+        match out {
+            QueryOutput::Rows { columns, rows } => {
+                // 9개 컬럼 검증
+                assert_eq!(columns.len(), 9, "SHOW PARTITIONS: 9 컬럼");
+                let col_names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+                assert!(col_names.contains(&"partition_id"));
+                assert!(col_names.contains(&"range_start"));
+                assert!(col_names.contains(&"row_count"));
+                assert!(col_names.contains(&"shard_count"));
+                assert!(col_names.contains(&"tier"));
+                // 없는 Cube도 빈 결과셋 반환 (오류 아님)
+                assert!(rows.is_empty(), "스텁: 빈 결과셋");
+            }
+            _ => panic!("Expected Rows output"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_show_shards_returns_correct_columns() {
+        let mgr = make_cube_mgr();
+        let out = handle_schema_command("SHOW SHARDS FROM page_events", &mgr, "default")
+            .await
+            .unwrap();
+        match out {
+            QueryOutput::Rows { columns, rows } => {
+                assert_eq!(columns.len(), 12, "SHOW SHARDS: 12 컬럼");
+                let col_names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+                assert!(col_names.contains(&"shard_id"));
+                assert!(col_names.contains(&"sn_node_id"));
+                assert!(col_names.contains(&"bucket_id"));
+                assert!(col_names.contains(&"role"));
+                assert!(col_names.contains(&"lsn"));
+                assert!(rows.is_empty());
+            }
+            _ => panic!("Expected Rows output"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_show_parts_returns_correct_columns() {
+        let mgr = make_cube_mgr();
+        let out = handle_schema_command("SHOW PARTS FROM page_events", &mgr, "default")
+            .await
+            .unwrap();
+        match out {
+            QueryOutput::Rows { columns, rows } => {
+                assert_eq!(columns.len(), 12, "SHOW PARTS: 12 컬럼");
+                let col_names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+                assert!(col_names.contains(&"part_id"));
+                assert!(col_names.contains(&"level"));
+                assert!(col_names.contains(&"sequence_num"));
+                assert!(col_names.contains(&"min_sort_key"));
+                assert!(col_names.contains(&"bloom_size_bytes"));
+                assert!(rows.is_empty());
+            }
+            _ => panic!("Expected Rows output"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_show_parts_on_partition_syntax() {
+        let mgr = make_cube_mgr();
+        // SHOW PARTS ON PARTITION ... FROM ... 구문
+        let out = handle_schema_command(
+            "SHOW PARTS ON PARTITION 'part-uuid-001' FROM page_events",
+            &mgr,
+            "default",
+        ).await;
+        // 이 구문은 "SHOW PARTS"로 시작하므로 처리되어야 함
+        assert!(out.is_some(), "SHOW PARTS ON PARTITION 구문 처리되어야 함");
+    }
+
+    #[tokio::test]
+    async fn test_show_distributed_status_returns_correct_columns() {
+        let mgr = make_cube_mgr();
+        let out = handle_schema_command("SHOW DISTRIBUTED STATUS FROM page_events", &mgr, "default")
+            .await
+            .unwrap();
+        match out {
+            QueryOutput::Rows { columns, rows } => {
+                assert_eq!(columns.len(), 8, "SHOW DISTRIBUTED STATUS: 8 컬럼");
+                let col_names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+                assert!(col_names.contains(&"sn_node_id"));
+                assert!(col_names.contains(&"leader_shard_count"));
+                assert!(col_names.contains(&"avg_part_per_shard"));
+                assert!(rows.is_empty());
+            }
+            _ => panic!("Expected Rows output"),
+        }
+    }
+
+    #[test]
+    fn test_extract_from_token() {
+        assert_eq!(extract_from_token("SHOW PARTITIONS FROM page_events", "FROM"), "page_events");
+        assert_eq!(extract_from_token("SHOW SHARDS FROM page_events PARTITION 'abc'", "PARTITION"), "abc");
+        assert_eq!(extract_from_token("", "FROM"), "");
     }
 }

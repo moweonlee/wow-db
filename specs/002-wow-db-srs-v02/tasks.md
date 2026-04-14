@@ -335,6 +335,34 @@
 
 ---
 
+## Phase 14: 데이터 분포 가시성 — SHOW PARTITIONS / SHARDS / PARTS (FR-043~FR-046)
+
+**목적**: 운영자와 데이터 엔지니어가 각 Cube의 데이터 분산 현황(파티션 범위, Shard별 SN 배치, LSM Part 수준)을 MySQL 클라이언트로 직접 조회할 수 있는 가시성 명령 제공  
+**참조**: FR-043, FR-044, FR-045, FR-046
+
+### Proto — SN 파티션/Part 조회 API [P]
+
+- [ ] T137 [P] `proto/storage.proto` 확장 (GetPartList/GetShardInfo RPC 추가 — GetPartListRequest: shard_id, PartInfo 스트림 응답(part_id, level, seq_num, row_count, size_bytes, min_sort_key, max_sort_key, bloom_size_bytes); GetShardInfoRequest: shard_id, ShardInfoResponse(row_count, size_bytes, part_count, lsn); FR-045)
+
+### Query Node — 파티션/Shard 메타 집계 서비스
+
+- [ ] T138 `query-node/src/meta/partition_info.rs` 구현 (PartitionInfoService — Raft KV에서 파티션·Shard 메타 집계: list_partitions(cube_id) → Vec<PartitionMeta>, list_shards(cube_id, partition_id?) → Vec<ShardMeta>, get_distributed_status(cube_id) → Vec<SnDistributionSummary>; SN gRPC로 Part 목록 조회: list_parts(shard_id) → Vec<PartMeta>; FR-043~FR-046)
+
+### Query Node — MySQL 프로토콜 SHOW 핸들러
+
+- [x] T139 `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW PARTITIONS FROM <cube> 핸들러 추가 — partition_id, range_start/end, row_count, size_bytes, shard_count, part_count, tier, created_at 컬럼; FR-043)
+- [x] T140 `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW SHARDS FROM <cube> [PARTITION <pid>] 핸들러 추가 — shard_id, partition_id, partition_range, sn_node_id, sn_endpoint, bucket_id, role, state, row_count, size_bytes, part_count, lsn 컬럼; FR-044)
+- [x] T141 `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW PARTS FROM <cube> [PARTITION <pid>] [SHARD <sid>] / SHOW PARTS ON PARTITION <pid> FROM <cube> 핸들러 추가 — part_id, shard_id, partition_id, sn_node_id, level, sequence_num, row_count, size_bytes, min_sort_key, max_sort_key, bloom_size_bytes, created_at 컬럼; FR-045)
+- [x] T142 [P] `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW DISTRIBUTED STATUS FROM <cube> 핸들러 추가 — sn_node_id, sn_endpoint, shard_count, leader_shard_count, partition_count, row_count, size_bytes, avg_part_per_shard 컬럼; FR-046)
+
+### Integration Tests — SHOW 명령 검증
+
+- [x] T143 `query-node/src/mysql_protocol/schema_cmds.rs` 단위 테스트 추가 (SHOW PARTITIONS/SHARDS/PARTS/DISTRIBUTED STATUS 핸들러 — stub 데이터 기반 컬럼 수·이름 정확성 검증, 없는 Cube에 대한 빈 결과셋 반환 검증)
+
+**체크포인트**: MySQL 클라이언트에서 `SHOW PARTITIONS FROM page_events` 실행 시 올바른 컬럼 헤더와 결과셋 반환, `SHOW PARTS FROM page_events WHERE level = 0` 구문 파싱 정상 동작
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase 의존성

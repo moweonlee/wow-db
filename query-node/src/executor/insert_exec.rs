@@ -67,7 +67,10 @@ pub fn execute_insert(sql: &str) -> Result<InsertResult, String> {
                 }
             }
         } else {
-            return Err("No column list provided for multi-value INSERT".to_string());
+            // 컬럼 목록 없이 다중 값: col_0, col_1, ... 위치 기반 키 사용
+            tuple.iter().enumerate()
+                .map(|(i, v)| (format!("col_{}", i), v.clone()))
+                .collect::<Row>()
         };
         MEM_STORE.insert(&table_name, row);
         count += 1;

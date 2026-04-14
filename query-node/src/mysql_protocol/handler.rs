@@ -471,6 +471,12 @@ fn parse_data_type(s: &str) -> DataType {
     }
 }
 
+/// 테스트에서 접근 가능한 public 래퍼
+#[cfg(test)]
+pub fn stmt_to_schema_pub(stmt: crate::sql_parser::CreateCubeStmt, db: &str) -> CubeSchema {
+    stmt_to_schema(stmt, db)
+}
+
 fn stmt_to_schema(stmt: crate::sql_parser::CreateCubeStmt, db: &str) -> CubeSchema {
     let columns: Vec<ColumnDef> = stmt.columns.iter().map(|c| ColumnDef {
         name:          c.name.clone(),
