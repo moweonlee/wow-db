@@ -591,6 +591,46 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 
   Colocate Join이 성립하지 않는 경우(분산 키 불일치, 버킷 수 차이, Colocate Group 미설정) EXPLAIN은 `[HASH_SHUFFLE]` 또는 `[BROADCAST]`를 표시한다.
 
+### 클러스터 관리 요구사항 (FR-CM)
+
+상세 설계: `specs/002-wow-db-srs-v02/design/cluster-management.md`  
+구현 태스크: `specs/002-wow-db-srs-v02/tasks-cluster-management.md`
+
+- **FR-CM-001**: **동적 노드 등록 (Dynamic Node Discovery)** — QN, CN, SN 노드는 기동 시 환경변수 `QN_PEERS`에 지정된 QN 주소(주소:포트)로 자동 자가 등록(self-registration)해야 한다. 수동 설정 파일 편집이나 클러스터 재시작 없이 노드가 합류해야 한다. Kubernetes 환경에서는 ConfigMap의 `qn.peers` 값을 통해 QN 주소를 주입한다.
+
+- **FR-CM-002**: **노드 상태 모델** — 모든 노드는 `ACTIVE → READONLY → DRAINING` 의 단방향 상태를 가지며, `DISMISSED` 상태는 Raft 메타데이터에서 노드 항목이 제거된 것을 의미한다. 역방향 전환(`DRAINING → ACTIVE`)은 허용되지 않는다.
+  - **ACTIVE**: 쓰기·읽기 모두 허용. INSERT 라우팅 대상.
+  - **READONLY**: 읽기만 허용. INSERT 라우팅에서 즉시 제외. `ALTER CLUSTER DRAIN` 명령으로 진입.
+  - **DRAINING**: 읽기 허용, 쓰기 불가. 백그라운드 Shard 마이그레이션 진행 중.
+  - **DISMISSED**: 클러스터에서 영구 제거됨. Raft KV에 항목 없음.
+
+- **FR-CM-003**: **`ALTER CLUSTER JOIN` 명령** — 운영자는 `ALTER CLUSTER JOIN <type> '<address>:<port>' [AS '<node_id>']` 명령으로 새 노드를 클러스터에 수동 추가할 수 있어야 한다. SN 추가 시 백그라운드 Rebalance가 자동으로 시작되어야 한다. QN 추가 시 Raft learner → voter 순서로 합류해야 한다.
+
+- **FR-CM-004**: **`ALTER CLUSTER DRAIN` 명령** — 운영자는 `ALTER CLUSTER DRAIN '<node_id>'` 명령으로 특정 노드를 READONLY 상태로 전환하고 데이터 마이그레이션을 시작할 수 있어야 한다. DRAIN 명령 후 최대 100ms 이내에 해당 SN으로의 INSERT 라우팅이 중단되어야 한다. QN DRAIN 시 남은 QN이 quorum을 구성할 수 없는 경우(3노드 중 2번째 DRAIN 등) 오류를 반환해야 한다.
+
+- **FR-CM-005**: **`ALTER CLUSTER DISMISS` 명령** — 운영자는 DRAIN 완료 후 `ALTER CLUSTER DISMISS '<node_id>'` 명령으로 노드를 영구 제거할 수 있어야 한다. 대상 노드에 데이터가 남아있고 `FORCE` 플래그가 없는 경우 오류(`ER_NODE_HAS_DATA`)를 반환해야 한다. `FORCE` 플래그 사용 시 해당 노드의 모든 Shard 메타데이터를 Raft KV에서 삭제하고 노드를 제거한다 (데이터 손실 경고 포함).
+
+- **FR-CM-006**: **자동 Shard Rebalancing** — 새 SN이 클러스터에 추가되거나 기존 SN이 DRAIN을 시작할 때, 시스템은 백그라운드 프로세스로 Shard 재분배 작업을 자동으로 시작해야 한다. Rebalance 중 쿼리 및 수집 작업은 중단 없이 처리되어야 한다.
+  - Rebalance 알고리즘: ACTIVE SN 간 균등 분산(Shard 수 기준), 최소 이전 원칙
+  - 마이그레이션 중 읽기: 원본 SN에서 계속 서빙
+  - 마이그레이션 중 쓰기: 원본 SN READONLY, 이전 완료 후 대상 SN으로 전환
+  - 동시 Shard 이전 수: 설정 가능(`cluster.rebalance_concurrency`, 기본 2)
+
+- **FR-CM-007**: **SHOW CLUSTER 명령** — 운영자는 다음 명령으로 클러스터 상태를 조회할 수 있어야 한다.
+  - `SHOW CLUSTER NODES`: 전체 노드 목록, 타입, 주소, 상태, Shard 수, 참가 시각
+  - `SHOW CLUSTER STATUS`: QN/CN/SN 수, 드레이닝 노드 수, Raft Leader, 읽기/쓰기 모드
+  - `SHOW CLUSTER REBALANCE`: 진행 중인 Rebalance 작업 목록, 진행률, 예상 완료 시각
+
+- **FR-CM-008**: **K8s/Helm 지원** — 클러스터의 모든 노드 타입은 Helm Chart를 통해 수평 확장이 가능해야 한다. Helm `values.yaml`의 `replicas` 값 변경만으로 노드 수를 조정할 수 있어야 한다.
+  - QN: K8s StatefulSet (홀수 개 유지 필수). ConfigMap `qn.peers`에 Headless Service DNS 기반 주소 설정.
+  - CN: K8s Deployment + HorizontalPodAutoscaler (CPU 기반 자동 확장 지원).
+  - SN: K8s StatefulSet + PersistentVolumeClaim (재스케줄 시 데이터 보존).
+  - 각 노드 Pod의 init container가 기동 시 `ALTER CLUSTER JOIN` 자동 실행.
+
+- **FR-CM-009**: **노드 장애 자동 감지** — QN은 각 노드에 대해 주기적으로 헬스체크를 수행하고, 일정 시간 응답이 없는 노드를 DRAINING 상태로 자동 전환해야 한다. SN 장애 시 해당 SN의 Shard 복제본이 다른 SN에 있으면 자동 복구 Rebalance를 시작한다.
+
+- **FR-CM-010**: **Rebalance 수동 트리거** — 운영자는 `ALTER CLUSTER REBALANCE` 명령으로 노드 간 불균형을 수동으로 재조정할 수 있어야 한다. 이 명령은 Rebalance가 이미 진행 중인 경우 오류를 반환해야 한다.
+
 ### 핵심 엔티티
 
 - **이벤트(Event)**: 웹 서비스에서 사용자가 발생시킨 단일 행동 단위. 타임스탬프, 사용자 식별자, 이벤트 타입명, 선택적 properties 페이로드를 포함한다.

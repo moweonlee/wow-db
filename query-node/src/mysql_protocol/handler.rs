@@ -32,6 +32,7 @@ use crate::raft::RaftManager;
 use crate::session_mv::manager::SmvManager;
 use crate::sql_parser::cube_ddl::parse_create_cube_full;
 use crate::sql_parser::{WowDbParser, WowDbStatement, WowDbCustom};
+use sqlparser::ast::Statement as SqlStatement;
 
 // ─── WOW-DB MySQL 핸들러 ─────────────────────────────────────────────────────
 
@@ -396,12 +397,52 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
             return results.completed(OkResponse::default()).await.map_err(Into::into);
         }
 
-        // WOW-DB 쿼리 실행 (스텁 — Phase D에서 실행 엔진 연동)
-        let stub_msg = format!("(Query stub: {})", &sql[..sql.len().min(60)]);
-        let cols = vec![build_columns("result", ColumnType::MYSQL_TYPE_VAR_STRING)];
-        let mut rw = results.start(&cols).await?;
-        rw.write_row(std::iter::once(Some(stub_msg.as_str()))).await?;
-        rw.finish().await.map_err(Into::into)
+        // 인식되지 않는 SQL — 파싱을 시도하여 오류 종류를 결정한다.
+        // - 파싱 실패 → ER_PARSE_ERROR (1064): 문법 오류
+        // - 파싱 성공 → ER_NOT_SUPPORTED_YET (1235): 유효하나 미구현
+        match WowDbParser::parse(sql) {
+            Err(_) => {
+                let snippet = &sql[..sql.len().min(60)];
+                let msg = format!(
+                    "You have an error in your SQL syntax near '{}' (line 1)",
+                    snippet.lines().next().unwrap_or(snippet)
+                );
+                warn!(sql = %snippet, "SQL parse error (unrecognized)");
+                results.error(ErrorKind::ER_PARSE_ERROR, msg.as_bytes()).await.map_err(Into::into)
+            }
+            Ok(stmts) => {
+                // 파싱은 성공했으나 WOW-DB가 아직 실행을 지원하지 않는 문
+                let stmt_type = stmts.first().map(|s| match s {
+                    WowDbStatement::Standard(stmt) => {
+                        // 안내 메시지가 있는 문은 hint를 포함
+                        let label: &str = match stmt {
+                            SqlStatement::Update { .. }          => "UPDATE statement",
+                            SqlStatement::CreateTable { .. }     => "CREATE TABLE (use CREATE CUBE instead)",
+                            SqlStatement::CreateIndex { .. }     => "CREATE INDEX (use ALTER CUBE ... ADD INDEX instead)",
+                            SqlStatement::CreateView { .. }      => "CREATE VIEW (use CREATE SESSION MATERIALIZED VIEW instead)",
+                            SqlStatement::StartTransaction { .. }
+                            | SqlStatement::Commit { .. }
+                            | SqlStatement::Rollback { .. }      => "explicit transaction control",
+                            SqlStatement::Call { .. }            => "stored procedure CALL",
+                            SqlStatement::Grant { .. }
+                            | SqlStatement::Revoke { .. }        => "GRANT/REVOKE",
+                            SqlStatement::LockTables { .. }      => "LOCK TABLES",
+                            SqlStatement::CreateFunction { .. }  => "CREATE FUNCTION",
+                            _                                    => "this SQL statement",
+                        };
+                        label.to_string()
+                    }
+                    WowDbStatement::Custom(_) => "custom statement".to_string(),
+                }).unwrap_or_else(|| "unknown statement".to_string());
+
+                let msg = format!(
+                    "This version of WOW-DB doesn't yet support '{}'",
+                    stmt_type
+                );
+                warn!(sql = %&sql[..sql.len().min(60)], stmt = %stmt_type, "Unsupported SQL statement");
+                results.error(ErrorKind::ER_NOT_SUPPORTED_YET, msg.as_bytes()).await.map_err(Into::into)
+            }
+        }
     }
 
     // ── COM_STMT_PREPARE (Prepared Statement) ──────────────────────────────
@@ -423,10 +464,13 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
         _params: ParamParser<'a>,
         results: QueryResultWriter<'a, W>,
     ) -> Result<()> {
-        let cols = vec![build_columns("result", ColumnType::MYSQL_TYPE_VAR_STRING)];
-        let mut rw = results.start(&cols).await?;
-        rw.write_row(std::iter::once(Some("(prepared statement stub)"))).await?;
-        rw.finish().await.map_err(Into::into)
+        results
+            .error(
+                ErrorKind::ER_NOT_SUPPORTED_YET,
+                b"This version of WOW-DB doesn't yet support 'COM_STMT_EXECUTE (prepared statements)'",
+            )
+            .await
+            .map_err(Into::into)
     }
 
     // ── COM_INIT_DB (USE database) ────────────────────────────────────────

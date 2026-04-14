@@ -492,6 +492,138 @@ Phase 2 완료 후:
 
 ---
 
+---
+
+## Phase 16: 로컬 개발 환경 — Native 단일 인스턴스 (NFR-DEV-001~006)
+
+**목적**: Docker 없이 `cargo build` 후 QN×1+CN×1+SN×1을 5초 이내 기동하는 개발 스크립트와 설정 제공  
+**상세 설계**: `design/local-dev-setup.md`
+
+### 설정 파일 (완료)
+
+- [x] T191 [P] `dev/configs/storage-node-local.toml` 구현 (native backend, data_dir=/tmp/wowdb-dev/sn, replica_count=1, memtable 32MB, block_cache 128MB, disk_full_threshold=0.98)
+- [x] T192 [P] `dev/configs/compute-node-local.toml` 구현 (storage_nodes=["127.0.0.1:9060"], dop=2, hash_join_max_memory 512MB)
+- [x] T193 [P] `dev/configs/query-node-local.toml` 구현 (단일 노드 Raft peers=["qn-local-1:9010"], compute_nodes=["127.0.0.1:9040"], rebalance_enabled=false)
+
+### 실행 스크립트 — Linux/macOS (완료)
+
+- [x] T194 `scripts/dev/run-local.sh` 구현 (SN→CN→QN 순서 기동, TCP 포트 오픈 대기, PID 파일 기록, Ctrl+C 시 cleanup trap, --no-build/--release 옵션)
+- [x] T195 [P] `scripts/dev/stop-local.sh` 구현 (PID 파일 기반 종료, 파일 없을 시 lsof 포트 기반 fallback)
+- [x] T196 [P] `scripts/dev/reset-local.sh` 구현 (실행 중 확인 후 데이터 디렉토리 삭제, 확인 프롬프트)
+
+### 실행 스크립트 — Windows PowerShell (완료)
+
+- [x] T197 `scripts/dev/run-local.ps1` 구현 (TcpClient 포트 대기, Start-Process 비동기 기동, finally 블록 정리, -NoBuild/-Release/-DataDir 파라미터)
+- [x] T198 [P] `scripts/dev/stop-local.ps1` 구현 (PID 파일 기반 Stop-Process, Get-NetTCPConnection fallback)
+- [x] T199 [P] `scripts/dev/reset-local.ps1` 구현 (-Force 플래그, 실행 중 감지 후 경고)
+
+### 런타임 지원 (미구현 — 바이너리 --config 파라미터 필요)
+
+- [ ] T200 `query-node/src/main.rs` 수정 (CLI 인수 파싱 — `--config <path>` 지원, 환경변수 오버라이드: NODE_ID/RAFT_PEERS/COMPUTE_NODES/QN_PEERS)
+- [ ] T201 [P] `compute-node/src/main.rs` 수정 (CLI 인수 파싱 — `--config <path>` 지원, 환경변수 오버라이드: NODE_ID/STORAGE_NODES)
+- [ ] T202 [P] `storage-node/src/main.rs` 수정 (CLI 인수 파싱 — `--config <path>` 지원, 환경변수 오버라이드: NODE_ID/DATA_DIR)
+
+### 검증 테스트
+
+- [ ] T203 `scripts/dev/run-local.sh` 검증 (기동 → MySQL 접속 → `SHOW TABLES` → `CREATE CUBE` → `INSERT` → `SELECT COUNT(*)` 전체 플로우 5초 이내 완료)
+- [ ] T204 [P] `scripts/dev/reset-local.sh` + `run-local.sh` 반복 검증 (초기화 후 재기동 3회 연속 정상 동작)
+
+**체크포인트**: `./scripts/dev/run-local.sh --no-build` 실행 후 5초 이내 `mysql -h 127.0.0.1 -P 9030` 접속 성공, `CREATE CUBE` DDL 실행 가능
+
+---
+
+## Phase 18: Behavioral Routing — 자동 쿼리 라우팅 (FR-NEW-001)
+
+**목적**: Event Table에서 Behavioral Query(FUNNEL/COHORT/PATH) 실행 시 자동으로 Behavioral Table로 라우팅. BT pair가 없으면 경고 + 생성 권장 DDL 반환.
+**상세 설계**: `design/query-routing-smv.md`, 관련 요구사항: FR-000, FR-NEW-001-01 ~ FR-NEW-001-11
+
+### 기반 인프라
+
+- [ ] T153 [P] `query-node/src/planner/behavioral_pattern.rs` 구현 (QueryPattern 열거형 Behavioral/Event/Hybrid, BehavioralTrigger, `detect_pattern(ast)` — FUNNEL_COUNT/COHORT_ANALYSIS/PATH_ANALYSIS 함수명 및 session_id/session_start/event_sequence 컬럼 참조 감지)
+- [ ] T154 [P] `query-node/src/meta/bt_registry.rs` 구현 (BtRegistry — Event Table ↔ BT(Session MV) 페어링 메타데이터 관리, BtEntry/BtState, get_bt_for_table/register/update_state/get_active_bt 메서드, Stale 상태면 get_active_bt None 반환)
+- [ ] T155 `query-node/src/meta/cube_manager.rs` 수정 (CubeManager에 BtRegistry 통합 — CREATE SESSION MATERIALIZED VIEW DDL 처리 시 register_behavioral_table() 자동 호출, bt_registry()/bt_registry_mut() 메서드 추가)
+
+### Behavioral Guidance
+
+- [ ] T156 [P] `query-node/src/planner/behavioral_guidance.rs` 구현 (BehavioralGuidance 구조체 — warning/suggested_ddl/estimated_speedup/actual_duration_ms 필드, build_guidance() — "No Behavioral Table found" 경고 + CREATE SESSION MV DDL 제안 + row_count 기반 예상 성능 향상 배수)
+- [ ] T157 `query-node/src/mysql_protocol/handler.rs` 수정 (Behavioral 패턴 감지 후 Active BT 없으면 Event Table Fallback 실행 + MySQL warnings 필드에 BehavioralGuidance.warning 첨부)
+- [ ] T158 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (Guidance 검증 테스트 3건: BT 없을 때 FUNNEL Query → Warning 포함, Event COUNT(*) → Warning 없음, BT pair 미등록 일반 테이블 → Warning 없음)
+
+### Behavioral Router
+
+- [ ] T159 [P] `query-node/src/planner/behavioral_router.rs` 구현 (BehavioralRouter — LogicalPlan Rewriter, BT Registry에서 Active BT 조회, TableScan 노드 BT로 교체, RoutingResult: plan/routed/bt_used/guidance 필드)
+- [ ] T160 [P] `query-node/src/planner/behavioral_column_map.rs` 구현 (Column Mapping — event_time→session_start (WHERE/Projection 컨텍스트), user_id/device_id 동일 유지, map_column() 함수)
+- [ ] T161 `query-node/src/mysql_protocol/handler.rs` 수정 (Behavioral Router를 Logical Plan 생성 직후 CBO 이전에 실행 — 라우팅 성공 시 BT 스캔, 라우팅 실패 시 Fallback+Warning, 로그 기록)
+- [ ] T162 `query-node/src/planner/explain.rs` 수정 (EXPLAIN 출력에 "== Behavioral Routing ==" 섹션 추가 — 원본 테이블, 라우팅 대상 BT, 트리거, BT 마지막 갱신, 예상 speedup; BT 없으면 Guidance DDL 표시)
+
+### 통합 검증 테스트
+
+- [ ] T163 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-001: BT 생성 후 FUNNEL_COUNT 자동 라우팅 — BT없음+Guidance→BT생성→라우팅→EXPLAIN확인→결과동등성)
+- [ ] T164 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-002: BT 생성 후 COHORT_ANALYSIS 자동 라우팅 — Warning 없음 + 결과 동등성)
+- [ ] T165 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-003: BT 생성 후 PATH_ANALYSIS 자동 라우팅 — Warning 없음 + 결과 동등성)
+- [ ] T166 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-004: Event Query는 BT 있어도 라우팅 안 됨 — COUNT(*)/GROUP BY EXPLAIN에 Behavioral Routing 섹션 없음)
+- [ ] T167 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-005: BT pair 미등록 일반 테이블 — session_id 등 컬럼명에 관계없이 라우팅/Guidance 없음)
+- [ ] T168 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-006: BT Stale 상태 → Fallback + Guidance — Warning에 Stale 사유 포함)
+- [ ] T169 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-007: CREATE SESSION MV 직후 즉시 라우팅 가능 — 지연 없음)
+- [ ] T170 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-008: Guidance 메시지 품질 — table명/CREATE SESSION MV DDL/USER KEY/SESSION TIMEOUT/성능힌트 포함)
+
+### 성능 검증
+
+- [ ] T171 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (E-001: BT 라우팅 성능 비교 — 100k행 FUNNEL 쿼리, BT 사용 시 Event Table보다 느리지 않음 검증, 결과 동등성)
+
+**체크포인트**: BT pair 없는 Behavioral Query 실행 시 warnings에 DDL 제안 포함, BT 생성 후 동일 쿼리 재실행 시 자동 BT 라우팅, EXPLAIN에 "Behavioral Routing" 섹션 표시
+
+---
+
+## Phase 19: 클러스터 관리 — Dynamic Node Add/Remove & Rebalance (FR-CM-001~FR-CM-020)
+
+**목적**: QN 중심 노드 자가 등록, 노드 상태 관리(ACTIVE→READONLY→DRAINING), 백그라운드 Shard Rebalance, ALTER CLUSTER JOIN/DRAIN/DISMISS SQL 명령 지원
+**상세 설계**: `design/cluster-management.md`, `spec.md` FR-CM-001 ~ FR-CM-020
+
+### 노드 상태 모델 & Raft 토폴로지
+
+- [ ] T172 [P] `shared/src/cluster.rs` 구현 (NodeInfo/NodeType(QN/CN/SN)/NodeState(Active/Readonly/Draining) 타입 정의, 상태 전환 규칙: Active→Readonly→Draining 단방향, NodeState::can_transition_to() 검증, Raft KV 경로: /cluster/nodes/{node_id})
+- [ ] T173 `query-node/src/meta/cluster_topology.rs` 구현 (ClusterTopologyManager — register_node/update_node_state/deregister_node/list_nodes/get_node/list_nodes_by_type/list_active_nodes_by_type 메서드, Raft KV CRUD)
+- [ ] T174 `proto/cluster.proto` 신규 + `query-node/src/rpc/cluster_service.rs` 구현 (ClusterService gRPC: RegisterNode/UpdateNodeState/GetClusterTopology/GetRebalanceStatus RPC, 포트 9011, SN 등록 시 RebalanceTrigger 채널 이벤트 전송)
+- [ ] T175 `compute-node/src/startup.rs`, `storage-node/src/startup.rs` 수정 (기동 시 자가 등록 — 환경변수 QN_PEERS 파싱, 첫 응답 QN에 RegisterNode gRPC 호출, NODE_ID 환경변수 사용, 헬스체크 대기)
+
+### SQL 명령 파서 & 핸들러
+
+- [ ] T176 `query-node/src/sql_parser/cluster_mgmt.rs` 구현 (ALTER CLUSTER 파서 — JOIN `<type> '<addr>:<port>'`/DRAIN `'<node_id>'`/DISMISS `'<node_id>'` [FORCE]/REBALANCE 문법, ClusterCommand AST 열거형)
+- [ ] T177 `query-node/src/mysql_protocol/handler.rs` 수정 + `query-node/src/meta/cluster_cmd.rs` 구현 (ClusterCommandExecutor — execute_join/execute_drain/execute_dismiss/execute_rebalance, DISMISS FORCE 시 /cluster/shards/{shard_id}/* Raft KV 일괄 삭제, ER_NODE_HAS_DATA(3001)/ER_RAFT_QUORUM_LOSS(3002)/ER_NODE_NOT_FOUND(3004) 오류 처리)
+- [ ] T178 `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW CLUSTER NODES/STATUS/REBALANCE 핸들러 — NODES: node_id/type/address/state/shards/joined_at, STATUS: metric/value, REBALANCE: job_id/type/from_node/to_node/shards_done/eta_secs)
+
+### INSERT 라우팅 NodeState 필터
+
+- [ ] T179 `query-node/src/planner/shard_placement.rs` 구현 (ShardPlacement — select_write_nodes: ACTIVE 상태 SN만 반환, select_read_nodes: ACTIVE+READONLY+DRAINING 허용, DRAIN 명령 후 최대 100ms 이내 INSERT 라우팅 제외 보장)
+
+### Shard Rebalancer (백그라운드)
+
+- [ ] T180 `query-node/src/meta/rebalance/planner.rs` 구현 (RebalancePlanner — total_shards/active_sn_count 균등 분산 계획, 최소 이전 횟수 greedy 알고리즘, 동시 Rebalance 시 계획 병합)
+- [ ] T181 `query-node/src/meta/rebalance/migrator.rs` 구현 (ShardMigrator — execute_plan 비동기 실행, 단일 Shard 이전 4단계: 빈Shard생성→SSTable스트리밍복제→Raft KV location cut-over(원자적)→삭제지시, proto/cluster.proto에 ShardService: CreateShard/CopyShard/DeleteShard RPC 추가)
+- [ ] T182 `query-node/src/meta/rebalance/coordinator.rs` 구현 (RebalanceCoordinator — on_node_joined/on_node_draining 이벤트 처리, get_job_status, cluster.rebalance_concurrency 설정 기반 동시 실행 제한, 백그라운드 tokio task로 실행)
+
+### SN 프로토콜 (Shard 복제)
+
+- [ ] T183 `storage-node/src/rpc/shard_service.rs` 구현 (ShardService gRPC 서버 — CreateShard(빈 Shard 디렉토리 생성)/CopyShard(SSTable 파일 스트리밍)/DeleteShard(Raft 확인 후 디렉토리 삭제) 구현)
+
+### Kubernetes / Helm 통합
+
+- [ ] T184 `helm/wowdb/` 신규 구현 (Helm Chart 기본 구조 — Chart.yaml, values.yaml, templates/: configmap.yaml/qn-statefulset.yaml/qn-headless-svc.yaml/qn-svc.yaml/cn-deployment.yaml/cn-hpa.yaml/sn-statefulset.yaml/_helpers.tpl, ConfigMap 필수 키: qn.peers(콤마구분 DNS목록)/cluster.rebalance_enabled, `helm lint` 통과)
+- [ ] T185 `docker/docker-compose.yml`, `docker/docker-compose.dev.yml` 수정 + `docker/Dockerfile.compute-node`, `docker/Dockerfile.storage-node` 수정 (QN_PEERS 환경변수 추가 및 ENV 문서화, `docker compose up` 후 SHOW CLUSTER NODES 모든 노드 ACTIVE 확인 가능)
+
+### 통합 테스트
+
+- [ ] T186 `integration-tests/src/cluster_management.rs` 구현 (CM-G-001: SN JOIN 후 Rebalance 완료 엔드투엔드 — 3SN기동→4번째SN JOIN→Rebalance진행중확인→완료→Shard균등분포±1)
+- [ ] T187 `integration-tests/src/cluster_management.rs` 구현 (CM-G-002: DRAIN→DISMISS 노드 제거 — 4SN+10k행INSERT→DRAIN→INSERT라우팅제외확인→SELECT가능확인→DRAIN완료→DISMISS→데이터손실없음)
+- [ ] T188 `integration-tests/src/cluster_management.rs` 구현 (CM-G-003: FORCE DISMISS 데이터 삭제 — 데이터있는SN DISMISS without FORCE→ER_NODE_HAS_DATA, FORCE→성공→Raft KV Shard항목삭제확인)
+- [ ] T189 `integration-tests/src/cluster_management.rs` 구현 (CM-G-004: CN 추가/제거 — CN JOIN 후 쿼리 Fragment 라우팅 포함 확인, CN DRAIN 후 새 쿼리 라우팅 제외+진행중쿼리완료)
+- [ ] T190 `integration-tests/src/cluster_management.rs` 구현 (CM-G-005: QN Raft Quorum 보호 — 3QN 클러스터 2번째QN DRAIN시도→ER_RAFT_QUORUM_LOSS, 1번째QN DRAIN 성공 후 2번째 DRAIN→오류)
+
+**체크포인트**: `docker compose up` 후 `SHOW CLUSTER NODES` 모든 노드 ACTIVE 확인, ALTER CLUSTER JOIN/DRAIN/DISMISS 명령 동작, Rebalance 완료 후 `SHOW CLUSTER REBALANCE` 빈 결과, Shard 균등 분산 확인
+
+---
+
 ## Notes
 
 - `[P]` = 다른 파일, 의존성 없는 태스크 — 병렬 실행 권장

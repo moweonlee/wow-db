@@ -1,31 +1,33 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change:    [template] → 1.0.0
-Bump rationale:    First substantive constitution — all placeholders replaced with
-                   WOW-DB-specific content. Major (1.x.x) baseline established.
+Version change:    1.0.0 → 1.1.0
+Bump rationale:    MINOR — Principle V expanded with Dynamic Cluster Management
+                   rules (node lifecycle, QN-centric discovery, graceful drain,
+                   FORCE DISMISS, auto rebalancing, Helm support).
 
-Principles added (7 total):
-  I.   Dual-Layout Data Model (Event Table & Behavioral Table)
-  II.  Behavioral Routing — Seamless Auto-Selection
-  III. LSM-Tree Write-First Storage
-  IV.  SIMD-First Execution Engine
-  V.   Kubernetes-Native Stateless Architecture
-  VI.  MySQL Protocol Compatibility
-  VII. Storage-Compute Separation
+Modified principles:
+  V. "Kubernetes-Native Stateless Query Nodes"
+   → "Kubernetes-Native Stateless Architecture & Dynamic Cluster Management"
+     (added: QN-Centric Discovery, Node State Model, Graceful Drain,
+      FORCE DISMISS, Auto Rebalancing, Helm support rules)
 
-Sections added:
-  - Technology Constraints
-  - Quality Gates & Testing Discipline
-  - Governance
+New design docs:
+  ✅ specs/002-wow-db-srs-v02/design/cluster-management.md
+  ✅ specs/002-wow-db-srs-v02/tasks-cluster-management.md
 
-Templates reviewed:
-  ✅ .specify/templates/plan-template.md  — Constitution Check gate aligns
-  ✅ .specify/templates/spec-template.md  — User story format compatible
-  ✅ .specify/templates/tasks-template.md — Task structure compatible
-  ⚠  .specify/templates/agent-file-template.md — No WOW-DB specific content; no update needed
+spec.md updates:
+  ✅ FR-CM-001 ~ FR-CM-010 추가 (클러스터 관리 요구사항)
 
-Deferred TODOs: none
+sql_syntax.md updates:
+  ✅ Section 12: ALTER CLUSTER JOIN/DRAIN/DISMISS, SHOW CLUSTER 명령 추가
+
+README.md updates:
+  ✅ Dynamic Cluster Management 섹션 추가
+
+Deferred TODOs:
+  - Helm Chart 실제 파일(helm/wowdb/) 구현 — tasks-cluster-management.md CM-F-001
+  - gRPC ClusterService proto 구현 — CM-A-003
 -->
 
 # WOW-DB Constitution
@@ -110,26 +112,49 @@ Storage Node는 이 경로 이외의 쓰기 최적화(in-place update 등)를 �
 - 신규 집계 함수는 SIMD 처리 경로가 없으면 PR이 거부된다.
 - 성능 벤치마크(`cargo bench`)는 SIMD 연산의 throughput(rows/sec)을 측정해야 한다.
 
-### V. Kubernetes-Native Stateless Query Nodes (NON-NEGOTIABLE)
+### V. Kubernetes-Native Stateless Architecture & Dynamic Cluster Management (NON-NEGOTIABLE)
 
 Query Node는 완전히 Stateless 설계여야 한다. 모든 영속 상태는 Raft KV에 저장되며,
 어떤 QN Pod에 요청이 도달해도 동일한 결과를 반환해야 한다.
+클러스터는 쿼리 중단 없이 노드를 동적으로 추가·제거할 수 있어야 한다.
 
+**Stateless QN**:
 - **단일 시스템 이미지(Single System Image)**: 모든 QN은 Raft quorum 커밋 후 동일한
   메타데이터를 반영해야 한다. QN 간 메타데이터 뷰의 불일치는 허용하지 않는다.
 - **메타데이터 캐시 Staleness 상한**: DDL 변경은 write-through 무효화.
   CBO 통계 최대 staleness 500ms (설정 가능).
 - **Web Client 세션 토큰**: Raft KV(`/sessions/{token}`)에 저장. 모든 QN에서 검증 가능.
   TTL 기본 24시간.
-- **헬스체크**: `/health`, `/healthz` 엔드포인트는 모든 노드에서 반드시 응답해야 한다.
+- **헬스체크**: `/health`, `/healthz`, `/metrics` 엔드포인트는 모든 노드에서 반드시 응답해야 한다.
 - **Raft 클러스터**: QN은 홀수 개(최소 3개). 과반수 실패 시 쓰기 중단 (가용성보다 일관성 우선).
+
+**동적 클러스터 관리 (Dynamic Cluster Management)**:
+- **QN-Centric Discovery**: 모든 노드(QN/CN/SN)는 기동 시 `QN_PEERS` 환경변수(또는
+  K8s ConfigMap `qn.peers`)에서 QN 주소를 읽어 자동 자가 등록해야 한다.
+  수동 설정 파일 편집 없이 노드가 클러스터에 합류해야 한다.
+- **노드 상태 모델**: `ACTIVE → READONLY → DRAINING` 단방향 전환. 역방향 불허.
+  - ACTIVE: 쓰기·읽기 허용
+  - READONLY: INSERT 라우팅 즉시 제외 (DRAIN 명령 직후 100ms 이내), 읽기 허용
+  - DRAINING: 백그라운드 데이터 이전 중, 읽기 허용, 쓰기 불가
+  - DISMISSED: Raft KV에 항목 없음 (= 존재하지 않음)
+- **Graceful Drain**: 데이터가 있는 SN은 반드시 DRAIN 완료 후 DISMISS해야 한다.
+  SN DRAIN = Shard를 다른 ACTIVE SN으로 백그라운드 이전.
+  DRAIN 완료 전까지 해당 SN에서 읽기 서빙 유지.
+- **FORCE DISMISS**: `FORCE` 플래그 없이 데이터가 있는 노드 DISMISS 금지.
+  FORCE 사용 시 해당 SN의 모든 Shard 메타데이터를 Raft KV에서 삭제한다 (데이터 손실).
+- **자동 Shard Rebalancing**: SN 추가·DRAIN 시 자동으로 백그라운드 Rebalance 시작.
+  Rebalance 중 쿼리·수집 중단 없어야 한다.
+- **Helm 지원**: `values.yaml`의 replicas 값 변경만으로 모든 노드 타입 수평 확장 가능.
+  - QN: StatefulSet (홀수), CN: Deployment + HPA, SN: StatefulSet + PVC
 
 **강제 규칙**:
 - QN Pod 로컬 디스크에 쿼리 상태나 메타데이터를 저장하는 코드는 금지.
   모든 영속 상태는 Raft KV 또는 Storage Node를 통해야 한다.
-- K8s HPA(Horizontal Pod Autoscaler)로 QN Pod 수를 동적으로 조정할 수 있어야 한다.
-  이를 방해하는 로컬 상태 의존성은 PR 거부 대상이다.
-- Prometheus `/metrics` 엔드포인트는 모든 노드에서 제공해야 한다.
+- INSERT 라우팅 코드는 SN 상태를 실시간 참조해야 한다.
+  READONLY/DRAINING SN으로의 INSERT 라우팅은 절대 발생하지 않아야 한다.
+- K8s HPA(Horizontal Pod Autoscaler)로 CN Pod 수를 동적으로 조정할 수 있어야 한다.
+- `ALTER CLUSTER JOIN/DRAIN/DISMISS` SQL 명령이 클러스터 관리의 유일한 인터페이스다.
+  REST API 또는 별도 관리 도구를 추가하는 경우에도 이 SQL 명령과 동일한 의미를 가져야 한다.
 
 ### VI. MySQL Protocol Compatibility (MUST)
 
@@ -254,4 +279,4 @@ Storage Node(SN)와 Compute Node(CN)는 독립적으로 확장 가능해야 한�
 - `specs/002-wow-db-srs-v02/` — 기능 명세 및 설계 문서
 - `specs/002-wow-db-srs-v02/design/query-routing-smv.md` — Behavioral Routing 상세 설계
 
-**Version**: 1.0.0 | **Ratified**: 2026-04-14 | **Last Amended**: 2026-04-14
+**Version**: 1.1.0 | **Ratified**: 2026-04-14 | **Last Amended**: 2026-04-15

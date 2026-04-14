@@ -18,6 +18,8 @@
 9. [시스템 명령](#9-시스템-명령)
 9.5. [EXPLAIN — 분산 실행 계획 출력](#95-explain--분산-실행-계획-출력)
 10. [MySQL 호환 명령](#10-mysql-호환-명령)
+11. [오류 처리 — 미지원 SQL](#11-오류-처리--미지원-sql)
+12. [클러스터 관리 명령](#12-클러스터-관리-명령)
 
 ---
 
@@ -797,3 +799,157 @@ WOW-DB는 MySQL 8.0 Wire Protocol을 지원하므로 표준 MySQL 클라이언�
 | MySQL 호환 | `INFORMATION_SCHEMA.TABLES` | ✅ Cube 목록 반환 |
 | MySQL 호환 | `INFORMATION_SCHEMA.COLUMNS` | ✅ 모든 Cube 컬럼 반환 |
 | MySQL 호환 | `INFORMATION_SCHEMA.SCHEMATA` | ✅ DB 목록 반환 |
+
+---
+
+## 11. 오류 처리 — 미지원 SQL
+
+WOW-DB는 인식되지 않거나 아직 구현되지 않은 SQL에 대해 MySQL 표준 오류 코드를 반환한다. 결과 행(`stub`)을 반환하지 않는다. 상세 사양: [`design/error-handling.md`](./error-handling.md)
+
+### 오류 분류
+
+| 상황 | Error Code | 예시 |
+|------|-----------|------|
+| 문법 오류 / 임의 문자열 | `1064 ER_PARSE_ERROR` | `sdc sdf;` |
+| 유효하나 미구현 문 | `1235 ER_NOT_SUPPORTED_YET` | `UPDATE`, `CREATE TABLE` |
+| 존재하지 않는 테이블 | `1146 ER_NO_SUCH_TABLE` | `SELECT * FROM nonexistent` |
+| Cube 이미 존재 | `1050 ER_TABLE_EXISTS_ERROR` | 중복 `CREATE CUBE` |
+| 읽기 전용 모드 | `1290 ER_OPTION_PREVENTS_STATEMENT` | 읽기 전용 클러스터 쓰기 |
+
+### 미지원 MySQL 문 — WOW-DB 대체
+
+| MySQL 문 ❌ | WOW-DB 대체 ✅ |
+|------------|----------------|
+| `CREATE TABLE` | `CREATE CUBE` |
+| `CREATE INDEX` | `ALTER CUBE ... ADD INDEX` |
+| `CREATE VIEW` | `CREATE SESSION MATERIALIZED VIEW` |
+| `UPDATE` | 해당 없음 (OLAP — point update 미지원) |
+| `BEGIN` / `COMMIT` | 해당 없음 (내부 2PC만 지원) |
+
+### 동작 예시
+
+```
+mysql> sdc
+       sdf;
+ERROR 1064 (42000): You have an error in your SQL syntax near 'sdc' (line 1)
+
+mysql> UPDATE page_events SET event_name = 'click' WHERE id = 1;
+ERROR 1235 (42000): This version of WOW-DB doesn't yet support 'UPDATE statement'
+
+mysql> CREATE TABLE foo (id INT);
+ERROR 1235 (42000): This version of WOW-DB doesn't yet support 'CREATE TABLE (use CREATE CUBE instead)'
+```
+
+---
+
+## 12. 클러스터 관리 명령
+
+❌ 미구현 (Phase CM — `tasks-cluster-management.md` 참조)  
+상세 설계: [`design/cluster-management.md`](./cluster-management.md)
+
+### ALTER CLUSTER JOIN ❌
+
+새 노드를 클러스터에 추가한다. 등록된 QN 주소 기반으로 모든 노드 타입이 참가한다.
+
+```sql
+-- 문법
+ALTER CLUSTER JOIN <node_type> '<address>:<port>' [AS '<node_id>'];
+
+-- 예시
+ALTER CLUSTER JOIN QN  '10.0.0.5:9010';
+ALTER CLUSTER JOIN QN  '10.0.0.5:9010' AS 'qn-4';
+ALTER CLUSTER JOIN CN  '10.0.0.6:9040' AS 'cn-3';
+ALTER CLUSTER JOIN SN  '10.0.0.7:9060' AS 'sn-4';
+```
+
+**응답 예시**:
+```
+Query OK. Node 'sn-4' joined the cluster. Rebalance started (job_id: a1b2-...).
+```
+
+**제약**:
+- QN은 홀수 개를 유지해야 한다 (짝수 시 경고)
+- 동일 address:port 중복 등록 시 `ERROR 3003 (WW000): Node already registered`
+
+---
+
+### ALTER CLUSTER DRAIN ❌
+
+노드를 READONLY → DRAINING 상태로 전환한다. INSERT 라우팅에서 즉시 제외되며, 백그라운드 데이터 이전이 시작된다.
+
+```sql
+-- 문법
+ALTER CLUSTER DRAIN '<node_id>';
+
+-- 예시
+ALTER CLUSTER DRAIN 'sn-4';
+ALTER CLUSTER DRAIN 'cn-2';
+ALTER CLUSTER DRAIN 'qn-3';
+```
+
+**응답 예시**:
+```
+Query OK. Node 'sn-4' is now DRAINING.
+Shards to migrate: 16 | Estimated time: ~2m 30s
+Monitor: SHOW CLUSTER REBALANCE;
+```
+
+**오류 케이스**:
+```
+ERROR 3002 (WW000): Cannot drain 'qn-1': Raft quorum would be lost (2 nodes remaining)
+```
+
+---
+
+### ALTER CLUSTER DISMISS ❌
+
+DRAIN 완료된 노드를 영구 제거한다. 데이터가 남아있는 경우 `FORCE`가 필요하다.
+
+```sql
+-- 문법
+ALTER CLUSTER DISMISS '<node_id>' [FORCE];
+
+-- DRAIN 완료 후 정상 제거
+ALTER CLUSTER DISMISS 'sn-4';
+
+-- 데이터가 있는 노드 강제 제거 (Shard 메타데이터 삭제 → 데이터 영구 손실)
+ALTER CLUSTER DISMISS 'sn-4' FORCE;
+```
+
+**FORCE 없이 데이터 있는 노드 DISMISS 시 오류**:
+```
+ERROR 3001 (WW000): Node 'sn-4' has 8 shards with data.
+Run 'ALTER CLUSTER DRAIN sn-4' first, or use FORCE to permanently delete all data.
+```
+
+**⚠ 주의**: `FORCE` 는 해당 노드의 모든 Shard 메타데이터를 Raft KV에서 삭제한다.
+복제본이 없는 경우 데이터가 영구 손실된다.
+
+---
+
+### ALTER CLUSTER REBALANCE ❌
+
+노드 간 Shard 불균형을 수동으로 재조정한다.
+
+```sql
+ALTER CLUSTER REBALANCE;
+```
+
+---
+
+### SHOW CLUSTER ❌
+
+```sql
+-- 전체 노드 목록
+SHOW CLUSTER NODES;
+
+-- 클러스터 상태 요약
+SHOW CLUSTER STATUS;
+
+-- 진행 중인 Rebalance 작업
+SHOW CLUSTER REBALANCE;
+```
+
+**SHOW CLUSTER NODES 출력 컬럼**: `node_id, type, address, state, shards, joined_at`  
+**SHOW CLUSTER STATUS 출력 컬럼**: `metric, value`  
+**SHOW CLUSTER REBALANCE 출력 컬럼**: `job_id, type, from_node, to_node, shards_done, eta_secs`

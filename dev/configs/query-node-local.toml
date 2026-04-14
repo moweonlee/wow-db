@@ -1,0 +1,47 @@
+# WOW-DB Query Node — 로컬 개발 단일 인스턴스 설정
+# 사용: scripts/dev/run-local.sh 또는 run-local.ps1 이 자동으로 사용
+# 직접 실행: query-node --config dev/configs/query-node-local.toml
+
+[node]
+id        = "qn-local-1"   # 환경변수 NODE_ID로 오버라이드
+log_level = "debug"
+
+[mysql]
+bind            = "127.0.0.1"
+port            = 9030
+max_connections = 100          # 개발용 낮은 값
+
+[web]
+bind = "127.0.0.1"
+port = 8080
+
+[raft]
+bind  = "127.0.0.1"
+port  = 9010
+# 로컬 단일 노드: 자기 자신만 피어 (Single-Node Raft)
+# 환경변수 RAFT_PEERS로 오버라이드 가능
+peers = ["qn-local-1:9010"]
+
+[grpc]
+bind = "127.0.0.1"
+port = 9011
+
+[compute_nodes]
+# 로컬 CN 주소 — 환경변수 COMPUTE_NODES로 오버라이드 가능
+addresses = ["127.0.0.1:9040"]
+
+[ingestion]
+async_insert_buffer_rows      = 1000    # 개발용 작은 버퍼
+async_insert_flush_interval_s = 1
+async_insert_max_memory_mb    = 64
+
+[profiler]
+buffer_size = 100              # 개발용 작은 버퍼
+
+[metrics]
+enabled = true
+path    = "/metrics"
+
+[cluster]
+# 단일 노드 개발 환경: Rebalance 비활성화
+rebalance_enabled = false

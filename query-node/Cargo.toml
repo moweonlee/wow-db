@@ -51,6 +51,9 @@ prometheus = "0.13"
 # Regex (LIKE 구현용)
 regex = "1"
 
+# 디스크 사용량 조회 (statvfs)
+libc = "0.2"
+
 [features]
 default   = []
 kafka     = ["rdkafka"]

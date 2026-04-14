@@ -32,7 +32,104 @@ cargo build -p shared 2>&1 | head -20
 
 ---
 
-## 2. 전체 스택 로컬 실행 (Docker Compose)
+## 2. 로컬 Native 실행 (Docker 없이, 빠른 개발용) ⚡
+
+Docker 빌드 시간 없이 `cargo build` 후 바이너리를 직접 실행하는 방법이다.  
+**QN×1 + CN×1 + SN×1** 단일 인스턴스 구성으로, 기능 개발 및 단위 테스트에 적합하다.
+
+### 사전 요구 사항 (추가)
+
+| 도구 | 용도 |
+|---|---|
+| Rust 1.87+ | 바이너리 빌드 |
+| protoc 3.21+ | gRPC 코드 생성 |
+| mysql CLI | 접속 테스트 |
+
+### Linux / macOS
+
+```bash
+# 기동 (빌드 포함)
+./scripts/dev/run-local.sh
+
+# 빌드 생략 (이미 빌드된 경우)
+./scripts/dev/run-local.sh --no-build
+
+# release 빌드로 기동 (성능 테스트 시)
+./scripts/dev/run-local.sh --release
+
+# 다른 터미널에서 종료
+./scripts/dev/stop-local.sh
+
+# 데이터 초기화 (재시작 시 깨끗한 상태로)
+./scripts/dev/reset-local.sh
+```
+
+### Windows (PowerShell)
+
+```powershell
+# 기동 (빌드 포함)
+.\scripts\dev\run-local.ps1
+
+# 빌드 생략
+.\scripts\dev\run-local.ps1 -NoBuild
+
+# release 빌드
+.\scripts\dev\run-local.ps1 -Release
+
+# 데이터 디렉토리 지정
+.\scripts\dev\run-local.ps1 -DataDir D:\wowdb-dev
+
+# 종료
+.\scripts\dev\stop-local.ps1
+
+# 데이터 초기화
+.\scripts\dev\reset-local.ps1 -Force
+```
+
+### 기동 후 확인
+
+```bash
+# MySQL 접속
+mysql -h 127.0.0.1 -P 9030 -u admin -p''
+
+# Web UI
+open http://localhost:8080        # macOS
+start http://localhost:8080       # Windows
+
+# 로그 확인 (Linux/macOS)
+tail -f /tmp/wowdb-dev/logs/qn.log
+
+# 로그 확인 (Windows)
+Get-Content "$env:TEMP\wowdb-dev\logs\qn.log" -Wait
+```
+
+### 로컬 설정 파일
+
+| 파일 | 용도 |
+|---|---|
+| `dev/configs/query-node-local.toml` | QN 단일 노드 Raft, 소형 버퍼 |
+| `dev/configs/compute-node-local.toml` | CN localhost SN 연결 |
+| `dev/configs/storage-node-local.toml` | SN native backend, 복제본 1개 |
+
+환경변수로 런타임 오버라이드 가능:
+
+```bash
+WOWDB_DATA_DIR=/data/dev RUST_LOG=debug ./scripts/dev/run-local.sh
+```
+
+### Docker와 비교
+
+| 항목 | Local Native | Docker Compose Dev |
+|---|---|---|
+| 기동 시간 | ~5초 (빌드 후) | 30~120초 |
+| 노드 구성 | QN×1 + CN×1 + SN×1 | 동일 |
+| 데이터 경로 | `/tmp/wowdb-dev/sn` | Docker Volume |
+| Kafka/MinIO | 불필요 | 포함 |
+| 용도 | 기능 개발, 단위 테스트 | E2E 테스트, Kafka 수집 테스트 |
+
+---
+
+## 3. 전체 스택 로컬 실행 (Docker Compose)
 
 ```bash
 # 전체 클러스터 기동 (QN×3, CN×2, SN×3, MinIO, Redpanda)

@@ -61,6 +61,9 @@ bloomfilter = "1"
 # xxHash3 (SIMD-accelerated, Bloom Filter 해시 함수)
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
+# 디스크 사용량 조회 (statvfs)
+libc = "0.2"
+
 [features]
 default    = []
 io-uring   = ["tokio-uring"]

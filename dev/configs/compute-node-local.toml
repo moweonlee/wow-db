@@ -1,0 +1,27 @@
+# WOW-DB Compute Node — 로컬 개발 단일 인스턴스 설정
+# 사용: scripts/dev/run-local.sh 또는 run-local.ps1 이 자동으로 사용
+# 직접 실행: compute-node --config dev/configs/compute-node-local.toml
+
+[node]
+id        = "cn-local-1"   # 환경변수 NODE_ID로 오버라이드
+log_level = "debug"
+
+[grpc]
+bind = "127.0.0.1"
+port = 9040
+
+[storage_nodes]
+# 로컬 SN 주소 — 환경변수 STORAGE_NODES로 오버라이드 가능
+addresses = ["127.0.0.1:9060"]
+
+[execution]
+# 개발용: CPU 코어 수를 낮게 제한하여 리소스 절약
+dop = 2
+hash_join_max_memory_mb = 512
+result_cache_enabled    = true
+result_cache_size_mb    = 128
+result_cache_ttl_s      = 60
+
+[simd]
+auto_detect  = true
+force_scalar = false    # SIMD 비활성화 테스트 시 true로 변경

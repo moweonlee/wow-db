@@ -142,6 +142,9 @@ And the engine automatically routes this to the Session MV where session boundar
 | **Flat JSON auto-extraction** | No | Partial | Yes (Compaction-time auto-columnize) |
 | **Auto-partitioning on INSERT** | Partial | Yes | Yes (DAY / MONTH / YEAR) |
 | **Stateless query nodes** | No | No | Yes (Raft metadata, K8s-friendly) |
+| **Dynamic node add/remove** | Manual restart | Manual | `ALTER CLUSTER JOIN/DRAIN/DISMISS` |
+| **Auto Shard rebalance** | No | Partial | Yes (background, zero-downtime) |
+| **Graceful drain (data-safe)** | No | No | Yes (DRAIN → DISMISS, data migrates first) |
 | **Colocate groups** | No | Yes | Yes |
 | **Storage tiering** | Partial | No | Yes (Hot NVMe → Cold S3) |
 | **Implementation language** | C++ | C++/Java | Rust (SIMD-first) |
@@ -331,6 +334,81 @@ SHOW PARTS FROM page_events WHERE level = 0;  -- many L0 = compaction lag
 SHOW DISTRIBUTED STATUS FROM page_events ORDER BY size_bytes DESC;
 ```
 
+### Dynamic Cluster Management
+
+WOW-DB clusters scale horizontally without downtime. Every node type — Query Node, Compute Node, Storage Node — can be added or removed while queries run.
+
+**All nodes register with QN.** When a new node starts, it reads the QN address from the `QN_PEERS` environment variable (or Kubernetes ConfigMap `qn.peers`) and self-registers:
+
+```
+New SN Pod starts
+  └─ reads QN_PEERS from ConfigMap
+  └─ sends RegisterNode gRPC to QN
+  └─ QN commits JOIN to Raft KV
+  └─ QN starts background Shard Rebalance automatically
+```
+
+**Node Lifecycle**:
+
+```
+ACTIVE ──── ALTER CLUSTER DRAIN ────► READONLY ──► DRAINING ──► [DISMISSED]
+              INSERT routing removed   data migration in background
+              within 100ms
+```
+
+| State | INSERT routing | SELECT serving | New shards |
+|-------|---------------|----------------|------------|
+| ACTIVE | ✅ | ✅ | ✅ |
+| READONLY | ❌ | ✅ | ❌ |
+| DRAINING | ❌ | ✅ | ❌ |
+| DISMISSED | — | — | — |
+
+**Cluster management SQL commands**:
+
+```sql
+-- Add a new Storage Node (auto-triggers rebalance)
+ALTER CLUSTER JOIN SN '10.0.0.7:9060' AS 'sn-4';
+
+-- Gracefully remove a node (data migrates to other SNs in background)
+ALTER CLUSTER DRAIN 'sn-4';
+-- → monitor progress:
+SHOW CLUSTER REBALANCE;
+-- → remove after drain completes:
+ALTER CLUSTER DISMISS 'sn-4';
+
+-- Force-remove a node with data (deletes shard metadata — data loss warning)
+ALTER CLUSTER DISMISS 'sn-4' FORCE;
+
+-- Inspect cluster topology
+SHOW CLUSTER NODES;
+SHOW CLUSTER STATUS;
+```
+
+**DRAIN safety**: A node with data cannot be dismissed without `FORCE`. WOW-DB rejects the command:
+```
+ERROR 3001 (WW000): Node 'sn-4' has 8 shards with data.
+Run 'ALTER CLUSTER DRAIN sn-4' first, or use FORCE to permanently delete all data.
+```
+
+**Kubernetes / Helm scale-out**:
+
+```yaml
+# helm/wowdb/values.yaml — just change replicas
+storageNode:
+  replicas: 5   # was 3 — new SNs self-register and trigger rebalance
+
+computeNode:
+  replicas: 4   # CN Deployment + HPA auto-scales on CPU
+  autoscaling:
+    enabled: true
+    maxReplicas: 16
+
+queryNode:
+  replicas: 5   # must stay odd (Raft quorum)
+```
+
+QN is a `StatefulSet` (stable Raft IDs), CN is a `Deployment` (HPA-friendly), SN is a `StatefulSet + PVC` (data survives rescheduling).
+
 ### Cluster Protection
 
 WOW-DB automatically enters cluster-wide read-only mode when any Storage Node approaches disk full (95% threshold, 85% recovery hysteresis). All INSERT/DDL statements are rejected with MySQL error 1290 until space is freed. The state is persisted in Raft KV so every Query Node enforces it consistently.
@@ -431,7 +509,7 @@ cargo test -p storage-node      # storage node only
 | Query Node | 9030 | MySQL wire protocol |
 | Query Node | 8080 | Web SQL Editor (HTTP/WebSocket) |
 | Query Node | 9010 | Raft consensus (QN↔QN) |
-| Query Node | 9011 | Internal gRPC (QN↔CN/SN) |
+| Query Node | 9011 | Internal gRPC (QN↔CN/SN, ClusterService node registration) |
 | Compute Node | 9040 | Fragment plan receiver (gRPC) |
 | Storage Node | 9060 | Storage API (gRPC) |
 | Storage Node | 8040 | HTTP Stream Load (Spark) |
@@ -461,6 +539,8 @@ specs/              Software Requirements Specification
 - **SIMD everywhere**: scan, filter, hash-join, aggregation all use AVX2 or wider; no scalar fallback in hot paths
 - **Storage-Compute separation**: Storage Nodes scale independently from Compute Nodes; S3/HDFS backends allow infinite cold storage at low cost
 - **Stateless Query Nodes**: all state lives in Raft KV, so Kubernetes can route any request to any QN pod
+- **Dynamic cluster management**: nodes join and leave while queries run; `ALTER CLUSTER JOIN/DRAIN/DISMISS` is the single interface for topology changes; Shard rebalancing happens automatically in the background
+- **Graceful drain**: a Storage Node with data can never be force-removed without explicit `FORCE` — by default, draining migrates all Shards first, so no data is lost
 - **Schema-on-write**: Cube schema is fixed at creation; the optimizer knows all types and cardinalities ahead of time
 
 ---

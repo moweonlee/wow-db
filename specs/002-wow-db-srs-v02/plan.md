@@ -34,7 +34,10 @@ WOW-DB는 200억+ 레코드 규모의 웹 이벤트 분석에 특화된 MySQL �
 - 영구 저장: 자체 구현 LSM-Tree (컬럼별 독립 파일: `.col`, `.bloom`, `.min_max`)
 - 백엔드: Native NVMe / S3(object_store) / HDFS(opendal)
 
-**Testing**: `cargo test` (단위), Docker Compose + `cargo test --features integration` (통합)  
+**Testing**:
+- 단위 테스트: `cargo test --workspace`
+- 로컬 E2E (빠른 개발): `./scripts/dev/run-local.sh` → MySQL 접속 (Docker 불필요, QN×1+CN×1+SN×1)
+- 통합 테스트 (전체 클러스터): Docker Compose + `cargo test --features integration`  
 **Target Platform**: Linux x86_64 (프로덕션); Linux/macOS (개발 — io_uring은 Linux 전용 feature flag)  
 **Project Type**: 분산 데이터베이스 시스템 (다중 바이너리 Cargo workspace)  
 **Performance Goals**:
@@ -100,8 +103,9 @@ specs/002-wow-db-srs-v02/
 │   ├── lsm-engine.md                ✅ LSM Engine 상세 설계 (Leveling, Bloom Filter, Sort Key, 물리 파일 포맷)
 │   ├── readonly-mode.md             ✅ 디스크 초과 → Read-Only 모드 상세 설계 (FR-036)
 │   ├── query-execution-model.md     ✅ 쿼리 실행 모델 (QN→CN→SN 3계층, Fragment, Exchange, 분석 쿼리) (FR-037, FR-041)
-│   └── logical-to-physical-mapping.md ✅ 논리-물리 단위 매핑 (Table/Partition/Shard → Part/Granule/ColumnFile, CBO 통계 계층) (FR-037~FR-042)
-└── tasks.md          ✅ 구현 태스크 목록 (Phase 11: T107~T117, Phase 12: T118~T125, Phase 13: T126~T136)
+│   ├── logical-to-physical-mapping.md ✅ 논리-물리 단위 매핑 (Table/Partition/Shard → Part/Granule/ColumnFile, CBO 통계 계층) (FR-037~FR-042)
+│   └── local-dev-setup.md           ✅ 로컬 단일 인스턴스 실행 설계 (NFR-DEV-001~006, 포트/경로/환경변수)
+└── tasks.md          ✅ 구현 태스크 목록 (T001~T190, Phase 1~17)
 ```
 
 ### Source Code (Repository Root)
@@ -203,16 +207,31 @@ wow-db/
 │       ├── compat_tests.rs     # MySQL 클라이언트 호환성
 │       └── failover_tests.rs   # 노드 장애 복구
 │
-└── docker/
-    ├── docker-compose.yml      # 전체 클러스터 (QN×3, CN×2, SN×3)
-    ├── docker-compose.dev.yml  # 개발용 단일 노드
-    ├── Dockerfile.query-node
-    ├── Dockerfile.compute-node
-    ├── Dockerfile.storage-node
-    └── configs/
-        ├── query-node.toml     # QN 설정 템플릿
-        ├── compute-node.toml   # CN 설정 템플릿
-        └── storage-node.toml   # SN 설정 템플릿
+├── docker/
+│   ├── docker-compose.yml      # 전체 클러스터 (QN×3, CN×2, SN×3)
+│   ├── docker-compose.dev.yml  # Docker 개발용 단일 노드
+│   ├── Dockerfile.query-node
+│   ├── Dockerfile.compute-node
+│   ├── Dockerfile.storage-node
+│   └── configs/
+│       ├── query-node.toml     # Docker QN 설정 템플릿
+│       ├── compute-node.toml   # Docker CN 설정 템플릿
+│       └── storage-node.toml   # Docker SN 설정 템플릿
+│
+├── dev/                        # 로컬 Native 실행 설정 (Docker 없이)
+│   └── configs/
+│       ├── query-node-local.toml    # QN 단일 노드 Raft, 소형 버퍼
+│       ├── compute-node-local.toml  # CN localhost SN 연결
+│       └── storage-node-local.toml  # SN native backend, 복제본 1개
+│
+└── scripts/
+    └── dev/
+        ├── run-local.sh        # 로컬 단일 인스턴스 기동 (Linux/macOS)
+        ├── run-local.ps1       # 로컬 단일 인스턴스 기동 (Windows)
+        ├── stop-local.sh       # 로컬 클러스터 종료 (Linux/macOS)
+        ├── stop-local.ps1      # 로컬 클러스터 종료 (Windows)
+        ├── reset-local.sh      # 로컬 데이터 초기화 (Linux/macOS)
+        └── reset-local.ps1     # 로컬 데이터 초기화 (Windows)
 ```
 
 **구조 결정**: Cargo workspace + 3 바이너리 크레이트 (`query-node`, `compute-node`, `storage-node`) + 1 라이브러리 크레이트 (`shared`) + 통합 테스트 크레이트. 각 노드가 독립 Docker 이미지로 빌드됨.
