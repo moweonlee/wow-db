@@ -31,7 +31,16 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+**WOW-DB Constitution v1.0.0 — 7 Gates:**
+
+- [ ] **I. Dual-Layout**: 새 분석 기능이 Event Table + Behavioral Table 쌍(pair)을 전제로 설계되었는가?
+      Behavioral Table 없이 Funnel/Cohort/Path를 구현하는 경우 Guidance 경고가 포함되어 있는가?
+- [ ] **II. Behavioral Routing**: 쿼리 수정 없이 자동 라우팅이 동작하는가? Fallback 시 오류 없이 처리되는가?
+- [ ] **III. LSM-Tree**: 파티션 경계를 넘는 Compaction이 없는가? WAL 선행 기록이 보장되는가?
+- [ ] **IV. SIMD**: 새 집계/스캔 코드에 AVX2 이상 처리 경로가 있는가? unsafe에 SAFETY 주석이 있는가?
+- [ ] **V. K8s-Native**: QN 로컬 상태 의존성이 없는가? `/health`, `/metrics` 엔드포인트가 있는가?
+- [ ] **VI. MySQL Compat**: MySQL 8.0 클라이언트 비호환 변경이 없는가? 커스텀 DDL은 additive extension인가?
+- [ ] **VII. Storage-Compute**: SN 내부 포맷에 직접 의존하는 CN 코드가 없는가? HDFS에 Kerberos가 적용되었는가?
 
 ## Project Structure
 
