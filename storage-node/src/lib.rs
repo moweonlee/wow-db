@@ -12,5 +12,6 @@ pub mod tiering;
 pub mod columnar;
 pub mod stats_reporter;
 pub mod disk_monitor;
+pub mod startup;
 mod gen;
 pub mod grpc;

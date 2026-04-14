@@ -10,6 +10,7 @@ mod ingestion;
 mod mv_refresh;
 mod analytics;
 mod result_cache;
+mod startup;
 
 use anyhow::Result;
 use axum::{routing::get, Router, Json};

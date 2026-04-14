@@ -1,0 +1,107 @@
+# WOW-DB Helm Chart — default values
+
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# ── Query Node ──────────────────────────────────────────────────────────────
+queryNode:
+  replicaCount: 3
+  image:
+    repository: wowdb/query-node
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    mysql:
+      port: 9030
+      type: LoadBalancer
+    grpc:
+      port: 9011
+      type: ClusterIP
+    raft:
+      port: 9010
+      type: ClusterIP
+    web:
+      port: 8080
+      type: ClusterIP
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+  env:
+    LOG_DIR: "/var/log/wowdb"
+  # QN_PEERS is auto-generated from headless service DNS
+  persistence:
+    enabled: true
+    size: "10Gi"
+    storageClass: ""
+
+# ── Compute Node ────────────────────────────────────────────────────────────
+computeNode:
+  replicaCount: 2
+  image:
+    repository: wowdb/compute-node
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    grpc:
+      port: 9040
+      type: ClusterIP
+  resources:
+    requests:
+      cpu: "1"
+      memory: "2Gi"
+    limits:
+      cpu: "4"
+      memory: "16Gi"
+  env:
+    LOG_DIR: "/var/log/wowdb"
+
+# ── Storage Node ─────────────────────────────────────────────────────────────
+storageNode:
+  replicaCount: 3
+  image:
+    repository: wowdb/storage-node
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    grpc:
+      port: 9060
+      type: ClusterIP
+    http:
+      port: 8040
+      type: ClusterIP
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "2Gi"
+    limits:
+      cpu: "4"
+      memory: "32Gi"
+  persistence:
+    enabled: true
+    size: "500Gi"
+    storageClass: ""
+  env:
+    STORAGE_BACKEND: "native"
+    LOG_DIR: "/data/logs"
+
+# ── Common ───────────────────────────────────────────────────────────────────
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podSecurityContext: {}
+securityContext: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

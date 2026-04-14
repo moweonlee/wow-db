@@ -62,7 +62,8 @@
       "Bash(ls \"D:\\\\projects\\\\wow-db\\\\specs\\\\002-wow-db-srs-v02\\\\tasks\"*)",
       "Bash(chmod +x:*)",
       "Bash(powershell.exe -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(awk -F'[. ;]+' '{passed+=$3; failed+=$5; ignored+=$7} END {print \"Total: \" passed \" passed, \" failed \" failed, \" ignored \" ignored\"}')"
     ]
   }
 }

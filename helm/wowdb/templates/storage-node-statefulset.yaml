@@ -1,0 +1,76 @@
+{{- $fullName := include "wowdb.fullname" . -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullName }}-storage-node
+  labels:
+    {{- include "wowdb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: storage-node
+spec:
+  replicas: {{ .Values.storageNode.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "wowdb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: storage-node
+  serviceName: {{ $fullName }}-storage-node-headless
+  template:
+    metadata:
+      labels:
+        {{- include "wowdb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: storage-node
+    spec:
+      containers:
+        - name: storage-node
+          image: "{{ .Values.storageNode.image.repository }}:{{ .Values.storageNode.image.tag }}"
+          imagePullPolicy: {{ .Values.storageNode.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.storageNode.service.grpc.port }}
+            - name: http
+              containerPort: {{ .Values.storageNode.service.http.port }}
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: GRPC_PORT
+              value: "{{ .Values.storageNode.service.grpc.port }}"
+            - name: HTTP_PORT
+              value: "{{ .Values.storageNode.service.http.port }}"
+            - name: DATA_DIR
+              value: "/data"
+            # QN_PEERS for self-registration
+            - name: QN_PEERS
+              value: >-
+                {{- range $i := until (int .Values.queryNode.replicaCount) -}}
+                {{- if $i }},{{ end -}}
+                {{ $fullName }}-query-node-{{ $i }}.{{ $fullName }}-query-node-headless:{{ $.Values.queryNode.service.grpc.port }}
+                {{- end }}
+            {{- range $k, $v := .Values.storageNode.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.storageNode.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  {{- if .Values.storageNode.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.storageNode.persistence.storageClass }}
+        storageClassName: {{ .Values.storageNode.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.storageNode.persistence.size }}
+  {{- end }}

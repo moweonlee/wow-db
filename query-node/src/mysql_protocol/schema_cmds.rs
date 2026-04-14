@@ -688,6 +688,61 @@ fn extract_from_token(sql: &str, keyword: &str) -> String {
     String::new()
 }
 
+// ── SHOW CLUSTER NODES / SHOW CLUSTER STATUS (T178) ──────────────────────────
+
+/// Handle SHOW CLUSTER [NODES|STATUS] queries.
+/// Returns `None` if the SQL does not match a cluster command.
+pub async fn handle_cluster_show(
+    sql:      &str,
+    topology: &crate::meta::cluster_topology::ClusterTopologyManager,
+) -> Option<QueryOutput> {
+    let upper = sql.trim().trim_end_matches(';').to_uppercase();
+
+    // SHOW CLUSTER NODES
+    if upper == "SHOW CLUSTER NODES" || upper == "SHOW CLUSTER NODE" || upper == "SHOW CLUSTER" {
+        let nodes = topology.list_nodes().await;
+        let rows = nodes.iter().map(|n| vec![
+            Some(n.node_id.clone()),
+            Some(n.node_type.to_string()),
+            Some(n.state.to_string()),
+            Some(n.grpc_addr.clone()),
+            Some(n.last_heartbeat.to_rfc3339()),
+        ]).collect();
+        return Some(QueryOutput::Rows {
+            columns: vec![
+                ColumnMeta { name: "node_id".to_string(),        col_type: opensrv_mysql::ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "node_type".to_string(),      col_type: opensrv_mysql::ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "state".to_string(),          col_type: opensrv_mysql::ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "grpc_addr".to_string(),      col_type: opensrv_mysql::ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "last_heartbeat".to_string(), col_type: opensrv_mysql::ColumnType::MYSQL_TYPE_DATETIME },
+            ],
+            rows,
+        });
+    }
+
+    // SHOW CLUSTER STATUS
+    if upper == "SHOW CLUSTER STATUS" {
+        let s = topology.topology_summary().await;
+        return Some(QueryOutput::Rows {
+            columns: vec![
+                ColumnMeta { name: "metric".to_string(), col_type: opensrv_mysql::ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "value".to_string(),  col_type: opensrv_mysql::ColumnType::MYSQL_TYPE_LONGLONG },
+            ],
+            rows: vec![
+                vec![Some("total_nodes".to_string()),    Some(s.total.to_string())],
+                vec![Some("query_nodes".to_string()),    Some(s.query_nodes.to_string())],
+                vec![Some("compute_nodes".to_string()),  Some(s.compute_nodes.to_string())],
+                vec![Some("storage_nodes".to_string()),  Some(s.storage_nodes.to_string())],
+                vec![Some("active_nodes".to_string()),   Some(s.active_count.to_string())],
+                vec![Some("readonly_nodes".to_string()), Some(s.readonly_count.to_string())],
+                vec![Some("draining_nodes".to_string()), Some(s.draining_count.to_string())],
+            ],
+        });
+    }
+
+    None
+}
+
 // ─── 단위 테스트 ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -843,5 +898,60 @@ mod tests {
         assert_eq!(extract_from_token("SHOW PARTITIONS FROM page_events", "FROM"), "page_events");
         assert_eq!(extract_from_token("SHOW SHARDS FROM page_events PARTITION 'abc'", "PARTITION"), "abc");
         assert_eq!(extract_from_token("", "FROM"), "");
+    }
+
+    // ── T178: SHOW CLUSTER NODES / SHOW CLUSTER STATUS ─────────────────────
+
+    #[tokio::test]
+    async fn test_show_cluster_nodes_empty() {
+        use crate::meta::cluster_topology::ClusterTopologyManager;
+        let topology = ClusterTopologyManager::new();
+        let out = handle_cluster_show("SHOW CLUSTER NODES", &topology).await.unwrap();
+        match out {
+            QueryOutput::Rows { columns, rows } => {
+                assert_eq!(columns.len(), 5);
+                assert!(rows.is_empty());
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_show_cluster_nodes_with_data() {
+        use crate::meta::cluster_topology::ClusterTopologyManager;
+        use shared::cluster::{NodeInfo, NodeType};
+        let topology = ClusterTopologyManager::new();
+        topology.register_node(NodeInfo::new("sn-1", NodeType::StorageNode, "127.0.0.1:9060"))
+            .await.unwrap();
+        let out = handle_cluster_show("SHOW CLUSTER NODES", &topology).await.unwrap();
+        match out {
+            QueryOutput::Rows { rows, .. } => assert_eq!(rows.len(), 1),
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_show_cluster_status() {
+        use crate::meta::cluster_topology::ClusterTopologyManager;
+        use shared::cluster::{NodeInfo, NodeType};
+        let topology = ClusterTopologyManager::new();
+        topology.register_node(NodeInfo::new("sn-1", NodeType::StorageNode, "127.0.0.1:9060"))
+            .await.unwrap();
+        let out = handle_cluster_show("SHOW CLUSTER STATUS", &topology).await.unwrap();
+        match out {
+            QueryOutput::Rows { rows, .. } => {
+                // Should have 7 status metrics
+                assert_eq!(rows.len(), 7);
+            }
+            _ => panic!("Expected Rows"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_non_cluster_sql_returns_none() {
+        use crate::meta::cluster_topology::ClusterTopologyManager;
+        let topology = ClusterTopologyManager::new();
+        assert!(handle_cluster_show("SELECT 1", &topology).await.is_none());
+        assert!(handle_cluster_show("SHOW TABLES", &topology).await.is_none());
     }
 }

@@ -3,6 +3,10 @@ name        = "query-node"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "query_node"
+path = "src/lib.rs"
+
 [[bin]]
 name = "query-node"
 path = "src/main.rs"

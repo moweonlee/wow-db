@@ -11,6 +11,8 @@ x-sn-common: &sn-common
     STORAGE_BACKEND: "native"
     GRPC_PORT: "9060"
     HTTP_PORT: "8040"
+    # QN_PEERS: SN self-registers with any available QN on startup
+    QN_PEERS: "qn-1:9011,qn-2:9011,qn-3:9011"
   restart: unless-stopped
 
 x-cn-common: &cn-common
@@ -22,6 +24,8 @@ x-cn-common: &cn-common
     RUST_LOG: "compute_node=info,shared=info"
     GRPC_PORT: "9040"
     STORAGE_NODES: "sn-1:9060,sn-2:9060,sn-3:9060"
+    # QN_PEERS: CN self-registers with any available QN on startup
+    QN_PEERS: "qn-1:9011,qn-2:9011,qn-3:9011"
   restart: unless-stopped
 
 x-qn-common: &qn-common

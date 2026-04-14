@@ -519,14 +519,14 @@ Phase 2 완료 후:
 
 ### 런타임 지원 (미구현 — 바이너리 --config 파라미터 필요)
 
-- [ ] T200 `query-node/src/main.rs` 수정 (CLI 인수 파싱 — `--config <path>` 지원, 환경변수 오버라이드: NODE_ID/RAFT_PEERS/COMPUTE_NODES/QN_PEERS)
-- [ ] T201 [P] `compute-node/src/main.rs` 수정 (CLI 인수 파싱 — `--config <path>` 지원, 환경변수 오버라이드: NODE_ID/STORAGE_NODES)
-- [ ] T202 [P] `storage-node/src/main.rs` 수정 (CLI 인수 파싱 — `--config <path>` 지원, 환경변수 오버라이드: NODE_ID/DATA_DIR)
+- [X] T200 `query-node/src/main.rs` 수정 (CLI 인수 파싱 — `--config <path>` 지원, 환경변수 오버라이드: NODE_ID/RAFT_PEERS/COMPUTE_NODES/QN_PEERS)
+- [X] T201 [P] `compute-node/src/main.rs` 수정 (CLI 인수 파싱 — `--config <path>` 지원, 환경변수 오버라이드: NODE_ID/STORAGE_NODES)
+- [X] T202 [P] `storage-node/src/main.rs` 수정 (CLI 인수 파싱 — `--config <path>` 지원, 환경변수 오버라이드: NODE_ID/DATA_DIR)
 
 ### 검증 테스트
 
-- [ ] T203 `scripts/dev/run-local.sh` 검증 (기동 → MySQL 접속 → `SHOW TABLES` → `CREATE TABLE` → `INSERT` → `SELECT COUNT(*)` 전체 플로우 5초 이내 완료)
-- [ ] T204 [P] `scripts/dev/reset-local.sh` + `run-local.sh` 반복 검증 (초기화 후 재기동 3회 연속 정상 동작)
+- [X] T203 `scripts/dev/run-local.sh` 검증 (기동 → MySQL 접속 → `SHOW TABLES` → `CREATE TABLE` → `INSERT` → `SELECT COUNT(*)` 전체 플로우 5초 이내 완료)
+- [X] T204 [P] `scripts/dev/reset-local.sh` + `run-local.sh` 반복 검증 (초기화 후 재기동 3회 연속 정상 동작)
 
 **체크포인트**: `./scripts/dev/run-local.sh --no-build` 실행 후 5초 이내 `mysql -h 127.0.0.1 -P 9030` 접속 성공, `CREATE TABLE` DDL 실행 가능
 
@@ -582,43 +582,43 @@ Phase 2 완료 후:
 
 ### 노드 상태 모델 & Raft 토폴로지
 
-- [ ] T172 [P] `shared/src/cluster.rs` 구현 (NodeInfo/NodeType(QN/CN/SN)/NodeState(Active/Readonly/Draining) 타입 정의, 상태 전환 규칙: Active→Readonly→Draining 단방향, NodeState::can_transition_to() 검증, Raft KV 경로: /cluster/nodes/{node_id})
-- [ ] T173 `query-node/src/meta/cluster_topology.rs` 구현 (ClusterTopologyManager — register_node/update_node_state/deregister_node/list_nodes/get_node/list_nodes_by_type/list_active_nodes_by_type 메서드, Raft KV CRUD)
-- [ ] T174 `proto/cluster.proto` 신규 + `query-node/src/rpc/cluster_service.rs` 구현 (ClusterService gRPC: RegisterNode/UpdateNodeState/GetClusterTopology/GetRebalanceStatus RPC, 포트 9011, SN 등록 시 RebalanceTrigger 채널 이벤트 전송)
-- [ ] T175 `compute-node/src/startup.rs`, `storage-node/src/startup.rs` 수정 (기동 시 자가 등록 — 환경변수 QN_PEERS 파싱, 첫 응답 QN에 RegisterNode gRPC 호출, NODE_ID 환경변수 사용, 헬스체크 대기)
+- [X] T172 [P] `shared/src/cluster.rs` 구현 (NodeInfo/NodeType(QN/CN/SN)/NodeState(Active/Readonly/Draining) 타입 정의, 상태 전환 규칙: Active→Readonly→Draining 단방향, NodeState::can_transition_to() 검증, Raft KV 경로: /cluster/nodes/{node_id})
+- [X] T173 `query-node/src/meta/cluster_topology.rs` 구현 (ClusterTopologyManager — register_node/update_node_state/deregister_node/list_nodes/get_node/list_nodes_by_type/list_active_nodes_by_type 메서드, Raft KV CRUD)
+- [X] T174 `proto/cluster.proto` 신규 + `query-node/src/rpc/cluster_service.rs` 구현 (ClusterService gRPC: RegisterNode/UpdateNodeState/GetClusterTopology/GetRebalanceStatus RPC, 포트 9011, SN 등록 시 RebalanceTrigger 채널 이벤트 전송)
+- [X] T175 `compute-node/src/startup.rs`, `storage-node/src/startup.rs` 수정 (기동 시 자가 등록 — 환경변수 QN_PEERS 파싱, 첫 응답 QN에 RegisterNode gRPC 호출, NODE_ID 환경변수 사용, 헬스체크 대기)
 
 ### SQL 명령 파서 & 핸들러
 
-- [ ] T176 `query-node/src/sql_parser/cluster_mgmt.rs` 구현 (ALTER CLUSTER 파서 — JOIN `<type> '<addr>:<port>'`/DRAIN `'<node_id>'`/DISMISS `'<node_id>'` [FORCE]/REBALANCE 문법, ClusterCommand AST 열거형)
-- [ ] T177 `query-node/src/mysql_protocol/handler.rs` 수정 + `query-node/src/meta/cluster_cmd.rs` 구현 (ClusterCommandExecutor — execute_join/execute_drain/execute_dismiss/execute_rebalance, DISMISS FORCE 시 /cluster/shards/{shard_id}/* Raft KV 일괄 삭제, ER_NODE_HAS_DATA(3001)/ER_RAFT_QUORUM_LOSS(3002)/ER_NODE_NOT_FOUND(3004) 오류 처리)
-- [ ] T178 `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW CLUSTER NODES/STATUS/REBALANCE 핸들러 — NODES: node_id/type/address/state/shards/joined_at, STATUS: metric/value, REBALANCE: job_id/type/from_node/to_node/shards_done/eta_secs)
+- [X] T176 `query-node/src/sql_parser/cluster_mgmt.rs` 구현 (ALTER CLUSTER 파서 — JOIN `<type> '<addr>:<port>'`/DRAIN `'<node_id>'`/DISMISS `'<node_id>'` [FORCE]/REBALANCE 문법, ClusterCommand AST 열거형)
+- [X] T177 `query-node/src/mysql_protocol/handler.rs` 수정 + `query-node/src/meta/cluster_cmd.rs` 구현 (ClusterCommandExecutor — execute_join/execute_drain/execute_dismiss/execute_rebalance, DISMISS FORCE 시 /cluster/shards/{shard_id}/* Raft KV 일괄 삭제, ER_NODE_HAS_DATA(3001)/ER_RAFT_QUORUM_LOSS(3002)/ER_NODE_NOT_FOUND(3004) 오류 처리)
+- [X] T178 `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW CLUSTER NODES/STATUS/REBALANCE 핸들러 — NODES: node_id/type/address/state/shards/joined_at, STATUS: metric/value, REBALANCE: job_id/type/from_node/to_node/shards_done/eta_secs)
 
 ### INSERT 라우팅 NodeState 필터
 
-- [ ] T179 `query-node/src/planner/shard_placement.rs` 구현 (ShardPlacement — select_write_nodes: ACTIVE 상태 SN만 반환, select_read_nodes: ACTIVE+READONLY+DRAINING 허용, DRAIN 명령 후 최대 100ms 이내 INSERT 라우팅 제외 보장)
+- [X] T179 `query-node/src/planner/shard_placement.rs` 구현 (ShardPlacement — select_write_nodes: ACTIVE 상태 SN만 반환, select_read_nodes: ACTIVE+READONLY+DRAINING 허용, DRAIN 명령 후 최대 100ms 이내 INSERT 라우팅 제외 보장)
 
 ### Shard Rebalancer (백그라운드)
 
-- [ ] T180 `query-node/src/meta/rebalance/planner.rs` 구현 (RebalancePlanner — total_shards/active_sn_count 균등 분산 계획, 최소 이전 횟수 greedy 알고리즘, 동시 Rebalance 시 계획 병합)
-- [ ] T181 `query-node/src/meta/rebalance/migrator.rs` 구현 (ShardMigrator — execute_plan 비동기 실행, 단일 Shard 이전 4단계: 빈Shard생성→SSTable스트리밍복제→Raft KV location cut-over(원자적)→삭제지시, proto/cluster.proto에 ShardService: CreateShard/CopyShard/DeleteShard RPC 추가)
-- [ ] T182 `query-node/src/meta/rebalance/coordinator.rs` 구현 (RebalanceCoordinator — on_node_joined/on_node_draining 이벤트 처리, get_job_status, cluster.rebalance_concurrency 설정 기반 동시 실행 제한, 백그라운드 tokio task로 실행)
+- [X] T180 `query-node/src/meta/rebalance/planner.rs` 구현 (RebalancePlanner — total_shards/active_sn_count 균등 분산 계획, 최소 이전 횟수 greedy 알고리즘, 동시 Rebalance 시 계획 병합)
+- [X] T181 `query-node/src/meta/rebalance/migrator.rs` 구현 (ShardMigrator — execute_plan 비동기 실행, 단일 Shard 이전 4단계: 빈Shard생성→SSTable스트리밍복제→Raft KV location cut-over(원자적)→삭제지시, proto/cluster.proto에 ShardService: CreateShard/CopyShard/DeleteShard RPC 추가)
+- [X] T182 `query-node/src/meta/rebalance/coordinator.rs` 구현 (RebalanceCoordinator — on_node_joined/on_node_draining 이벤트 처리, get_job_status, cluster.rebalance_concurrency 설정 기반 동시 실행 제한, 백그라운드 tokio task로 실행)
 
 ### SN 프로토콜 (Shard 복제)
 
-- [ ] T183 `storage-node/src/rpc/shard_service.rs` 구현 (ShardService gRPC 서버 — CreateShard(빈 Shard 디렉토리 생성)/CopyShard(SSTable 파일 스트리밍)/DeleteShard(Raft 확인 후 디렉토리 삭제) 구현)
+- [X] T183 `storage-node/src/rpc/shard_service.rs` 구현 (ShardService gRPC 서버 — CreateShard(빈 Shard 디렉토리 생성)/CopyShard(SSTable 파일 스트리밍)/DeleteShard(Raft 확인 후 디렉토리 삭제) 구현)
 
 ### Kubernetes / Helm 통합
 
-- [ ] T184 `helm/wowdb/` 신규 구현 (Helm Chart 기본 구조 — Chart.yaml, values.yaml, templates/: configmap.yaml/qn-statefulset.yaml/qn-headless-svc.yaml/qn-svc.yaml/cn-deployment.yaml/cn-hpa.yaml/sn-statefulset.yaml/_helpers.tpl, ConfigMap 필수 키: qn.peers(콤마구분 DNS목록)/cluster.rebalance_enabled, `helm lint` 통과)
-- [ ] T185 `docker/docker-compose.yml`, `docker/docker-compose.dev.yml` 수정 + `docker/Dockerfile.compute-node`, `docker/Dockerfile.storage-node` 수정 (QN_PEERS 환경변수 추가 및 ENV 문서화, `docker compose up` 후 SHOW CLUSTER NODES 모든 노드 ACTIVE 확인 가능)
+- [X] T184 `helm/wowdb/` 신규 구현 (Helm Chart 기본 구조 — Chart.yaml, values.yaml, templates/: configmap.yaml/qn-statefulset.yaml/qn-headless-svc.yaml/qn-svc.yaml/cn-deployment.yaml/cn-hpa.yaml/sn-statefulset.yaml/_helpers.tpl, ConfigMap 필수 키: qn.peers(콤마구분 DNS목록)/cluster.rebalance_enabled, `helm lint` 통과)
+- [X] T185 `docker/docker-compose.yml`, `docker/docker-compose.dev.yml` 수정 + `docker/Dockerfile.compute-node`, `docker/Dockerfile.storage-node` 수정 (QN_PEERS 환경변수 추가 및 ENV 문서화, `docker compose up` 후 SHOW CLUSTER NODES 모든 노드 ACTIVE 확인 가능)
 
 ### 통합 테스트
 
-- [ ] T186 `integration-tests/src/cluster_management.rs` 구현 (CM-G-001: SN JOIN 후 Rebalance 완료 엔드투엔드 — 3SN기동→4번째SN JOIN→Rebalance진행중확인→완료→Shard균등분포±1)
-- [ ] T187 `integration-tests/src/cluster_management.rs` 구현 (CM-G-002: DRAIN→DISMISS 노드 제거 — 4SN+10k행INSERT→DRAIN→INSERT라우팅제외확인→SELECT가능확인→DRAIN완료→DISMISS→데이터손실없음)
-- [ ] T188 `integration-tests/src/cluster_management.rs` 구현 (CM-G-003: FORCE DISMISS 데이터 삭제 — 데이터있는SN DISMISS without FORCE→ER_NODE_HAS_DATA, FORCE→성공→Raft KV Shard항목삭제확인)
-- [ ] T189 `integration-tests/src/cluster_management.rs` 구현 (CM-G-004: CN 추가/제거 — CN JOIN 후 쿼리 Fragment 라우팅 포함 확인, CN DRAIN 후 새 쿼리 라우팅 제외+진행중쿼리완료)
-- [ ] T190 `integration-tests/src/cluster_management.rs` 구현 (CM-G-005: QN Raft Quorum 보호 — 3QN 클러스터 2번째QN DRAIN시도→ER_RAFT_QUORUM_LOSS, 1번째QN DRAIN 성공 후 2번째 DRAIN→오류)
+- [X] T186 `integration-tests/src/cluster_management.rs` 구현 (CM-G-001: SN JOIN 후 Rebalance 완료 엔드투엔드 — 3SN기동→4번째SN JOIN→Rebalance진행중확인→완료→Shard균등분포±1)
+- [X] T187 `integration-tests/src/cluster_management.rs` 구현 (CM-G-002: DRAIN→DISMISS 노드 제거 — 4SN+10k행INSERT→DRAIN→INSERT라우팅제외확인→SELECT가능확인→DRAIN완료→DISMISS→데이터손실없음)
+- [X] T188 `integration-tests/src/cluster_management.rs` 구현 (CM-G-003: FORCE DISMISS 데이터 삭제 — 데이터있는SN DISMISS without FORCE→ER_NODE_HAS_DATA, FORCE→성공→Raft KV Shard항목삭제확인)
+- [X] T189 `integration-tests/src/cluster_management.rs` 구현 (CM-G-004: CN 추가/제거 — CN JOIN 후 쿼리 Fragment 라우팅 포함 확인, CN DRAIN 후 새 쿼리 라우팅 제외+진행중쿼리완료)
+- [X] T190 `integration-tests/src/cluster_management.rs` 구현 (CM-G-005: QN Raft Quorum 보호 — 3QN 클러스터 2번째QN DRAIN시도→ER_RAFT_QUORUM_LOSS, 1번째QN DRAIN 성공 후 2번째 DRAIN→오류)
 
 **체크포인트**: `docker compose up` 후 `SHOW CLUSTER NODES` 모든 노드 ACTIVE 확인, ALTER CLUSTER JOIN/DRAIN/DISMISS 명령 동작, Rebalance 완료 후 `SHOW CLUSTER REBALANCE` 빈 결과, Shard 균등 분산 확인
 

@@ -1429,6 +1429,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "mysql_async",
+ "query-node",
  "rdkafka",
  "reqwest",
  "serde",

@@ -1,6 +1,8 @@
 // WOW-DB Integration Test Helpers
 // Docker Compose 클러스터와 통신하는 테스트 유틸리티
 
+pub mod cluster_management;
+
 /// 기본 QN MySQL 주소
 pub const QN_MYSQL_ADDR: &str = "mysql://admin@127.0.0.1:9030/default";
 /// 기본 QN Web UI 주소

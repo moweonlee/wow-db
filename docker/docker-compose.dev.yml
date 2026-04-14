@@ -51,6 +51,8 @@ services:
       GRPC_PORT: "9060"
       HTTP_PORT: "8040"
       DATA_DIR: "/data"
+      # QN_PEERS: self-register with QN on startup (dev: single QN)
+      QN_PEERS: "qn-1:9011"
     develop:
       watch:
         - action: rebuild
@@ -73,6 +75,8 @@ services:
       RUST_LOG: "compute_node=debug,shared=debug"
       GRPC_PORT: "9040"
       STORAGE_NODES: "sn-1:9060"
+      # QN_PEERS: self-register with QN on startup (dev: single QN)
+      QN_PEERS: "qn-1:9011"
     depends_on:
       - sn-1
     develop:

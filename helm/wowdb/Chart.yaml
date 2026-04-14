@@ -1,0 +1,14 @@
+apiVersion: v2
+name: wowdb
+description: WOW-DB — MySQL-compatible OLAP database (Query Node / Compute Node / Storage Node)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - database
+  - olap
+  - analytics
+  - mysql
+maintainers:
+  - name: WOW-DB Contributors
+    url: https://github.com/wow-db/wow-db

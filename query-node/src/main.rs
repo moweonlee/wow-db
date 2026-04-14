@@ -17,6 +17,7 @@ mod monitoring;
 mod resource_group;
 mod executor;
 mod disk_monitor;
+mod rpc;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
