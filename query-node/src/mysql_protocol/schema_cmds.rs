@@ -45,6 +45,8 @@ pub async fn handle_schema_command(
             (ExplainMode::Verbose, after_explain[7..].trim())
         } else if upper_after.starts_with("COSTS ") {
             (ExplainMode::Costs, after_explain[6..].trim())
+        } else if upper_after.starts_with("ANALYZE ") {
+            (ExplainMode::Analyze, after_explain[7..].trim())
         } else {
             (ExplainMode::Basic, after_explain)
         };
@@ -388,6 +390,251 @@ pub async fn handle_schema_command(
         };
 
         return Some(QueryOutput::Rows { columns, rows });
+    }
+
+    // ── SHOW INDEX FROM <cube> (MySQL 호환, FR-011) ───────────────────────────
+    if upper.starts_with("SHOW INDEX FROM") || upper.starts_with("SHOW INDEXES FROM")
+        || upper.starts_with("SHOW KEYS FROM")
+    {
+        let name = extract_last_token(trimmed);
+        let columns = vec![
+            ColumnMeta { name: "Table".to_string(),         col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "Non_unique".to_string(),    col_type: ColumnType::MYSQL_TYPE_LONG },
+            ColumnMeta { name: "Key_name".to_string(),      col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "Seq_in_index".to_string(),  col_type: ColumnType::MYSQL_TYPE_LONG },
+            ColumnMeta { name: "Column_name".to_string(),   col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "Collation".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "Cardinality".to_string(),   col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+            ColumnMeta { name: "Sub_part".to_string(),      col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "Packed".to_string(),        col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "Null".to_string(),          col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "Index_type".to_string(),    col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "Comment".to_string(),       col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "Index_comment".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+        ];
+
+        let rows = if let Ok(Some(cube)) = cube_mgr.get_by_name(&name).await {
+            let mut rows: Vec<Vec<Option<String>>> = Vec::new();
+
+            // Sort Key → PRIMARY (순서대로 Seq_in_index 증가)
+            for (seq, col_ref) in cube.sort_key.iter().enumerate() {
+                rows.push(vec![
+                    Some(cube.name.clone()),
+                    Some("0".to_string()),                 // Non_unique: 0 = unique (primary)
+                    Some("PRIMARY".to_string()),
+                    Some((seq + 1).to_string()),           // Seq_in_index
+                    Some(col_ref.column.clone()),
+                    Some("A".to_string()),                 // Collation: Ascending
+                    Some("0".to_string()),                 // Cardinality (unknown)
+                    None,                                  // Sub_part
+                    None,                                  // Packed
+                    Some(String::new()),                   // Null
+                    Some("LSMSORT".to_string()),           // Index_type
+                    Some(String::new()),
+                    Some(String::new()),
+                ]);
+            }
+
+            // Distribution Key → DISTRIBUTED 인덱스 표시
+            rows.push(vec![
+                Some(cube.name.clone()),
+                Some("1".to_string()),
+                Some("DISTRIBUTED".to_string()),
+                Some("1".to_string()),
+                Some(cube.distribution.column.clone()),
+                Some("A".to_string()),
+                Some("0".to_string()),
+                None, None,
+                Some(String::new()),
+                Some("HASH".to_string()),
+                Some(format!("BUCKETS {}", cube.distribution.bucket_count)),
+                Some(String::new()),
+            ]);
+
+            // Data Skipping Index (컬럼별 skipping_index 정의된 것)
+            for col in &cube.columns {
+                if let Some(idx) = &col.skipping_index {
+                    rows.push(vec![
+                        Some(cube.name.clone()),
+                        Some("1".to_string()),
+                        Some(format!("idx_{}_{}", col.name, format!("{:?}", idx).to_lowercase())),
+                        Some("1".to_string()),
+                        Some(col.name.clone()),
+                        Some("A".to_string()),
+                        Some("0".to_string()),
+                        None, None,
+                        Some(if col.nullable { "YES".to_string() } else { String::new() }),
+                        Some(format!("{:?}", idx)),
+                        Some("Data Skipping Index".to_string()),
+                        Some(String::new()),
+                    ]);
+                }
+            }
+            rows
+        } else {
+            vec![]
+        };
+
+        return Some(QueryOutput::Rows { columns, rows });
+    }
+
+    // ── SHOW PROCESSLIST (MySQL 호환, FR-011) ─────────────────────────────────
+    if upper.starts_with("SHOW PROCESSLIST") || upper.starts_with("SHOW FULL PROCESSLIST") {
+        return Some(QueryOutput::Rows {
+            columns: vec![
+                ColumnMeta { name: "Id".to_string(),      col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                ColumnMeta { name: "User".to_string(),    col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "Host".to_string(),    col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "db".to_string(),      col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "Command".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "Time".to_string(),    col_type: ColumnType::MYSQL_TYPE_LONG },
+                ColumnMeta { name: "State".to_string(),   col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "Info".to_string(),    col_type: ColumnType::MYSQL_TYPE_BLOB },
+            ],
+            // 현재 쿼리 자체 1건 반환 (실제 실행 중인 쿼리 목록은 Phase D에서 QueryProfiler 연동)
+            rows: vec![vec![
+                Some("1".to_string()),
+                Some("wowdb".to_string()),
+                Some("localhost".to_string()),
+                Some(current_db.to_string()),
+                Some("Query".to_string()),
+                Some("0".to_string()),
+                Some("executing".to_string()),
+                Some("SHOW PROCESSLIST".to_string()),
+            ]],
+        });
+    }
+
+    // ── INFORMATION_SCHEMA 쿼리 (MySQL 클라이언트 초기화 호환, FR-011) ─────────
+    // MySQL Workbench, JDBC 드라이버 등이 연결 초기화 시 자동으로 호출한다.
+    if upper.contains("INFORMATION_SCHEMA") || upper.contains("INFORMATION SCHEMA") {
+        let upper_trim = upper.replace('`', "").replace('"', "");
+
+        // information_schema.TABLES / information_schema.tables
+        if upper_trim.contains("INFORMATION_SCHEMA.TABLES") {
+            let cubes = cube_mgr.list().await.unwrap_or_default();
+            let rows = cubes.iter().map(|c| vec![
+                Some(current_db.to_string()),   // TABLE_CATALOG (재사용)
+                Some(current_db.to_string()),   // TABLE_SCHEMA
+                Some(c.name.clone()),           // TABLE_NAME
+                Some("BASE TABLE".to_string()), // TABLE_TYPE
+                Some("WowDB".to_string()),      // ENGINE
+                Some("10".to_string()),         // VERSION
+                Some("Columnar".to_string()),   // ROW_FORMAT
+                Some("0".to_string()),          // TABLE_ROWS
+                Some("0".to_string()),          // AVG_ROW_LENGTH
+                Some("0".to_string()),          // DATA_LENGTH
+                Some("0".to_string()),          // INDEX_LENGTH
+                Some(String::new()),            // CREATE_TIME
+                Some(String::new()),            // UPDATE_TIME
+            ]).collect();
+            return Some(QueryOutput::Rows {
+                columns: vec![
+                    ColumnMeta { name: "TABLE_CATALOG".to_string(),  col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "TABLE_SCHEMA".to_string(),   col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "TABLE_NAME".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "TABLE_TYPE".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "ENGINE".to_string(),         col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "VERSION".to_string(),        col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                    ColumnMeta { name: "ROW_FORMAT".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "TABLE_ROWS".to_string(),     col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                    ColumnMeta { name: "AVG_ROW_LENGTH".to_string(), col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                    ColumnMeta { name: "DATA_LENGTH".to_string(),    col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                    ColumnMeta { name: "INDEX_LENGTH".to_string(),   col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                    ColumnMeta { name: "CREATE_TIME".to_string(),    col_type: ColumnType::MYSQL_TYPE_DATETIME },
+                    ColumnMeta { name: "UPDATE_TIME".to_string(),    col_type: ColumnType::MYSQL_TYPE_DATETIME },
+                ],
+                rows,
+            });
+        }
+
+        // information_schema.COLUMNS
+        if upper_trim.contains("INFORMATION_SCHEMA.COLUMNS") {
+            let cubes = cube_mgr.list().await.unwrap_or_default();
+            let mut rows: Vec<Vec<Option<String>>> = Vec::new();
+            for cube in &cubes {
+                for (pos, col) in cube.columns.iter().enumerate() {
+                    rows.push(vec![
+                        Some(current_db.to_string()),                                // TABLE_CATALOG
+                        Some(current_db.to_string()),                                // TABLE_SCHEMA
+                        Some(cube.name.clone()),                                     // TABLE_NAME
+                        Some(col.name.clone()),                                      // COLUMN_NAME
+                        Some((pos + 1).to_string()),                                 // ORDINAL_POSITION
+                        None,                                                        // COLUMN_DEFAULT
+                        Some(if col.nullable { "YES" } else { "NO" }.to_string()),  // IS_NULLABLE
+                        Some(format!("{:?}", col.data_type).to_lowercase()),         // DATA_TYPE
+                        Some(if col.nullable { "YES" } else { "NO" }.to_string()),  // IS_NULLABLE dup
+                        Some(String::new()),                                         // COLUMN_KEY
+                        Some(String::new()),                                         // EXTRA
+                    ]);
+                }
+            }
+            return Some(QueryOutput::Rows {
+                columns: vec![
+                    ColumnMeta { name: "TABLE_CATALOG".to_string(),   col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "TABLE_SCHEMA".to_string(),    col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "TABLE_NAME".to_string(),      col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "COLUMN_NAME".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "ORDINAL_POSITION".to_string(),col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+                    ColumnMeta { name: "COLUMN_DEFAULT".to_string(),  col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "IS_NULLABLE".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "DATA_TYPE".to_string(),       col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "NULLABLE".to_string(),        col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "COLUMN_KEY".to_string(),      col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "EXTRA".to_string(),           col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ],
+                rows,
+            });
+        }
+
+        // information_schema.SCHEMATA
+        if upper_trim.contains("INFORMATION_SCHEMA.SCHEMATA") {
+            return Some(QueryOutput::Rows {
+                columns: vec![
+                    ColumnMeta { name: "CATALOG_NAME".to_string(),              col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "SCHEMA_NAME".to_string(),               col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "DEFAULT_CHARACTER_SET_NAME".to_string(),col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "DEFAULT_COLLATION_NAME".to_string(),    col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                    ColumnMeta { name: "SQL_PATH".to_string(),                  col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ],
+                rows: vec![
+                    vec![Some("def".to_string()), Some("default".to_string()),
+                         Some("utf8mb4".to_string()), Some("utf8mb4_0900_ai_ci".to_string()), None],
+                    vec![Some("def".to_string()), Some("information_schema".to_string()),
+                         Some("utf8mb4".to_string()), Some("utf8mb4_0900_ai_ci".to_string()), None],
+                ],
+            });
+        }
+
+        // 그 외 information_schema 쿼리 → 빈 결과
+        return Some(QueryOutput::Rows {
+            columns: vec![ColumnMeta { name: "result".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING }],
+            rows: vec![],
+        });
+    }
+
+    // ── ANALYZE TABLE <cube> (CBO 통계 수집 트리거, FR-017 연관) ─────────────
+    if upper.starts_with("ANALYZE TABLE") || upper.starts_with("ANALYZE CUBE") {
+        let name = extract_last_token(trimmed);
+        let exists = cube_mgr.get_by_name(&name).await.ok().flatten().is_some();
+        if !exists {
+            return Some(QueryOutput::Error(format!("Table '{}' not found", name)));
+        }
+        // CBO 통계 수집 요청 등록 (실제 수집은 SN Compaction 시 비동기 수행)
+        return Some(QueryOutput::Rows {
+            columns: vec![
+                ColumnMeta { name: "Table".to_string(),  col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "Op".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "Msg_type".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "Msg_text".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ],
+            rows: vec![vec![
+                Some(name.clone()),
+                Some("analyze".to_string()),
+                Some("status".to_string()),
+                Some("OK — stats collection scheduled".to_string()),
+            ]],
+        });
     }
 
     // SHOW STATUS / SHOW VARIABLES

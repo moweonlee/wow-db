@@ -35,11 +35,11 @@
 - [x] 모든 인수 시나리오 정의됨
   - 6개 User Story 각각에 Given-When-Then 형식의 인수 시나리오가 3~4개씩 명시됨. ✅
 - [x] 엣지 케이스 식별됨
-  - 8개 엣지 케이스 명시: 스키마 불일치 이벤트, SMV 동시 갱신, DN 장애 시 쿼리, TTL 삭제 시점, 버퍼 큐 포화, 중첩 JSON 처리, QN 장애 시 2PC 복구, Kerberos 티켓 만료 처리. ✅
+  - 8개 엣지 케이스 명시: 스키마 불일치 이벤트, Behavioral Table 동시 갱신, DN 장애 시 쿼리, TTL 삭제 시점, 버퍼 큐 포화, 중첩 JSON 처리, QN 장애 시 2PC 복구, Kerberos 티켓 만료 처리. ✅
 - [x] 범위가 명확히 정의됨
   - 가정 사항에서 OLTP 워크로드, GIS 분석, 머신러닝 훈련이 명시적으로 범위 외로 정의됨. ✅
 - [x] 의존성과 가정 사항 식별됨
-  - 10개 가정: 사용자 역할 분류, OLTP 범위 외, GIS/ML 범위 외, HDFS Kerberos 필수, MySQL 8.0 와이어 프로토콜, 데스크톱 브라우저 대상, SMV 사전 조건, 최소 노드 구성, Avro 스키마 레지스트리, Kerberos 자동 갱신. ✅
+  - 10개 가정: 사용자 역할 분류, OLTP 범위 외, GIS/ML 범위 외, HDFS Kerberos 필수, MySQL 8.0 와이어 프로토콜, 데스크톱 브라우저 대상, Behavioral Table 사전 조건(Behavioral Routing 활성화 전제), 최소 노드 구성, Avro 스키마 레지스트리, Kerberos 자동 갱신. ✅
 
 ---
 
@@ -49,7 +49,7 @@
   - 25개 FR 항목이 6개 User Story의 인수 시나리오와 직접 대응됨. ✅
 - [x] 사용자 시나리오가 주요 흐름을 커버함
   - P1: 분석 쿼리(FUNNEL/COHORT/PATH) + 대용량 수집(Kafka/Spark/INSERT)  
-  - P2: Session MV 생성(Web UI) + Cube 스키마 정의 + MySQL 호환성  
+  - P2: Behavioral Table 생성(Web UI 마법사 + Behavioral Guidance) + Cube 스키마 정의 + MySQL 호환성  
   - P3: 클러스터 모니터링 및 Query Profiling  
   - 전체 핵심 사용 흐름 커버. ✅
 - [x] 기능이 성공 기준의 측정 가능한 결과를 충족함

@@ -8,6 +8,7 @@ use std::sync::{
 use bytes::Bytes;
 use crossbeam_skiplist::SkipMap;
 use shared::types::SortKey;
+use tracing::{debug, info, trace};
 
 /// MemTable 기본 임계값: 64 MiB
 pub const DEFAULT_MEMTABLE_THRESHOLD: usize = 64 * 1024 * 1024;
@@ -73,7 +74,16 @@ impl MemTable {
         let row       = MemRow { columns, tx_id, deleted: false };
         self.map.insert(key, row);
         let total = self.size_bytes.fetch_add(row_size, Ordering::Relaxed) + row_size;
-        total >= self.threshold
+        let full = total >= self.threshold;
+        trace!(tx_id, seq, row_size, total_bytes = total, "MemTable row inserted");
+        if full {
+            debug!(
+                size_bytes  = total,
+                threshold   = self.threshold,
+                "MemTable threshold exceeded — flush required"
+            );
+        }
+        full
     }
 
     /// 삭제 마커(Tombstone) 삽입. 반환값이 `true` 이면 임계값 초과
@@ -98,12 +108,18 @@ impl MemTable {
 
     /// MemTable을 Immutable 스냅샷으로 변환 (self 소비)
     pub fn freeze(self) -> ImmutableMemTable {
-        let size = self.size_bytes.load(Ordering::Relaxed);
-        let entries = self
+        let size     = self.size_bytes.load(Ordering::Relaxed);
+        let row_count = self.map.len();
+        let entries   = self
             .map
             .iter()
             .map(|e| (e.key().clone(), e.value().clone()))
             .collect();
+        info!(
+            row_count,
+            size_bytes = size,
+            "MemTable frozen → ImmutableMemTable (pending flush)"
+        );
         ImmutableMemTable { entries, size_bytes: size }
     }
 

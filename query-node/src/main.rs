@@ -31,13 +31,14 @@ use crate::web_ui::server::WebUiState;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // ── 로깅 초기화 ───────────────────────────────────────────────────────────
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "query_node=info,shared=info".into()),
-        )
-        .init();
+    // ── 로깅 초기화 (파일 + 콘솔 듀얼 싱크, 일별 로테이션) ──────────────────
+    let log_dir = std::env::var("LOG_DIR")
+        .unwrap_or_else(|_| "./logs".to_string());
+    let _log_guard = shared::logging::init_logging(
+        "query-node",
+        &log_dir,
+        "query_node=info,shared=info",
+    );
 
     let node_id = std::env::var("NODE_ID").unwrap_or_else(|_| "qn-1".to_string());
     let mysql_port: u16 = std::env::var("MYSQL_PORT")

@@ -50,10 +50,14 @@ PROPERTIES (
 
 ---
 
-## 2. DDL 확장: CREATE SESSION MATERIALIZED VIEW
+## 2. DDL 확장: CREATE SESSION MATERIALIZED VIEW (Behavioral Table 생성)
+
+> **개념**: 이 DDL로 생성되는 테이블을 **Behavioral Table (BT)** 라고 부른다.  
+> Funnel / Cohort / Path 분석에 최적화된 세션 단위 물리 레이아웃.  
+> **Behavioral Routing**: 생성 후 엔진이 자동으로 Behavioral Query를 이 테이블로 라우팅한다.
 
 ```sql
-CREATE SESSION MATERIALIZED VIEW [IF NOT EXISTS] <smv_name>
+CREATE SESSION MATERIALIZED VIEW [IF NOT EXISTS] <bt_name>
 FROM <source_cube>
 USER KEY (<user_key_column>)
 SESSION TIMEOUT <n> (MINUTE | HOUR | SECOND)
@@ -72,12 +76,15 @@ SESSION TIMEOUT 30 MINUTE
 REFRESH EVERY 5 MINUTE;
 ```
 
-**SMV 자동 생성 컬럼:**
+**Behavioral Table 자동 생성 컬럼:**
 - `session_id` VARCHAR(36) — 자동 생성 UUID
 - `session_start` DATETIME — 세션 첫 이벤트 시각
 - `session_end` DATETIME — 세션 마지막 이벤트 시각
-- `event_count` INT — 세션 내 이벤트 수
+- `session_event_count` INT — 세션 내 이벤트 수
+- `event_sequence` ARRAY — 시간 순 이벤트 시퀀스 (Behavioral Routing의 핵심 컬럼)
 - 소스 Cube의 모든 컬럼 (세션 첫 이벤트 값 또는 집계)
+
+> **Behavioral Guidance**: Behavioral Table이 없는 상태에서 FUNNEL_COUNT / COHORT_ANALYSIS / PATH_ANALYSIS 쿼리가 실행되면, 엔진이 자동으로 이 DDL 생성을 권장하고 예상 성능 향상을 안내한다.
 
 ---
 

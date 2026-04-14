@@ -138,13 +138,17 @@ INSERT INTO page_events VALUES
 ('2026-04-12 10:00:30', 'user_002', 'page_view',   '/home',     '{}'),
 ('2026-04-12 10:05:00', 'user_002', 'page_view',   '/products', '{}');
 
--- 3. Session MV 생성
+-- 3. Behavioral Table 생성 (Session MV)
+--    Funnel / Cohort / Path 분석에 최적화된 물리 레이아웃.
+--    생성 후 FUNNEL_COUNT 쿼리는 자동으로 이 테이블을 사용한다 (Behavioral Routing).
 CREATE SESSION MATERIALIZED VIEW page_events_sessions
 FROM page_events
 USER KEY (user_id)
 SESSION TIMEOUT 30 MINUTE;
 
 -- 4. Funnel 분석
+--    FROM page_events 에 쿼리하지만, Behavioral Router가 자동으로
+--    page_events_sessions (Behavioral Table) 을 사용하여 실행한다.
 SELECT FUNNEL_COUNT(
     user_key  => user_id,
     timestamp => event_time,

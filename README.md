@@ -2,7 +2,82 @@
 
 **MySQL-compatible OLAP database purpose-built for web analytics at scale.**
 
-> Process 20 billion+ user events. Query sessions, funnels, cohorts, and paths — all with standard MySQL syntax.
+> Process 20 billion+ user events. Query sessions, funnels, cohorts, and paths — all with standard MySQL syntax.  
+> **The engine automatically selects the optimal physical layout. You always query the base table.**
+
+---
+
+## The #1 Differentiator: Transparent Dual-Layout Query Routing
+
+Most analytics systems force you to choose between two worlds:
+
+- **Event-level tables**: fast for raw counts and time-series aggregations
+- **Session-level materialized views**: fast for funnel, cohort, and path analysis
+
+Choosing wrong costs 4–10× in query latency. Choosing right requires understanding internal storage layout — something analysts shouldn't have to know.
+
+**WOW-DB eliminates this choice entirely.**
+
+WOW-DB maintains two physical data layouts simultaneously and **automatically routes every query to the optimal layout** based on what the query is actually asking for:
+
+```
+You always write:                      WOW-DB automatically executes against:
+──────────────────────────────────────────────────────────────────────────────
+SELECT FUNNEL_COUNT(...)               → page_events_sessions  (Session MV)
+FROM page_events WHERE ...               4–10× faster: pre-computed session
+                                         boundaries, event_sequence arrays
+
+SELECT COHORT_ANALYSIS(...)            → page_events_sessions  (Session MV)
+FROM page_events WHERE ...               No per-user regrouping needed
+
+SELECT PATH_ANALYSIS(...)              → page_events_sessions  (Session MV)
+FROM page_events WHERE ...               event_sequence already ordered
+
+SELECT COUNT(*) FROM page_events       → page_events           (Event Table)
+WHERE DATE(event_time) = YESTERDAY       Simple event rollup, no session needed
+
+SELECT event_name, COUNT(*)            → page_events           (Event Table)
+FROM page_events GROUP BY event_name     Aggregation over event types
+```
+
+The routing decision lives entirely inside the query optimizer — no hints, no table aliasing, no manual rewrites. The analyst writes `FROM page_events` always, and the engine figures out the rest.
+
+### How It Works
+
+WOW-DB runs a **SMV Rewrite Pass** immediately after logical planning:
+
+```
+SQL → AST → LogicalPlan
+                 ↓
+        [SMV Rewrite Pass]          ← scans for FUNNEL_COUNT / COHORT_ANALYSIS /
+                 │                     PATH_ANALYSIS / session_* column refs
+          Pattern A (session)
+                 │ YES
+                 ↓
+          CBO cost comparison:
+          C(event_table) vs C(session_mv)
+                 │
+          C_smv < C_event × 0.7?
+                 │ YES
+                 ↓
+          Rewrite FROM page_events → page_events_sessions
+          Map columns: event_time → session_start, etc.
+                 ↓
+          Physical Plan → Execute on Session MV
+```
+
+Fallback is automatic and silent: if the Session MV is stale, being rebuilt, or doesn't cover the query's time range, the engine falls back to the Event Table with no error returned.
+
+### What This Means for Web Analytics
+
+Web analytics has exactly two dominant workloads. WOW-DB handles both without you specifying which one you're doing:
+
+| Workload | What you write | What runs | Speedup |
+|---|---|---|---|
+| **Session behavior** (funnel, cohort, path) | `FROM page_events` | Session MV (pre-computed boundaries) | 4–10× |
+| **Event rollup** (counts, time-series, raw events) | `FROM page_events` | Event Table (columnar scan) | Baseline |
+
+No other analytics database does this automatically. ClickHouse, StarRocks, and BigQuery require you to build, maintain, and explicitly reference materialized views yourself.
 
 ---
 
@@ -48,7 +123,7 @@ FROM page_events
 WHERE event_time >= CURRENT_DATE - 7;
 ```
 
-That is the core motivation: **eliminate the boilerplate so that analysts write what they mean, not how to compute it.**
+And the engine automatically routes this to the Session MV where session boundaries are pre-computed — **you get both simplicity and performance.**
 
 ---
 
@@ -56,8 +131,9 @@ That is the core motivation: **eliminate the boilerplate so that analysts write 
 
 | Capability | ClickHouse | StarRocks | WOW-DB |
 |---|---|---|---|
+| **Transparent dual-layout routing** | ❌ Manual MV reference | ❌ Manual MV reference | ✅ **Auto: engine selects Event vs Session MV** |
 | **MySQL wire protocol** | Partial | Yes | Yes (full 8.0 compat) |
-| **Event → Session automation** | Manual | Manual | `CREATE SESSION MATERIALIZED VIEW` |
+| **Event → Behavioral Table automation** | Manual | Manual | `CREATE SESSION MATERIALIZED VIEW` → Behavioral Table |
 | **Built-in funnel functions** | No | No | `FUNNEL_COUNT()` |
 | **Built-in cohort functions** | No | No | `COHORT_ANALYSIS()` |
 | **Built-in path functions** | No | No | `PATH_ANALYSIS()` |
@@ -197,9 +273,9 @@ LSM-Tree merge is strictly partition-scoped — cross-partition merges never occ
 
 ## Key Features
 
-### Automatic Sessionization
+### Automatic Sessionization → Behavioral Table
 
-Define a session once; WOW-DB maintains it automatically:
+Define it once; WOW-DB maintains the Behavioral Table automatically:
 
 ```sql
 CREATE SESSION MATERIALIZED VIEW page_events_sessions
@@ -208,7 +284,9 @@ USER KEY (user_id)
 SESSION TIMEOUT 30 MINUTE;
 ```
 
-The Session MV receives every INSERT into `page_events` and continuously computes session boundaries, session IDs, and per-session event sequences. No ETL pipeline required.
+The Behavioral Table receives every INSERT into `page_events` and continuously computes session boundaries, session IDs, and per-session event sequences. No ETL pipeline required.
+
+Once created, **all Funnel/Cohort/Path queries on `page_events` automatically route to this Behavioral Table** — you never need to reference it explicitly. If you haven't created one yet, WOW-DB tells you how and estimates the speedup.
 
 ### Web Analytics Functions
 
@@ -377,6 +455,7 @@ specs/              Software Requirements Specification
 
 ## Design Principles
 
+- **Transparent dual-layout routing**: the engine maintains event-level and session-level layouts simultaneously and automatically routes each query to the optimal one — analysts always query the base event table
 - **Write-first**: LSM-Tree accepts high-throughput event streams without sacrificing read performance after Compaction
 - **Column-oriented**: only touched columns are read from disk — multi-billion-row aggregations scan megabytes, not gigabytes
 - **SIMD everywhere**: scan, filter, hash-join, aggregation all use AVX2 or wider; no scalar fallback in hot paths

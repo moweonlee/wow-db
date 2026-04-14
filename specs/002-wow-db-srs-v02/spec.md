@@ -7,6 +7,133 @@
 
 ---
 
+## 핵심 워크플로우: 이벤트 수집 → Behavioral Table → 자동 라우팅 분석
+
+WOW-DB의 가장 중요한 설계 철학은 **두 개의 물리 레이아웃(Event Table / Behavioral Table)을 유지하면서, 엔진이 쿼리 패턴을 분석하여 자동으로 최적 레이아웃을 선택하는 3단계 구조**이다.
+
+웹 분석에서 "cube"란 특정 목적으로 구조화된 데이터 덩어리를 가리키는 일반적인 OLAP 용어이다. WOW-DB는 이 개념을 두 종류의 물리 테이블로 구체화한다.
+
+---
+
+### 1단계: Event Table (이벤트 원시 저장소)
+
+사용자가 발생시키는 모든 행동(page_view, click, purchase 등)을 **시계열 순서 그대로** 저장하는 테이블이다. `CREATE CUBE` DDL로 정의하며, WOW-DB의 스토리지 엔진(LSM-Tree, 컬럼 지향, 파티션 분산)이 그대로 적용된다.
+
+```sql
+CREATE CUBE page_events (
+    event_time   DATETIME     NOT NULL,
+    device_id    VARCHAR(64)  NOT NULL,
+    event_name   VARCHAR(128) ENCODING(DICT),
+    properties   JSON
+)
+PARTITION BY RANGE(event_time) INTERVAL DAY AUTO
+ORDER BY (device_id, event_time)
+DISTRIBUTED BY HASH(device_id) BUCKETS 32;
+```
+
+- **저장 단위**: 개별 이벤트 1건 = 1행
+- **정렬 기준**: `(device_id, event_time)` — 같은 사용자의 이벤트가 물리적으로 인접하게 정렬되어 세션 계산에 유리
+- **분산 기준**: `HASH(device_id)` — 같은 사용자의 이벤트가 동일 Shard에 모임
+- **최적 워크로드**: 날짜별 이벤트 수 집계, 이벤트 유형별 집계, 원시 이벤트 조회
+
+### 2단계: Behavioral Table (행동 분석 파생 테이블)
+
+Event Table로부터 자동 생성되는 **세션 단위 파생 테이블**이다. 동일 사용자(`device_id`)의 연속 이벤트를 시간 간격 기준으로 묶어 세션 ID를 부여하고, 세션 시작/종료 시각, 이벤트 시퀀스를 계산한다.
+
+`CREATE SESSION MATERIALIZED VIEW` DDL로 생성하며, Funnel/Cohort/Path 분석에 최적화된 물리 레이아웃을 갖는다.
+
+```sql
+CREATE SESSION MATERIALIZED VIEW page_events_sessions
+FROM page_events
+USER KEY device_id
+SESSION TIMEOUT 30 MINUTES
+REFRESH INCREMENTAL;
+```
+
+- **자동 생성 컬럼**: `session_id`, `session_start`, `session_end`, `event_sequence`
+- **세션 분리 기준**: 연속 이벤트 간 간격이 `SESSION TIMEOUT`을 초과하면 새 세션
+- **갱신 방식**: `INCREMENTAL` — 신규 이벤트 파티션만 증분 처리
+- **최적 워크로드**: Funnel 전환율, Cohort 재방문율, Path 이동 경로 분석
+
+### 전체 흐름
+
+```
+[ 원시 이벤트 수집 ]
+  Kafka / Spark / MySQL INSERT
+          │
+          ▼
+┌─────────────────────────┐
+│   Event Table (Cube)    │  ← CREATE CUBE
+│  device_id, event_time  │     이벤트 1건 = 1행
+│  event_name, properties │     LSM + 컬럼 지향 저장
+└───────────┬─────────────┘
+            │  CREATE SESSION MATERIALIZED VIEW
+            │  (gap-based 세션 윈도우 자동 계산)
+            ▼
+┌──────────────────────────────────────────┐
+│   Behavioral Table (Session MV)          │  ← 파생 테이블 (BT)
+│  session_id, session_start, session_end  │     세션 단위로 집약
+│  device_id, event_sequence               │     Behavioral Query의 최적 대상
+└───────────┬──────────────────────────────┘
+            │
+     ┌──────┴───────┐────────────────┐
+     ▼              ▼                ▼
+FUNNEL_COUNT  COHORT_ANALYSIS  PATH_ANALYSIS
+(전환율)        (재방문율)         (이벤트 경로)
+```
+
+**두 테이블의 관계 요약**:
+
+| 구분 | Event Table | Behavioral Table |
+|---|---|---|
+| 약어 | ET | BT |
+| 생성 방법 | `CREATE CUBE` | `CREATE SESSION MATERIALIZED VIEW ... FROM <event_table>` |
+| 저장 단위 | 이벤트 1건 = 1행 | 세션 1개 = 1행 |
+| 주요 용도 | 수집, 이벤트 롤업, 원시 이벤트 조회 | Funnel / Cohort / Path 행동 분석 |
+| 데이터 갱신 | INSERT 즉시 | INCREMENTAL 또는 SCHEDULED |
+| 의존 관계 | 독립 | Event Table 없이 생성 불가 |
+| 쿼리 분류 | Event Query | Behavioral Query |
+
+### 3단계: Behavioral Routing — 자동 쿼리 라우팅 (WOW-DB 최대 차별화 요소)
+
+분석가는 항상 `FROM page_events` (Event Table)만 사용한다. WOW-DB의 Behavioral Router가 쿼리 내용을 분석하여 어떤 물리 레이아웃이 최적인지를 **seamlessly** 결정한다.
+
+```
+분석가가 작성하는 것:                     WOW-DB Behavioral Router가 결정:
+──────────────────────────────────────────────────────────────────────────
+SELECT FUNNEL_COUNT(...)            →  Behavioral Table 사용
+FROM page_events                       (세션 경계 사전 계산됨, 4–10× 빠름)
+
+SELECT COHORT_ANALYSIS(...)         →  Behavioral Table 사용
+FROM page_events                       (재방문 패턴, BT가 최적)
+
+SELECT event_name, COUNT(*)         →  Event Table 사용
+FROM page_events GROUP BY event_name   (단순 집계, BT 불필요)
+
+SELECT COUNT(*) FROM page_events    →  Event Table 사용
+WHERE DATE(event_time) = YESTERDAY     (시계열 카운트)
+```
+
+**Behavioral Routing 결정 규칙**:
+- `FUNNEL_COUNT`, `COHORT_ANALYSIS`, `PATH_ANALYSIS` 함수 → Behavioral Table 라우팅
+- `session_id`, `session_start`, `session_end`, `event_sequence` 컬럼 참조 → Behavioral Table 라우팅
+- 단순 집계, 이벤트 수 카운트, 원시 이벤트 조회 → Event Table 유지
+- Behavioral Table이 없거나 갱신 지연 상태 → Event Table로 자동 Fallback + Behavioral Guidance 힌트
+
+**Behavioral Guidance** — Behavioral Table이 없을 때, 시스템이 자동으로 생성을 권장한다:
+```
+Warning: No Behavioral Table found for 'page_events'.
+Query took 4,200ms. Estimated 420ms with Behavioral Table.
+Suggestion: CREATE SESSION MATERIALIZED VIEW page_events_sessions
+            FROM page_events USER KEY device_id SESSION TIMEOUT 30 MINUTE;
+```
+
+웹 분석에서 Funnel/Cohort/Path는 필수 워크로드이므로, WOW-DB는 자연스럽게 Behavioral Table 생성을 유도한다. 한번 생성하면 이후 모든 Behavioral Query가 자동으로 최적 레이아웃을 사용한다.
+
+상세 설계: `specs/002-wow-db-srs-v02/design/query-routing-smv.md`
+
+---
+
 ## 사용자 시나리오 및 테스트 *(필수)*
 
 <!--
@@ -48,20 +175,21 @@
 
 ---
 
-### 사용자 스토리 3 - Web UI를 통한 세션 뷰 생성 (우선순위: P2)
+### 사용자 스토리 3 - Behavioral Table 생성 유도 및 Web UI 마법사 (우선순위: P2)
 
-복잡한 SQL을 작성하기 어려운 데이터 분석가는 Web UI 마법사를 이용해 이벤트 데이터를 사용자·시간 근접성 기준으로 그룹화한 세션 뷰를 만들어야 한다.
+복잡한 SQL을 작성하기 어려운 데이터 분석가는 Web UI 마법사를 이용해 Event Table로부터 Behavioral Table을 생성해야 한다. 또한 시스템이 첫 Behavioral Query 실행 시 자동으로 Behavioral Table 생성을 유도해야 한다.
 
-**이 우선순위인 이유**: 자동 세션화는 WOW-DB의 핵심 차별화 요소이다. Cube 생성(P1)에 의존하므로 P2이다.
+**이 우선순위인 이유**: Behavioral Table은 WOW-DB의 핵심 차별화 요소이며, 웹 분석에서 Funnel/Cohort/Path를 올바르게 실행하기 위한 필수 레이아웃이다. Event Table(P1) 생성에 의존하므로 P2이다.
 
-**독립 테스트**: Web UI에서 Cube를 생성하고 Session MV 마법사를 실행하여 User Key와 타임아웃을 선택한 뒤, 결과 뷰에 세션 ID·세션 시작/종료 시각·이벤트 시퀀스가 포함되는지 확인하면 독립적으로 검증할 수 있다.
+**독립 테스트**: (1) 첫 FUNNEL_COUNT 쿼리 실행 시 Behavioral Guidance 힌트가 표시되는지, (2) Web UI 마법사로 Behavioral Table을 생성 후 동일 쿼리가 자동으로 Behavioral Table을 사용하는지 EXPLAIN으로 확인하면 독립적으로 검증할 수 있다.
 
 **인수 시나리오**:
 
-1. **Given** Cube가 생성된 상태, **When** 분석가가 Web UI에서 "세션 뷰 생성"을 클릭하면, **Then** 시스템이 User Key 컬럼(드롭다운) 선택과 Session Timeout 값을 안내하는 마법사를 표시한다.
-2. **Given** 분석가가 User Key(예: device_id)와 Session Timeout(예: 30분)을 선택하면, **Then** 시스템이 변경을 실행하기 전에 세션 뷰 정의의 DDL 미리보기를 표시한다.
-3. **Given** 분석가가 DDL 미리보기를 확정하면, **Then** 시스템이 Session Materialized View를 구체화하고 결과 데이터(세션 ID, 이벤트 시퀀스 포함) 샘플을 보여준다.
-4. **Given** Session MV 생성 후 소스 Cube에 새 이벤트가 도착하면, **Then** 예약된 갱신이 실행될 때 새 이벤트가 세션 뷰에 반영된다.
+1. **Given** Behavioral Table이 없는 상태에서 분석가가 FUNNEL_COUNT 쿼리를 실행하면, **Then** 시스템이 Event Table로 Fallback하여 결과를 반환하면서, 응답에 `"Behavioral Table을 생성하면 약 X배 빨라집니다"` Guidance 힌트와 권장 DDL을 포함한다.
+2. **Given** Cube가 생성된 상태, **When** 분석가가 Web UI에서 "Behavioral Table 생성" 마법사를 실행하면, **Then** 시스템이 User Key 컬럼(드롭다운) 선택과 Session Timeout 값을 안내하고 DDL 미리보기를 표시한다.
+3. **Given** 분석가가 DDL 미리보기를 확정하면, **Then** 시스템이 Behavioral Table을 구체화하고 결과 데이터(`session_id`, `event_sequence` 포함) 샘플을 보여준다.
+4. **Given** Behavioral Table 생성 완료 후 분석가가 동일한 FUNNEL_COUNT 쿼리를 다시 실행하면, **Then** 쿼리 수정 없이 자동으로 Behavioral Table을 사용하며, 응답 시간이 이전 대비 유의미하게 개선된다.
+5. **Given** Behavioral Table 생성 후 소스 Event Table에 새 이벤트가 도착하면, **Then** 예약된 갱신이 실행될 때 새 이벤트가 Behavioral Table에 반영된다.
 
 ---
 
@@ -149,6 +277,7 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 
 ### 기능 요구사항
 
+- **FR-000**: **Behavioral Routing — 자동 쿼리 라우팅 (핵심 차별화 요소)** — 시스템은 사용자가 항상 Event Table(Cube)에 쿼리를 작성하더라도, Behavioral Router가 쿼리 패턴을 분석하여 Event Query 또는 Behavioral Query 중 최적의 물리 레이아웃으로 자동 라우팅해야 한다. `FUNNEL_COUNT`, `COHORT_ANALYSIS`, `PATH_ANALYSIS` 함수 사용 또는 Behavioral Table 전용 컬럼(`session_id`, `session_start`, `session_end`, `event_sequence`) 참조가 감지되면 Behavioral Table(Session MV)로 라우팅한다. Behavioral Table이 없거나 갱신 지연(STALE) 상태이면 오류 없이 Event Table로 Fallback하며 Behavioral Guidance 힌트를 제공한다. 상세 설계: `specs/002-wow-db-srs-v02/design/query-routing-smv.md` 참조.
 - **FR-001**: 사용자는 컬럼명, 데이터 타입, 파티션 키, 정렬 순서, 분산 전략을 지정하는 SQL DDL(`CREATE CUBE`)을 사용하여 이벤트 스키마("Cube")를 정의할 수 있어야 한다.
 - **FR-002**: 시스템은 수신 데이터가 기존 파티션이 커버하지 않는 날짜 범위에 해당할 때 시간 기반 파티션을 자동으로 생성해야 한다(`Auto Partition`).
 - **FR-003**: 사용자는 JSON 또는 Avro 형식의 Apache Kafka 토픽으로부터 상시 수집(`Routine Load`)을 설정할 수 있어야 하며, 자동 장애 복구와 정확히 한 번(exactly-once) 전달을 보장해야 한다.
@@ -157,8 +286,8 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 - **FR-006**: 시스템은 설정 가능한 시간 윈도우 내에서 정해진 순서의 이벤트 타입 조건에 걸친 사용자 전환율을 계산하는 `FUNNEL_COUNT` 함수를 제공해야 한다.
 - **FR-007**: 시스템은 최초 자격 이벤트(코호트 진입)를 기준으로 사용자를 그룹화하고 이후 기간에 걸친 행동을 추적하는 `COHORT_ANALYSIS` 함수를 제공해야 한다.
 - **FR-008**: 시스템은 사용자들이 따르는 가장 빈도 높은 이벤트 시퀀스를 발견하고 순위를 매기는 `PATH_ANALYSIS` 함수를 제공해야 한다.
-- **FR-009**: 사용자는 User Key 컬럼과 Session Timeout 기간을 지정하여 Cube로부터 Session Materialized View를 생성할 수 있어야 하며, 시스템이 자동으로 이벤트를 세션으로 그룹화해야 한다.
-- **FR-010**: Web UI는 Session Materialized View 생성을 위한 대화형 마법사를 제공해야 하며, 드롭다운을 통한 컬럼 선택, 사전 설정 타임아웃 옵션, 변경 확정 전 DDL 미리보기 단계를 포함해야 한다.
+- **FR-009**: 사용자는 User Key 컬럼과 Session Timeout 기간을 지정하여 Event Table로부터 Behavioral Table(`CREATE SESSION MATERIALIZED VIEW`)을 생성할 수 있어야 하며, 시스템이 자동으로 이벤트를 세션으로 그룹화하여 Funnel/Cohort/Path 분석에 최적화된 물리 레이아웃을 생성해야 한다.
+- **FR-010**: Web UI는 Behavioral Table 생성을 위한 대화형 마법사를 제공해야 하며, 드롭다운을 통한 컬럼 선택, 사전 설정 타임아웃 옵션, 변경 확정 전 DDL 미리보기 단계를 포함해야 한다. 첫 Behavioral Query 실행 시 Behavioral Table이 없으면 마법사를 자동으로 제안해야 한다 (Behavioral Guidance, FR-NEW-001-07 참조).
 - **FR-011**: 시스템은 MySQL 8.0 호환 클라이언트(CLI 도구, GUI 클라이언트, JDBC 드라이버, Python 커넥터, BI 도구)로부터의 연결을 받아야 한다.
 - **FR-012**: 사용자는 각 Data Node의 물리 스토리지를 로컬 디스크, S3 호환 오브젝트 스토리지, 또는 HDFS(Kerberos 인증 필수)로 설정할 수 있어야 한다.
 - **FR-013**: 사용자는 Cube 데이터로부터 GROUP BY 집계를 사전 계산하여 반복적인 대시보드·리포팅 쿼리를 가속하는 사전 집계 Materialized View(`Pre-aggregation MV`)를 정의할 수 있어야 한다.

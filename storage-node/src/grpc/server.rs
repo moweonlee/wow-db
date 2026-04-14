@@ -22,6 +22,7 @@ use crate::gen::wowdb::{
         storage_service_server::{StorageService, StorageServiceServer},
         shard_scan_response::Payload,
         CommitRequest, CommitResponse, PrepareRequest, PrepareResponse,
+        GetPartListRequest, GetShardInfoRequest, ShardInfoResponse, PartInfo,
         PartListResponse, PartMeta, RecordBatchChunk, RollbackRequest, RollbackResponse,
         ScanBatch, ScanRequest, ScanStatsResponse, ShardScanRequest as ProtoShardScanRequest,
         ShardScanResponse, ShardStatsAck, ShardStatsReport,
@@ -50,11 +51,13 @@ impl StorageServiceImpl {
 
 type ScanStream      = Pin<Box<dyn futures::Stream<Item = Result<ScanBatch,        Status>> + Send + 'static>>;
 type ShardScanStream = Pin<Box<dyn futures::Stream<Item = Result<ShardScanResponse, Status>> + Send + 'static>>;
+type PartInfoStream  = Pin<Box<dyn futures::Stream<Item = Result<PartInfo,          Status>> + Send + 'static>>;
 
 #[tonic::async_trait]
 impl StorageService for StorageServiceImpl {
-    type ScanTabletStream = ScanStream;
-    type ScanShardStream  = ShardScanStream;
+    type ScanTabletStream    = ScanStream;
+    type ScanShardStream     = ShardScanStream;
+    type GetPartListStream   = PartInfoStream;
 
     async fn health(&self, _req: Request<HealthRequest>) -> Result<Response<HealthResponse>, Status> {
         Ok(Response::new(HealthResponse {
@@ -181,13 +184,15 @@ impl StorageService for StorageServiceImpl {
                 let resp = match item {
                     Ok(ShardScanItem::PartList(parts)) => {
                         let part_metas: Vec<PartMeta> = parts.iter().map(|s| PartMeta {
-                            part_id:       s.id.as_bytes().to_vec(),
-                            level:         s.level,
-                            sequence_num:  s.sequence_num,
-                            row_count:     s.row_count,
-                            min_sort_key:  s.min_sort_key.clone(),
-                            max_sort_key:  s.max_sort_key.clone(),
-                            size_bytes:    s.size_bytes,
+                            part_id:          s.id.as_bytes().to_vec(),
+                            level:            s.level,
+                            sequence_num:     s.sequence_num,
+                            row_count:        s.row_count,
+                            min_sort_key:     s.min_sort_key.clone(),
+                            max_sort_key:     s.max_sort_key.clone(),
+                            size_bytes:       s.size_bytes,
+                            bloom_size_bytes: 0,
+                            created_at_ms:    0,
                         }).collect();
                         Ok(ShardScanResponse {
                             payload: Some(Payload::PartList(PartListResponse { parts: part_metas })),
@@ -223,6 +228,47 @@ impl StorageService for StorageServiceImpl {
         });
 
         Ok(Response::new(Box::pin(ReceiverStream::new(resp_rx))))
+    }
+
+    // ─── GetPartList (T137: SHOW PARTS 데이터 연동) ──────────────────────────
+    // QN이 특정 Shard의 Part 목록을 SN에서 스트리밍으로 수신한다.
+    // 현재는 빈 스트림을 반환 (Phase B에서 LSM Part 목록 연동 예정).
+
+    async fn get_part_list(
+        &self,
+        req: Request<GetPartListRequest>,
+    ) -> Result<Response<PartInfoStream>, Status> {
+        let r = req.into_inner();
+        info!(
+            shard_id = %format!("{:02x?}", &r.shard_id[..8.min(r.shard_id.len())]),
+            "GetPartList 요청 수신 (stub — 빈 스트림 반환)"
+        );
+        // TODO (Phase B): SN LSM 엔진에서 실제 Part 목록 조회
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<PartInfo, Status>>(1);
+        drop(tx); // 즉시 스트림 종료
+        Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
+    }
+
+    // ─── GetShardInfo (T137: SHOW SHARDS 데이터 연동) ────────────────────────
+    // QN이 특정 Shard의 요약 통계(row_count, size_bytes, part_count, lsn)를 조회한다.
+    // 현재는 0으로 채운 더미 응답 반환 (Phase B에서 실제 통계 연동 예정).
+
+    async fn get_shard_info(
+        &self,
+        req: Request<GetShardInfoRequest>,
+    ) -> Result<Response<ShardInfoResponse>, Status> {
+        let r = req.into_inner();
+        info!(
+            shard_id = %format!("{:02x?}", &r.shard_id[..8.min(r.shard_id.len())]),
+            "GetShardInfo 요청 수신 (stub — 더미 통계 반환)"
+        );
+        // TODO (Phase B): SN LSM 엔진에서 실제 Shard 통계 조회
+        Ok(Response::new(ShardInfoResponse {
+            row_count:  0,
+            size_bytes: 0,
+            part_count: 0,
+            lsn:        0,
+        }))
     }
 
     // ─── ReportShardStats (FR-040) ───────────────────────────────────────────

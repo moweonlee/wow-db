@@ -87,19 +87,25 @@ TabletReplica {
 }
 ```
 
-### 1.6 SessionMaterializedView (세션 뷰 메타데이터)
+### 1.6 BehavioralTable (Behavioral Table 메타데이터)
+
+> `CREATE SESSION MATERIALIZED VIEW` DDL로 생성되는 **행동 분석 파생 테이블**의 메타데이터.  
+> 개념적 이름: **Behavioral Table (BT)** | 구현 레벨 약어: SMV (Session Materialized View)
 
 ```
-SessionMaterializedView {
-    smv_id:           Uuid,
+BehavioralTable {
+    bt_id:            Uuid,          // (구 smv_id)
     name:             String,
-    source_cube_id:   Uuid,
+    source_cube_id:   Uuid,          // 원본 Event Table (Cube)
     user_key_column:  ColumnRef,
     session_timeout:  Duration,      // 비활성 세션 타임아웃
     refresh_schedule: RefreshSchedule,
-    state:            SmvState,      // Building | Ready | Refreshing | Error
+    state:            BtState,       // Building | Active | Refreshing | Stale | Error
     last_refreshed:   Option<Timestamp>,
     version:          u64,
+    // Behavioral Routing 메타데이터
+    behavioral_routing_enabled: bool,  // 기본 true
+    routing_cost_estimate:      Option<f64>, // CBO 예측 비용 (Event Table 대비)
 }
 ```
 
@@ -118,17 +124,19 @@ Event {
 }
 ```
 
-### 1.8 Session (세션 집계 행 — SMV 저장)
+### 1.8 BehavioralRow (Behavioral Table 저장 행 — 세션 집계 행)
+
+> Behavioral Table의 개별 행. 세션 1개 = 1행.
 
 ```
-Session {
-    session_id:    Uuid,       // 생성된 세션 고유 ID
-    user_key:      Value,      // 사용자 식별자 (CubeSchema.user_key_column)
-    session_start: Timestamp,
-    session_end:   Timestamp,
-    event_count:   u32,
-    events:        Vec<EventRef>,   // 정렬된 이벤트 시퀀스 (압축 저장)
-    // 소스 Cube의 모든 컬럼도 세션별 집계/첫번째 값으로 포함 가능
+BehavioralRow {
+    session_id:    Uuid,       // 생성된 세션 고유 ID (자동 생성)
+    user_key:      Value,      // 사용자 식별자 (BehavioralTable.user_key_column)
+    session_start: Timestamp,  // 세션 첫 이벤트 시각 (자동 생성)
+    session_end:   Timestamp,  // 세션 마지막 이벤트 시각 (자동 생성)
+    event_count:   u32,        // 세션 내 이벤트 수 (자동 생성)
+    event_sequence: Vec<EventRef>,  // 정렬된 이벤트 시퀀스 (자동 생성, 압축 저장)
+    // 소스 Event Table의 모든 컬럼도 세션별 집계/첫번째 값으로 포함 가능
 }
 ```
 
@@ -488,7 +496,7 @@ PhysOp {
 | `/cubes/{cube_id}` | `CubeSchema` | Cube 스키마 |
 | `/partitions/{cube_id}/{partition_id}` | `Partition` | 파티션 메타데이터 |
 | `/tablets/{tablet_id}` | `Tablet` | Tablet → DN 매핑 |
-| `/smv/{smv_id}` | `SessionMaterializedView` | SMV 정의 |
+| `/bt/{bt_id}` | `BehavioralTable` | Behavioral Table (Session MV) 정의 |
 | `/mv/{mv_id}` | `PreAggMV` | 사전 집계 MV |
 | `/nodes/{node_id}` | `NodeInfo` | 노드 상태 (QN/CN/SN) |
 | `/stats/{cube_id}/{column}` | `ColumnStats` | CBO 통계 |

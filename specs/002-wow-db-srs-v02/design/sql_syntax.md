@@ -14,7 +14,7 @@
 5. [SHOW 명령 — 메타데이터 조회](#5-show-명령--메타데이터-조회)
 6. [SHOW 명령 — 데이터 분포 가시성](#6-show-명령--데이터-분포-가시성)
 7. [분석 함수 — WOW-DB 전용](#7-분석-함수--wow-db-전용)
-8. [Session Materialized View](#8-session-materialized-view)
+8. [Behavioral Table (Session Materialized View)](#8-behavioral-table-session-materialized-view)
 9. [시스템 명령](#9-시스템-명령)
 9.5. [EXPLAIN — 분산 실행 계획 출력](#95-explain--분산-실행-계획-출력)
 10. [MySQL 호환 명령](#10-mysql-호환-명령)
@@ -94,20 +94,29 @@ DROP TABLE [IF EXISTS] <cube_name>;
 
 ---
 
-### ALTER CUBE ⚠️ (스텁)
+### ALTER CUBE ✅
 
 ```sql
--- 컬럼 추가
-ALTER CUBE <cube_name> ADD COLUMN <col_name> <data_type>;
+-- 컬럼 추가 (nullable / NOT NULL 지원)
+ALTER CUBE <cube_name> ADD COLUMN <col_name> <data_type> [NOT NULL];
+
+-- 컬럼 삭제 (Sort Key 컬럼 삭제 시 오류)
+ALTER CUBE <cube_name> DROP COLUMN <col_name>;
 
 -- TTL 정책 변경
 ALTER CUBE <cube_name> SET PROPERTIES ("ttl_days" = "90");
 
--- Sort Key 변경 (신규 파티션에만 적용)
-ALTER CUBE <cube_name> ORDER BY (<new_sort_key>);
+-- Data Skipping Index 추가
+ALTER CUBE <cube_name> ADD INDEX <idx_name> (<col>) [USING BLOOMFILTER|MINMAX|SET];
+
+-- Data Skipping Index 삭제
+ALTER CUBE <cube_name> DROP INDEX <idx_name>;
+
+-- MySQL 호환: ALTER TABLE <name> … 도 동일하게 처리됨
 ```
 
-> ⚠️ ALTER CUBE는 파서는 구현되었으나 실행 엔진은 Phase F에서 완성 예정
+> ✅ 파서(WowDbParser) + 실행 엔진(AlterCubeHandler) 완전 연결. Raft KV에 스키마 영속화.
+> Sort Key 컬럼 DROP 시도 시 오류 반환. 중복 컬럼 추가 시 오류 반환.
 
 ---
 
@@ -204,12 +213,14 @@ SELECT @@version;
 
 ---
 
-### EXPLAIN ⚠️ (스텁)
+### EXPLAIN ✅
 
 ```sql
 EXPLAIN SELECT ...;
 EXPLAIN ANALYZE SELECT ...;
 ```
+
+> Section 9.5 참조
 
 ---
 
@@ -373,7 +384,7 @@ SHOW DISTRIBUTED STATUS FROM <cube_name> ORDER BY size_bytes DESC;
 
 ## 7. 분석 함수 — WOW-DB 전용
 
-### FUNNEL_COUNT ✅
+### FUNNEL_COUNT ⚠️ (파서·AST 구현, 실행 엔진 Phase C)
 
 퍼널 전환율 분석. 순서가 지정된 이벤트 단계를 지정된 시간 창 내에 완료한 사용자 수를 반환한다.
 
@@ -402,7 +413,7 @@ WHERE event_time BETWEEN '2024-01-01' AND '2024-03-31';
 
 ---
 
-### COHORT_ANALYSIS ✅
+### COHORT_ANALYSIS ⚠️ (파서·AST 구현, 실행 엔진 Phase C)
 
 코호트 분석. 진입 이벤트 기준으로 그룹화한 사용자들의 재방문/전환을 추적한다.
 
@@ -428,7 +439,7 @@ WHERE event_time BETWEEN '2024-01-01' AND '2024-03-31';
 
 ---
 
-### PATH_ANALYSIS ✅
+### PATH_ANALYSIS ⚠️ (파서·AST 구현, 실행 엔진 Phase C)
 
 경로 분석. 사용자가 실제로 이동한 이벤트 시퀀스 패턴을 분석한다.
 
@@ -452,28 +463,71 @@ WHERE event_time BETWEEN '2024-01-01' AND '2024-03-31';
 
 ---
 
-## 8. Session Materialized View
+## 8. Behavioral Table (Session Materialized View)
+
+> **개념**: Behavioral Table (BT) — Event Table로부터 파생된 세션 단위 행동 분석 테이블.  
+> **DDL**: `CREATE SESSION MATERIALIZED VIEW` (SQL 문법은 이 이름을 유지)  
+> **역할**: Funnel / Cohort / Path 분석에 최적화된 물리 레이아웃 제공.  
+> **Behavioral Routing**: Behavioral Query 감지 시 엔진이 자동으로 이 테이블을 사용 (사용자 명시 불필요).
 
 ### CREATE SESSION MATERIALIZED VIEW ✅
 
 ```sql
-CREATE SESSION MATERIALIZED VIEW <mv_name>
-ON <cube_name>
-USER_KEY    <user_key_column>
-TIMEOUT     <n> MINUTES | HOURS
-[REFRESH SCHEDULE '<cron_expr>'];
+CREATE SESSION MATERIALIZED VIEW [IF NOT EXISTS] <mv_name>
+FROM <source_cube>
+USER KEY <user_key_column>
+SESSION TIMEOUT <n> MINUTES | HOURS | SECONDS
+[REFRESH INCREMENTAL | MANUAL | SCHEDULED '<cron_expr>'];
 ```
+
+**파라미터**:
+
+| 절 | 설명 |
+|---|---|
+| `FROM <source_cube>` | Behavioral Table을 파생할 원본 Event Table (Cube) |
+| `USER KEY <col>` | 사용자 식별 컬럼 (`device_id`, `user_id` 등 String/Int 타입) |
+| `SESSION TIMEOUT <n> MINUTES\|HOURS\|SECONDS` | 연속 이벤트 간 허용 비활성 시간. 초과 시 새 세션 시작 |
+| `REFRESH INCREMENTAL` | INSERT 시점 증분 갱신 (기본값) |
+| `REFRESH MANUAL` | 수동 트리거로만 갱신 |
+| `REFRESH SCHEDULED '<cron>'` | cron 표현식 기반 주기 갱신 |
+
+**자동 생성 컬럼** (Behavioral Table 전용):
+
+| 컬럼 | 타입 | 설명 |
+|---|---|---|
+| `session_id` | VARCHAR(36) | 세션 고유 UUID (자동 생성) |
+| `session_start` | DATETIME | 세션 첫 이벤트 시각 |
+| `session_end` | DATETIME | 세션 마지막 이벤트 시각 |
+| `session_event_count` | INT | 세션 내 이벤트 수 |
+| `event_sequence` | ARRAY | 시간 순 정렬된 이벤트 시퀀스 |
+
+> **Behavioral Routing 연동**: 위 컬럼 중 하나라도 쿼리에서 참조되거나, FUNNEL_COUNT / COHORT_ANALYSIS / PATH_ANALYSIS 함수가 사용되면 엔진이 자동으로 이 Behavioral Table로 라우팅한다.
 
 **예시**:
 
 ```sql
-CREATE SESSION MATERIALIZED VIEW page_sessions
-ON   page_events
-USER_KEY    device_id
-TIMEOUT     30 MINUTES;
+-- 기본 (30분 타임아웃, 증분 갱신)
+CREATE SESSION MATERIALIZED VIEW page_events_sessions
+FROM page_events
+USER KEY device_id
+SESSION TIMEOUT 30 MINUTES
+REFRESH INCREMENTAL;
+
+-- 1시간 타임아웃, 매시 정각 갱신
+CREATE SESSION MATERIALIZED VIEW IF NOT EXISTS hourly_sessions
+FROM page_events
+USER KEY device_id
+SESSION TIMEOUT 1 HOUR
+REFRESH SCHEDULED '0 * * * *';
 ```
 
-> 대화형 Web UI에서 단계별 마법사로 생성 권장 (FR-028)
+> **생성 권장 시점**: 첫 FUNNEL_COUNT / COHORT_ANALYSIS / PATH_ANALYSIS 쿼리 실행 시 Behavioral Table이 없으면 Web UI가 자동으로 생성 마법사를 제안한다 (Behavioral Guidance, FR-010, FR-NEW-001-07).
+
+### DROP SESSION MATERIALIZED VIEW ✅
+
+```sql
+DROP SESSION MATERIALIZED VIEW [IF EXISTS] <mv_name>;
+```
 
 ---
 
@@ -689,9 +743,9 @@ WOW-DB는 MySQL 8.0 Wire Protocol을 지원하므로 표준 MySQL 클라이언�
 | `USE <db>` | ✅ | COM_INIT_DB 포함 |
 | `CREATE DATABASE` | ✅ | |
 | `DROP DATABASE` | ✅ | |
-| `INFORMATION_SCHEMA` 쿼리 | ⚠️ | 기본 호환만 |
-| `SHOW INDEX FROM <tbl>` | ❌ | Phase F 예정 |
-| `SHOW PROCESSLIST` | ❌ | Phase F 예정 |
+| `INFORMATION_SCHEMA` 쿼리 | ✅ | TABLES/COLUMNS/SCHEMATA 구현 |
+| `SHOW INDEX FROM <tbl>` | ✅ | MySQL 13-컬럼 호환 결과 |
+| `SHOW PROCESSLIST` | ✅ | 8-컬럼 호환 (현재 커넥션 1행) |
 
 ---
 
@@ -713,7 +767,7 @@ WOW-DB는 MySQL 8.0 Wire Protocol을 지원하므로 표준 MySQL 클라이언�
 |---------|------|------|
 | DDL | `CREATE CUBE` | ✅ 완전 구현 |
 | DDL | `DROP CUBE` | ✅ 완전 구현 |
-| DDL | `ALTER CUBE` | ⚠️ 파서만 (실행 Phase F) |
+| DDL | `ALTER CUBE` | ✅ 파서·실행 엔진 완전 연결 (ADD/DROP COLUMN, TTL, INDEX) |
 | DDL | `CREATE DATABASE` | ✅ 완전 구현 |
 | DDL | `DROP DATABASE` | ✅ 완전 구현 |
 | DML | `INSERT` | ✅ 메모리 스토어 (LSM Phase E) |
@@ -727,12 +781,19 @@ WOW-DB는 MySQL 8.0 Wire Protocol을 지원하므로 표준 MySQL 클라이언�
 | SHOW | `SHOW SHARDS` | ✅ 컬럼 정의 완료 (데이터 T138) |
 | SHOW | `SHOW PARTS` | ✅ 컬럼 정의 완료 (데이터 T141/T142) |
 | SHOW | `SHOW DISTRIBUTED STATUS` | ✅ 컬럼 정의 완료 (데이터 T138) |
-| 분석 | `FUNNEL_COUNT` | ✅ 완전 구현 (스텁 데이터) |
-| 분석 | `COHORT_ANALYSIS` | ✅ 완전 구현 (스텁 데이터) |
-| 분석 | `PATH_ANALYSIS` | ✅ 완전 구현 (스텁 데이터) |
-| SMV | `CREATE SESSION MATERIALIZED VIEW` | ✅ 메타 등록 구현 |
+| 분석 | `FUNNEL_COUNT` | ⚠️ 파서·AST 구현 (실행 엔진 Phase C) |
+| 분석 | `COHORT_ANALYSIS` | ⚠️ 파서·AST 구현 (실행 엔진 Phase C) |
+| 분석 | `PATH_ANALYSIS` | ⚠️ 파서·AST 구현 (실행 엔진 Phase C) |
+| SMV | `CREATE SESSION MATERIALIZED VIEW` | ✅ 파서·메타 등록 구현 (세션 계산 Phase F) |
+| SMV | `DROP SESSION MATERIALIZED VIEW` | ✅ 파서·메타 삭제 구현 |
 | 시스템 | `SET` | ✅ 완전 구현 |
-| 시스템 | `ANALYZE TABLE` | ⚠️ 스텁 |
-| 실행 계획 | `EXPLAIN` | ✅ 완전 구현 (스텁 기반 현실적 출력) |
+| 시스템 | `ANALYZE TABLE` | ✅ 구현 (통계 수집 예약 응답; CBO 연동 Phase D) |
+| 실행 계획 | `EXPLAIN` | ✅ 완전 구현 |
 | 실행 계획 | `EXPLAIN VERBOSE` | ✅ 완전 구현 |
 | 실행 계획 | `EXPLAIN COSTS` | ✅ 완전 구현 |
+| 실행 계획 | `EXPLAIN ANALYZE` | ✅ 구현 (예상 통계 기반, 실측치는 Phase D) |
+| MySQL 호환 | `SHOW INDEX FROM` | ✅ 13-컬럼 MySQL 호환 |
+| MySQL 호환 | `SHOW PROCESSLIST` | ✅ 8-컬럼 MySQL 호환 |
+| MySQL 호환 | `INFORMATION_SCHEMA.TABLES` | ✅ Cube 목록 반환 |
+| MySQL 호환 | `INFORMATION_SCHEMA.COLUMNS` | ✅ 모든 Cube 컬럼 반환 |
+| MySQL 호환 | `INFORMATION_SCHEMA.SCHEMATA` | ✅ DB 목록 반환 |

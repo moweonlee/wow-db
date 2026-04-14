@@ -18,12 +18,14 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "compute_node=info,shared=info".into()),
-        )
-        .init();
+    // ── 로깅 초기화 (파일 + 콘솔 듀얼 싱크, 일별 로테이션) ──────────────────
+    let log_dir = std::env::var("LOG_DIR")
+        .unwrap_or_else(|_| "./logs".to_string());
+    let _log_guard = shared::logging::init_logging(
+        "compute-node",
+        &log_dir,
+        "compute_node=info,shared=info",
+    );
 
     let node_id = std::env::var("NODE_ID").unwrap_or_else(|_| "cn-1".to_string());
     let grpc_port: u16 = std::env::var("GRPC_PORT")

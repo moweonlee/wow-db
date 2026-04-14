@@ -24,12 +24,14 @@ use crate::executor::insert_exec::execute_insert;
 use crate::executor::mem_store::MEM_STORE;
 use crate::executor::select_exec::execute_select;
 use crate::executor::analytics_exec::{execute_funnel_count, execute_cohort_analysis, execute_path_analysis};
+use crate::meta::alter_cube::AlterCubeHandler;
 use crate::meta::cluster_guard::{ClusterGuard, ReadOnlyError};
 use crate::meta::cube::CubeManager;
 use crate::meta::partition_info::PartitionInfoService;
 use crate::raft::RaftManager;
 use crate::session_mv::manager::SmvManager;
 use crate::sql_parser::cube_ddl::parse_create_cube_full;
+use crate::sql_parser::{WowDbParser, WowDbStatement, WowDbCustom};
 
 // ─── WOW-DB MySQL 핸들러 ─────────────────────────────────────────────────────
 
@@ -259,6 +261,59 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
                     }
                 }
                 _ => return results.error(ErrorKind::ER_BAD_TABLE_ERROR, format!("Unknown cube: {name}").as_bytes()).await.map_err(Into::into),
+            }
+        }
+
+        // ALTER CUBE / ALTER TABLE (MySQL 호환: ALTER TABLE → ALTER CUBE로 처리)
+        if lower.starts_with("alter cube") || lower.starts_with("alter table") {
+            // ALTER TABLE <name> … → ALTER CUBE <name> … 로 정규화
+            let normalized = if lower.starts_with("alter table") {
+                format!("ALTER CUBE{}", &sql[11..])
+            } else {
+                sql.to_string()
+            };
+            match WowDbParser::parse(&normalized) {
+                Ok(stmts) => {
+                    if let Some(WowDbStatement::Custom(WowDbCustom::AlterCube(stmt))) =
+                        stmts.into_iter().next()
+                    {
+                        let alter_handler =
+                            AlterCubeHandler::new(self.cube_mgr.clone(), self.raft.clone());
+                        match alter_handler.execute(&stmt).await {
+                            Ok(()) => {
+                                info!(cube = %stmt.name, "Cube altered");
+                                return results
+                                    .completed(OkResponse::default())
+                                    .await
+                                    .map_err(Into::into);
+                            }
+                            Err(e) => {
+                                return results
+                                    .error(
+                                        ErrorKind::ER_PARSE_ERROR,
+                                        e.to_string().as_bytes(),
+                                    )
+                                    .await
+                                    .map_err(Into::into);
+                            }
+                        }
+                    } else {
+                        return results
+                            .error(
+                                ErrorKind::ER_PARSE_ERROR,
+                                b"ALTER CUBE: unexpected parse result",
+                            )
+                            .await
+                            .map_err(Into::into);
+                    }
+                }
+                Err(e) => {
+                    warn!(err = %e, "ALTER CUBE 파싱 실패");
+                    return results
+                        .error(ErrorKind::ER_PARSE_ERROR, e.to_string().as_bytes())
+                        .await
+                        .map_err(Into::into);
+                }
             }
         }
 

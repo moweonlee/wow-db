@@ -13,6 +13,8 @@ pub enum ExplainMode {
     Basic,
     Verbose,
     Costs,
+    /// EXPLAIN ANALYZE: 계획 출력 + 실제 실행 통계 (현재는 예상 통계로 대체)
+    Analyze,
 }
 
 // ─── ExplainFragment / ExplainLine ────────────────────────────────────────────
@@ -426,12 +428,29 @@ fn fmt_num(n: u64) -> String {
 
 // ─── 공개 진입점 ──────────────────────────────────────────────────────────────
 
-/// `EXPLAIN [VERBOSE|COSTS] <sql>` 처리 — QueryOutput 반환
+/// `EXPLAIN [VERBOSE|COSTS|ANALYZE] <sql>` 처리 — QueryOutput 반환
 ///
 /// `sql`: EXPLAIN 접두사를 제거한 순수 SQL 텍스트
-/// `mode`: ExplainMode::Basic | Verbose | Costs
+/// `mode`: ExplainMode::Basic | Verbose | Costs | Analyze
 pub fn explain_sql(sql: &str, mode: ExplainMode) -> QueryOutput {
-    let plan = build_explain_plan(sql, mode);
+    // Analyze 모드: Costs 출력 + 실제 실행 통계 헤더 추가
+    let effective_mode = if mode == ExplainMode::Analyze {
+        ExplainMode::Costs
+    } else {
+        mode
+    };
+    let mut plan = build_explain_plan(sql, effective_mode);
+
+    if mode == ExplainMode::Analyze {
+        // Fragment 0 앞에 ANALYZE 헤더 삽입
+        if let Some(frag0) = plan.fragments.first_mut() {
+            frag0.lines.insert(0,
+                "  [ANALYZE] Note: actual runtime stats not available (stub); showing estimated costs".to_string()
+            );
+            frag0.lines.insert(0, "PLAN FRAGMENT 0  [ANALYZE MODE]".to_string());
+        }
+    }
+
     plan.into_output()
 }
 

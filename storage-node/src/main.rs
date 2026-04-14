@@ -20,12 +20,17 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "storage_node=info,shared=info".into()),
-        )
-        .init();
+    // ── 로깅 초기화 (파일 + 콘솔 듀얼 싱크, 일별 로테이션) ──────────────────
+    // SN은 DATA_DIR 하위 logs/에 저장 (스토리지와 함께 볼륨 마운트)
+    let log_dir = {
+        let data = std::env::var("DATA_DIR").unwrap_or_else(|_| "/data".to_string());
+        std::env::var("LOG_DIR").unwrap_or_else(|_| format!("{}/logs", data))
+    };
+    let _log_guard = shared::logging::init_logging(
+        "storage-node",
+        &log_dir,
+        "storage_node=info,shared=info",
+    );
 
     let node_id = std::env::var("NODE_ID").unwrap_or_else(|_| "sn-1".to_string());
     let grpc_port: u16 = std::env::var("GRPC_PORT")

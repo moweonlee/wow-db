@@ -122,11 +122,11 @@ wow-db/
 │       │   ├── physical.rs     # LogicalPlan → PhysicalPlan (Fragment 할당)
 │       │   └── cbo/            # Cost-Based Optimizer (통계 기반)
 │       ├── raft/               # openraft 기반 메타데이터 클러스터
-│       ├── meta/               # Cube/Tablet/SMV 메타데이터 관리
+│       ├── meta/               # Cube/Tablet/BehavioralTable 메타데이터 관리
 │       ├── ingestion/
 │       │   ├── kafka.rs        # Routine Load (rdkafka)
 │       │   └── spark.rs        # Stream Load HTTP 엔드포인트
-│       ├── session_mv/         # SMV 대화형 생성 및 갱신 스케줄
+│       ├── behavioral_table/   # Behavioral Table(Session MV) 생성, 갱신, Behavioral Routing
 │       ├── web_ui/             # axum 기반 Web SQL Client + REST API
 │       ├── profiler.rs         # Query Profiler (Circular Buffer 1,000건)
 │       └── monitoring.rs       # Prometheus 메트릭 노출
@@ -197,7 +197,7 @@ wow-db/
 ├── integration-tests/          # Docker Compose 기반 통합 테스트
 │   ├── Cargo.toml
 │   └── tests/
-│       ├── ddl_tests.rs        # CREATE CUBE, SMV DDL
+│       ├── ddl_tests.rs        # CREATE CUBE, Behavioral Table DDL
 │       ├── ingestion_tests.rs  # Kafka, Spark, INSERT 수집
 │       ├── analytics_tests.rs  # FUNNEL, COHORT, PATH 쿼리
 │       ├── compat_tests.rs     # MySQL 클라이언트 호환성
@@ -437,7 +437,7 @@ CMD ["query-node"]
 - [ ] CBO (컬럼 통계, 파티션 Pruning, Join 순서 최적화)
 - [ ] Physical Planner (Fragment 생성, CN 할당)
 - [ ] Raft 메타데이터 클러스터 (openraft, 포트 9010)
-- [ ] Cube/SMV/MV DDL 처리
+- [ ] Cube / Behavioral Table(SMV) / Pre-Agg MV DDL 처리
 - [ ] Kafka Routine Load (rdkafka)
 - [ ] Spark Stream Load (HTTP, 포트 8040)
 - [ ] Async INSERT Buffer

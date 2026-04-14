@@ -202,6 +202,9 @@ impl WowDbParser {
             let job = Self::extract_token_after(sql, "LOAD")?;
             return Ok(WowDbCustom::StopRoutineLoad { job_name: job });
         }
+        if upper.starts_with("ALTER CUBE") {
+            return Ok(WowDbCustom::AlterCube(Self::parse_alter_cube(sql)?));
+        }
 
         bail!("Unknown WOW-DB custom statement: {}", &sql[..sql.len().min(60)])
     }
@@ -236,6 +239,95 @@ impl WowDbParser {
             session_timeout: 1800, // 기본 30분
             refresh_mode:    SmvRefreshMode::Async,
         })
+    }
+
+    /// 간이 ALTER CUBE 파서
+    fn parse_alter_cube(sql: &str) -> Result<AlterCubeStmt> {
+        let upper = sql.to_uppercase();
+        let name  = Self::extract_token_after(sql, "CUBE")?;
+
+        // ADD COLUMN <col> <type> [NOT NULL]
+        if upper.contains("ADD COLUMN") {
+            let pos  = upper.find("ADD COLUMN").unwrap() + "ADD COLUMN".len();
+            let rest = sql[pos..].trim();
+            let mut parts = rest.split_whitespace();
+            let col_name = parts.next()
+                .ok_or_else(|| anyhow::anyhow!("ADD COLUMN: missing column name"))?
+                .trim_matches('`').trim_end_matches(';').to_string();
+            let col_type = parts.next()
+                .ok_or_else(|| anyhow::anyhow!("ADD COLUMN: missing column type"))?
+                .trim_end_matches(';').to_string();
+            let nullable = !upper.contains("NOT NULL");
+            return Ok(AlterCubeStmt {
+                name,
+                action: AlterCubeAction::AddColumn(CubeColumnDef {
+                    name:      col_name,
+                    data_type: col_type,
+                    nullable,
+                    encoding:  None,
+                    comment:   None,
+                }),
+            });
+        }
+
+        // DROP COLUMN <col>
+        if upper.contains("DROP COLUMN") {
+            let col = Self::extract_token_after(sql, "COLUMN")?;
+            return Ok(AlterCubeStmt { name, action: AlterCubeAction::DropColumn(col) });
+        }
+
+        // ADD INDEX <idx_name> (<col>, ...) [USING <type>]
+        if upper.contains("ADD INDEX") {
+            let pos      = upper.find("ADD INDEX").unwrap() + "ADD INDEX".len();
+            let rest     = sql[pos..].trim();
+            let idx_name = rest.split_whitespace().next()
+                .ok_or_else(|| anyhow::anyhow!("ADD INDEX: missing index name"))?
+                .trim_matches('`').trim_end_matches(';').to_string();
+            let cols: Vec<String> = if let (Some(a), Some(b)) = (sql.find('('), sql.rfind(')')) {
+                sql[a+1..b].split(',')
+                    .map(|c| c.trim().trim_matches('`').trim_end_matches(';').to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            } else { vec![] };
+            let index_type = if upper.contains("USING ") {
+                Self::extract_token_after(sql, "USING")
+                    .unwrap_or_else(|_| "BLOOMFILTER".to_string())
+                    .to_uppercase()
+            } else {
+                "BLOOMFILTER".to_string()
+            };
+            return Ok(AlterCubeStmt {
+                name,
+                action: AlterCubeAction::AddIndex { name: idx_name, columns: cols, index_type },
+            });
+        }
+
+        // DROP INDEX <idx_name>
+        if upper.contains("DROP INDEX") {
+            let pos      = upper.find("DROP INDEX").unwrap() + "DROP INDEX".len();
+            let idx_name = sql[pos..].trim().split_whitespace().next()
+                .ok_or_else(|| anyhow::anyhow!("DROP INDEX: missing index name"))?
+                .trim_matches('`').trim_end_matches(';').to_string();
+            return Ok(AlterCubeStmt { name, action: AlterCubeAction::DropIndex(idx_name) });
+        }
+
+        // SET PROPERTIES ("ttl_days" = "N")  or  MODIFY TTL N
+        if upper.contains("TTL") || upper.contains("SET PROPERTIES") {
+            let days: u32 = if let Some(pos) = upper.find("TTL_DAYS") {
+                sql[pos + "TTL_DAYS".len()..]
+                    .chars()
+                    .skip_while(|c| !c.is_ascii_digit())
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            return Ok(AlterCubeStmt { name, action: AlterCubeAction::ModifyTtl { days } });
+        }
+
+        bail!("ALTER CUBE: unsupported action in: {}", &sql[..sql.len().min(80)])
     }
 
     /// 지정 키워드 다음 토큰 추출 (공백 구분)
@@ -302,5 +394,67 @@ mod tests {
             &stmts[0],
             WowDbStatement::Custom(WowDbCustom::StopRoutineLoad { job_name }) if job_name == "my_job"
         ));
+    }
+
+    #[test]
+    fn test_parse_alter_cube_add_column() {
+        let sql = "ALTER CUBE page_events ADD COLUMN user_id VARCHAR NOT NULL";
+        let stmts = WowDbParser::parse(sql).unwrap();
+        match &stmts[0] {
+            WowDbStatement::Custom(WowDbCustom::AlterCube(s)) => {
+                assert_eq!(s.name, "page_events");
+                match &s.action {
+                    AlterCubeAction::AddColumn(col) => {
+                        assert_eq!(col.name, "user_id");
+                        assert_eq!(col.data_type.to_uppercase(), "VARCHAR");
+                        assert!(!col.nullable); // NOT NULL
+                    }
+                    other => panic!("Expected AddColumn, got {:?}", other),
+                }
+            }
+            other => panic!("Expected AlterCube, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_alter_cube_drop_column() {
+        let sql = "ALTER CUBE events DROP COLUMN old_col";
+        let stmts = WowDbParser::parse(sql).unwrap();
+        assert!(matches!(
+            &stmts[0],
+            WowDbStatement::Custom(WowDbCustom::AlterCube(s))
+                if matches!(&s.action, AlterCubeAction::DropColumn(c) if c == "old_col")
+        ));
+    }
+
+    #[test]
+    fn test_parse_alter_cube_modify_ttl() {
+        let sql = r#"ALTER CUBE events SET PROPERTIES ("ttl_days" = "90")"#;
+        let stmts = WowDbParser::parse(sql).unwrap();
+        assert!(matches!(
+            &stmts[0],
+            WowDbStatement::Custom(WowDbCustom::AlterCube(s))
+                if matches!(&s.action, AlterCubeAction::ModifyTtl { days } if *days == 90)
+        ));
+    }
+
+    #[test]
+    fn test_parse_alter_cube_add_index() {
+        let sql = "ALTER CUBE events ADD INDEX idx_ev (event_name) USING BLOOMFILTER";
+        let stmts = WowDbParser::parse(sql).unwrap();
+        match &stmts[0] {
+            WowDbStatement::Custom(WowDbCustom::AlterCube(s)) => {
+                assert_eq!(s.name, "events");
+                match &s.action {
+                    AlterCubeAction::AddIndex { name, columns, index_type } => {
+                        assert_eq!(name, "idx_ev");
+                        assert!(columns.contains(&"event_name".to_string()));
+                        assert_eq!(index_type.to_uppercase(), "BLOOMFILTER");
+                    }
+                    other => panic!("Expected AddIndex, got {:?}", other),
+                }
+            }
+            other => panic!("Expected AlterCube, got {:?}", other),
+        }
     }
 }
