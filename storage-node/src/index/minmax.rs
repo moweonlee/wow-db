@@ -110,6 +110,16 @@ impl MinMaxIndex {
         self.granules.len()
     }
 
+    /// 특정 Granule의 (min_val, max_val) 슬라이스 반환
+    /// g_idx가 범위 밖이면 None 반환
+    pub fn granule_min_max(&self, g_idx: usize) -> Option<(&[u8], &[u8])> {
+        let g = self.granules.get(g_idx)?;
+        match (&g.min_val, &g.max_val) {
+            (Some(mn), Some(mx)) => Some((mn.as_slice(), mx.as_slice())),
+            _ => None,
+        }
+    }
+
     /// 전체 통계: (global_min, global_max)
     pub fn global_min_max(&self) -> (Option<&[u8]>, Option<&[u8]>) {
         let min = self.granules.iter()

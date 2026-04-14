@@ -56,7 +56,8 @@
       "Bash(powershell.exe -NonInteractive -File \".specify/scripts/powershell/check-prerequisites.ps1\" -Json -RequireTasks -IncludeTasks)",
       "Bash(ls -la \"D:\\\\projects\\\\wow-db\\\\specs\\\\002-wow-db-srs-v02\\\\\\\\\")",
       "Bash(powershell.exe -File \".specify/scripts/powershell/check-prerequisites.ps1\" -Json -RequireTasks -IncludeTasks)",
-      "Bash(ls D:/projects/wow-db/storage-node/src/partition*)"
+      "Bash(ls D:/projects/wow-db/storage-node/src/partition*)",
+      "Bash(sort -t'T' -k2 -n)"
     ]
   }
 }

@@ -163,6 +163,48 @@ pub async fn execute_fragment(
     Ok(rx)
 }
 
+/// ShardScan 소스를 사용하여 Fragment를 실행하는 진입점 (T133, FR-041)
+///
+/// ShardScanStage가 Pipeline의 소스가 됨:
+///   ShardScanStage → [Operator chain] → BatchReceiver
+pub async fn execute_fragment_with_shards(
+    query_id:    String,
+    fragment_id: String,
+    shards:      Vec<super::shard_scan::ShardSpec>,
+    operators:   Vec<Box<dyn Operator>>,
+) -> Result<BatchReceiver> {
+    use super::shard_scan::ShardScanStage;
+
+    info!(
+        query_id    = %query_id,
+        fragment_id = %fragment_id,
+        shard_count = shards.len(),
+        "ShardScan Fragment 실행 시작"
+    );
+
+    // ShardScanStage → source channel
+    let (src_tx, src_rx) = mpsc::channel::<Result<Batch>>(PIPELINE_BUFFER);
+
+    let stage        = ShardScanStage::new(shards);
+    let src_tx_clone = src_tx.clone();
+    let fid_clone    = fragment_id.clone();
+    let qid_clone    = query_id.clone();
+    tokio::spawn(async move {
+        if let Err(e) = stage.scan_all(src_tx_clone).await {
+            warn!(query_id = %qid_clone, fragment_id = %fid_clone, err = %e, "ShardScan 오류");
+        }
+        drop(src_tx);
+    });
+
+    // Operator 체인 연결
+    let pipeline = operators.into_iter().fold(
+        Pipeline::new(fragment_id),
+        |p, op| p.add_operator(op),
+    );
+
+    pipeline.run(src_rx).await
+}
+
 // ─── 단위 테스트 ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]

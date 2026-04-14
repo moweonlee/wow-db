@@ -6,3 +6,8 @@ pub mod preagg_mv;
 pub mod global_dict;
 pub mod external_table;
 pub mod colocate;
+pub mod stats;
+pub mod shard_map;
+pub mod cluster_guard;
+pub mod cache;
+pub mod session_store;

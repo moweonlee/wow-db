@@ -10,5 +10,7 @@ pub mod partition;
 pub mod ttl;
 pub mod tiering;
 pub mod columnar;
+pub mod stats_reporter;
+pub mod disk_monitor;
 mod gen;
-mod grpc;
+pub mod grpc;

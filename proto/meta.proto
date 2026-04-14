@@ -1,0 +1,49 @@
+syntax = "proto3";
+package wowdb.meta;
+
+// QN MetaService — 클러스터 메타데이터 관리 (포트 9011)
+// SN → QN 디스크 용량 보고 RPC (FR-036)
+service MetaService {
+    // SN → QN: 디스크 임계값 초과 보고 (Read-Only 모드 진입 요청)
+    rpc ReportDiskFull(DiskCapacityReport) returns (DiskReportAck);
+
+    // SN → QN: 디스크 용량 복구 보고 (Read-Only 모드 해제 요청)
+    rpc ReportDiskRecovered(DiskCapacityReport) returns (DiskReportAck);
+}
+
+// ─── 디스크 용량 보고 메시지 (SN → QN) ─────────────────────────────────────
+
+/// SN이 QN Leader에 보내는 디스크 용량 보고
+message DiskCapacityReport {
+    /// 보고 노드 식별자 (예: "sn-01")
+    string node_id      = 1;
+
+    /// 감시 경로 (예: "/data/wowdb")
+    string path         = 2;
+
+    /// 디스크 사용률 (0.0~1.0, 1.0 = 100% full)
+    double usage_ratio  = 3;
+
+    /// 전체 디스크 용량 (bytes)
+    int64  total_bytes  = 4;
+
+    /// 여유 디스크 용량 (bytes)
+    int64  free_bytes   = 5;
+
+    /// 보고 시각 (Unix millisecond timestamp)
+    int64  timestamp_ms = 6;
+}
+
+// ─── 보고 확인 응답 ──────────────────────────────────────────────────────────
+
+/// QN이 SN 보고에 응답하는 ACK 메시지
+message DiskReportAck {
+    /// 보고 수락 여부 (false이면 재시도 불필요, 오류 상황)
+    bool   accepted          = 1;
+
+    /// 현재 클러스터 Read-Only 상태
+    bool   cluster_read_only = 2;
+
+    /// 추가 메시지 (진단 정보)
+    string message           = 3;
+}

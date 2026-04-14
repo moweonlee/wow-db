@@ -2,24 +2,34 @@
 // StorageService: Health, WriteRows, ScanTablet (stream), Prepare/Commit/Rollback
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::Result;
+use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
-use tracing::{info};
+use tracing::{info, warn};
+use uuid::Uuid;
+
+use shared::types::{LsmScanRange, ShardPredicate, ShardPredicateOp, ShardScanRequest, Value};
 
 // proto 생성 타입 (cargo build 후 src/gen/ 에 생성됨)
 use crate::gen::wowdb::{
     compute::{HealthRequest, HealthResponse},
     storage::{
         storage_service_server::{StorageService, StorageServiceServer},
+        shard_scan_response::Payload,
         CommitRequest, CommitResponse, PrepareRequest, PrepareResponse,
-        RollbackRequest, RollbackResponse, ScanBatch, ScanRequest,
+        PartListResponse, PartMeta, RecordBatchChunk, RollbackRequest, RollbackResponse,
+        ScanBatch, ScanRequest, ScanStatsResponse, ShardScanRequest as ProtoShardScanRequest,
+        ShardScanResponse, ShardStatsAck, ShardStatsReport,
         TabletMetaRequest, TabletMetaResponse, WriteRequest, WriteResponse,
     },
 };
+
+use crate::grpc::scan::{ShardScanner, ShardScanItem};
 
 // ─── 서비스 구현체 ────────────────────────────────────────────────────────────
 
@@ -38,11 +48,13 @@ impl StorageServiceImpl {
     }
 }
 
-type ScanStream = Pin<Box<dyn futures::Stream<Item = Result<ScanBatch, Status>> + Send + 'static>>;
+type ScanStream      = Pin<Box<dyn futures::Stream<Item = Result<ScanBatch,        Status>> + Send + 'static>>;
+type ShardScanStream = Pin<Box<dyn futures::Stream<Item = Result<ShardScanResponse, Status>> + Send + 'static>>;
 
 #[tonic::async_trait]
 impl StorageService for StorageServiceImpl {
     type ScanTabletStream = ScanStream;
+    type ScanShardStream  = ShardScanStream;
 
     async fn health(&self, _req: Request<HealthRequest>) -> Result<Response<HealthResponse>, Status> {
         Ok(Response::new(HealthResponse {
@@ -91,6 +103,143 @@ impl StorageService for StorageServiceImpl {
         let r = req.into_inner();
         info!(tablet_id = %r.tablet_id, "GetTabletMeta");
         Err(Status::unimplemented("Phase B: GetTabletMeta not yet implemented"))
+    }
+
+    // ─── ShardScan (T134, FR-041) ────────────────────────────────────────────
+
+    async fn scan_shard(
+        &self,
+        req: Request<ProtoShardScanRequest>,
+    ) -> Result<Response<ShardScanStream>, Status> {
+        let r         = req.into_inner();
+        let shard_dir = PathBuf::from(&r.shard_dir);
+        let shard_id_bytes = &r.shard_id;
+        let shard_id_str   = if shard_id_bytes.len() == 16 {
+            Uuid::from_slice(shard_id_bytes)
+                .map(|u| u.to_string())
+                .unwrap_or_else(|_| format!("{:02x?}", &shard_id_bytes[..8.min(shard_id_bytes.len())]))
+        } else {
+            format!("{:02x?}", &shard_id_bytes[..8.min(shard_id_bytes.len())])
+        };
+
+        info!(shard_id = %shard_id_str, shard_dir = %r.shard_dir, "ScanShard 시작");
+
+        // proto → shared::types 변환
+        let scan_range = r.scan_range.map(|sr| LsmScanRange {
+            min_level: sr.min_level,
+            max_level: sr.max_level,
+        }).unwrap_or_else(LsmScanRange::all_levels);
+
+        let predicates: Vec<ShardPredicate> = r.predicates.iter().map(|p| {
+            let op = match p.op.as_str() {
+                "eq"          => ShardPredicateOp::Eq,
+                "ne"          => ShardPredicateOp::Ne,
+                "lt"          => ShardPredicateOp::Lt,
+                "le"          => ShardPredicateOp::Le,
+                "gt"          => ShardPredicateOp::Gt,
+                "ge"          => ShardPredicateOp::Ge,
+                "is_null"     => ShardPredicateOp::IsNull,
+                "is_not_null" => ShardPredicateOp::IsNotNull,
+                _             => ShardPredicateOp::Eq,
+            };
+            let value = if p.value.is_empty() {
+                None
+            } else {
+                serde_json::from_slice::<Value>(&p.value).ok()
+            };
+            ShardPredicate { column: p.column.clone(), op, value }
+        }).collect();
+
+        let shard_id_uuid = if shard_id_bytes.len() == 16 {
+            Uuid::from_slice(shard_id_bytes).unwrap_or_else(|_| Uuid::new_v4())
+        } else {
+            Uuid::new_v4()
+        };
+
+        let internal_req = ShardScanRequest {
+            shard_id:         shard_id_uuid,
+            shard_dir:        shard_dir.clone(),
+            columns:          r.columns.clone(),
+            predicates,
+            scan_range,
+            bloom_probe_keys: r.bloom_probe_keys.clone(),
+        };
+
+        let scanner = ShardScanner::new(shard_dir);
+        let (item_tx, mut item_rx) = mpsc::channel::<Result<ShardScanItem>>(32);
+
+        tokio::spawn(async move {
+            if let Err(e) = scanner.scan(&internal_req, item_tx).await {
+                warn!(shard_id = %shard_id_str, err = %e, "ShardScanner 오류");
+            }
+        });
+
+        // ShardScanItem → ShardScanResponse 변환 스트림
+        let (resp_tx, resp_rx) = mpsc::channel::<Result<ShardScanResponse, Status>>(32);
+        tokio::spawn(async move {
+            while let Some(item) = item_rx.recv().await {
+                let resp = match item {
+                    Ok(ShardScanItem::PartList(parts)) => {
+                        let part_metas: Vec<PartMeta> = parts.iter().map(|s| PartMeta {
+                            part_id:       s.id.as_bytes().to_vec(),
+                            level:         s.level,
+                            sequence_num:  s.sequence_num,
+                            row_count:     s.row_count,
+                            min_sort_key:  s.min_sort_key.clone(),
+                            max_sort_key:  s.max_sort_key.clone(),
+                            size_bytes:    s.size_bytes,
+                        }).collect();
+                        Ok(ShardScanResponse {
+                            payload: Some(Payload::PartList(PartListResponse { parts: part_metas })),
+                        })
+                    }
+                    Ok(ShardScanItem::Batch { ipc_bytes, rows, is_last }) => {
+                        Ok(ShardScanResponse {
+                            payload: Some(Payload::Batch(RecordBatchChunk {
+                                ipc_batch: ipc_bytes,
+                                rows,
+                                is_last,
+                            })),
+                        })
+                    }
+                    Ok(ShardScanItem::Stats(s)) => {
+                        Ok(ShardScanResponse {
+                            payload: Some(Payload::Stats(ScanStatsResponse {
+                                parts_scanned:    s.parts_scanned,
+                                parts_skipped:    s.parts_skipped,
+                                granules_read:    s.granules_read,
+                                granules_skipped: s.granules_skipped,
+                                rows_returned:    s.rows_returned,
+                                bytes_read:       s.bytes_read,
+                            })),
+                        })
+                    }
+                    Err(e) => Err(Status::internal(e.to_string())),
+                };
+                if resp_tx.send(resp).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        Ok(Response::new(Box::pin(ReceiverStream::new(resp_rx))))
+    }
+
+    // ─── ReportShardStats (FR-040) ───────────────────────────────────────────
+
+    async fn report_shard_stats(
+        &self,
+        req: Request<ShardStatsReport>,
+    ) -> Result<Response<ShardStatsAck>, Status> {
+        let r = req.into_inner();
+        info!(
+            shard_id     = %format!("{:02x?}", &r.shard_id[..8.min(r.shard_id.len())]),
+            row_count    = r.row_count,
+            is_incremental = r.is_incremental,
+            "ReportShardStats 수신 (QN 전달용 — 현재 stub)"
+        );
+        // TODO: QN gRPC 전달 또는 로컬 stats 저장
+        Ok(Response::new(ShardStatsAck { success: true, error: String::new() }))
     }
 }
 

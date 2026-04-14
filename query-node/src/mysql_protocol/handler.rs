@@ -24,6 +24,7 @@ use crate::executor::insert_exec::execute_insert;
 use crate::executor::mem_store::MEM_STORE;
 use crate::executor::select_exec::execute_select;
 use crate::executor::analytics_exec::{execute_funnel_count, execute_cohort_analysis, execute_path_analysis};
+use crate::meta::cluster_guard::{ClusterGuard, ReadOnlyError};
 use crate::meta::cube::CubeManager;
 use crate::raft::RaftManager;
 use crate::session_mv::manager::SmvManager;
@@ -32,10 +33,11 @@ use crate::sql_parser::cube_ddl::parse_create_cube_full;
 // ─── WOW-DB MySQL 핸들러 ─────────────────────────────────────────────────────
 
 pub struct WowDbMysqlHandler {
-    pub cube_mgr:   Arc<CubeManager>,
-    pub smv_mgr:    Arc<SmvManager>,
-    pub raft:       Arc<RaftManager>,
-    current_db:     std::sync::Mutex<String>,
+    pub cube_mgr:      Arc<CubeManager>,
+    pub smv_mgr:       Arc<SmvManager>,
+    pub raft:          Arc<RaftManager>,
+    pub cluster_guard: Arc<ClusterGuard>,
+    current_db:        std::sync::Mutex<String>,
 }
 
 impl WowDbMysqlHandler {
@@ -44,10 +46,27 @@ impl WowDbMysqlHandler {
         smv_mgr:  Arc<SmvManager>,
         raft:     Arc<RaftManager>,
     ) -> Self {
+        let cluster_guard = Arc::new(ClusterGuard::new(raft.clone()));
         Self {
             cube_mgr,
             smv_mgr,
             raft,
+            cluster_guard,
+            current_db: std::sync::Mutex::new("default".to_string()),
+        }
+    }
+
+    pub fn new_with_guard(
+        cube_mgr:      Arc<CubeManager>,
+        smv_mgr:       Arc<SmvManager>,
+        raft:          Arc<RaftManager>,
+        cluster_guard: Arc<ClusterGuard>,
+    ) -> Self {
+        Self {
+            cube_mgr,
+            smv_mgr,
+            raft,
+            cluster_guard,
             current_db: std::sync::Mutex::new("default".to_string()),
         }
     }
@@ -82,6 +101,17 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
         // SET commands
         if lower.starts_with("set ") {
             return results.completed(OkResponse::default()).await.map_err(Into::into);
+        }
+
+        // ── 쓰기 작업 Read-Only 검사 (INSERT/DDL/DELETE/TRUNCATE) ──────────────
+        if crate::meta::cluster_guard::is_write_statement(sql) {
+            if let Err(e) = self.cluster_guard.check_write_allowed().await {
+                let msg = e.mysql_message();
+                return results
+                    .error(ErrorKind::ER_OPTION_PREVENTS_STATEMENT, msg.as_bytes())
+                    .await
+                    .map_err(Into::into);
+            }
         }
 
         // CREATE DATABASE [IF NOT EXISTS] <name>
