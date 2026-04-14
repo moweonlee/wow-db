@@ -1,4 +1,5 @@
 // T088: SHOW TABLES, SHOW DATABASES, DESCRIBE, INFORMATION_SCHEMA 가상 테이블
+// T138: SHOW PARTITIONS / SHARDS / PARTS / DISTRIBUTED STATUS — PartitionInfoService 연동
 
 use std::sync::Arc;
 
@@ -6,12 +7,17 @@ use opensrv_mysql::ColumnType;
 
 use super::handler::{ColumnMeta, QueryOutput};
 use crate::meta::cube::CubeManager;
+use crate::meta::partition_info::PartitionInfoService;
 
 /// 스키마 관련 명령 처리 — 해당하면 Some(QueryOutput), 아니면 None
+///
+/// `partition_svc`: SHOW PARTITIONS/SHARDS/PARTS/DISTRIBUTED STATUS에서 실제 데이터를
+/// 제공하는 서비스. `None`이면 컬럼 헤더만 반환하고 빈 행셋을 반환한다 (스텁 모드).
 pub async fn handle_schema_command(
-    sql:      &str,
-    cube_mgr: &Arc<CubeManager>,
-    current_db: &str,
+    sql:           &str,
+    cube_mgr:      &Arc<CubeManager>,
+    current_db:    &str,
+    partition_svc: Option<&PartitionInfoService>,
 ) -> Option<QueryOutput> {
     let trimmed = sql.trim();
     let upper   = trimmed.to_uppercase();
@@ -156,45 +162,99 @@ pub async fn handle_schema_command(
     // 구문: SHOW PARTITIONS FROM <cube> [WHERE ...] [ORDER BY ...] [LIMIT N]
     if upper.starts_with("SHOW PARTITIONS FROM") || upper.starts_with("SHOW PARTITIONS") && upper.contains(" FROM ") {
         let cube_name = extract_from_token(trimmed, "FROM");
-        // 파티션 메타는 Raft KV에 저장 (Phase E에서 실 데이터 연동)
-        // 현재는 Cube 존재 여부만 확인하고 컬럼 헤더 반환 (스텁)
-        let _cube_exists = cube_mgr.get_by_name(&cube_name).await.ok().flatten();
-        return Some(QueryOutput::Rows {
-            columns: vec![
-                ColumnMeta { name: "partition_id".to_string(),   col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "range_start".to_string(),    col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "range_end".to_string(),      col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "row_count".to_string(),      col_type: ColumnType::MYSQL_TYPE_LONGLONG },
-                ColumnMeta { name: "size_bytes".to_string(),     col_type: ColumnType::MYSQL_TYPE_LONGLONG },
-                ColumnMeta { name: "shard_count".to_string(),    col_type: ColumnType::MYSQL_TYPE_LONG },
-                ColumnMeta { name: "part_count".to_string(),     col_type: ColumnType::MYSQL_TYPE_LONG },
-                ColumnMeta { name: "tier".to_string(),           col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "created_at".to_string(),     col_type: ColumnType::MYSQL_TYPE_DATETIME },
-            ],
-            rows: vec![], // TODO: T138 PartitionInfoService 연동 후 실 데이터
-        });
+
+        let columns = vec![
+            ColumnMeta { name: "partition_id".to_string(),   col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "range_start".to_string(),    col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "range_end".to_string(),      col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "row_count".to_string(),      col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+            ColumnMeta { name: "size_bytes".to_string(),     col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+            ColumnMeta { name: "shard_count".to_string(),    col_type: ColumnType::MYSQL_TYPE_LONG },
+            ColumnMeta { name: "part_count".to_string(),     col_type: ColumnType::MYSQL_TYPE_LONG },
+            ColumnMeta { name: "tier".to_string(),           col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "created_at".to_string(),     col_type: ColumnType::MYSQL_TYPE_DATETIME },
+        ];
+
+        let rows = if let Some(svc) = partition_svc {
+            // cube_name이 UUID가 아닐 수 있으므로 이름으로 Cube 조회 후 ID 사용
+            let cube_id = cube_mgr.get_by_name(&cube_name).await.ok().flatten()
+                .map(|c| c.cube_id.to_string())
+                .unwrap_or(cube_name.clone());
+
+            svc.list_partitions(&cube_id).await.unwrap_or_default()
+                .into_iter()
+                .map(|p| vec![
+                    Some(p.partition_id),
+                    Some(p.range_start),
+                    Some(p.range_end),
+                    Some(p.row_count.to_string()),
+                    Some(p.size_bytes.to_string()),
+                    Some(p.shard_count.to_string()),
+                    Some(p.part_count.to_string()),
+                    Some(p.tier),
+                    Some(p.created_at),
+                ])
+                .collect()
+        } else {
+            vec![]
+        };
+
+        return Some(QueryOutput::Rows { columns, rows });
     }
 
     // ── SHOW SHARDS FROM <cube> [PARTITION <pid>] (FR-044) ─────────────────
     // 구문: SHOW SHARDS FROM <cube> [PARTITION '<partition_id>'] [WHERE ...]
     if upper.starts_with("SHOW SHARDS FROM") || upper.starts_with("SHOW SHARDS") && upper.contains(" FROM ") {
-        return Some(QueryOutput::Rows {
-            columns: vec![
-                ColumnMeta { name: "shard_id".to_string(),        col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "partition_id".to_string(),    col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "partition_range".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "sn_node_id".to_string(),      col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "sn_endpoint".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "bucket_id".to_string(),       col_type: ColumnType::MYSQL_TYPE_LONG },
-                ColumnMeta { name: "role".to_string(),            col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "state".to_string(),           col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "row_count".to_string(),       col_type: ColumnType::MYSQL_TYPE_LONGLONG },
-                ColumnMeta { name: "size_bytes".to_string(),      col_type: ColumnType::MYSQL_TYPE_LONGLONG },
-                ColumnMeta { name: "part_count".to_string(),      col_type: ColumnType::MYSQL_TYPE_LONG },
-                ColumnMeta { name: "lsn".to_string(),             col_type: ColumnType::MYSQL_TYPE_LONGLONG },
-            ],
-            rows: vec![], // TODO: T138 PartitionInfoService 연동 후 실 데이터
-        });
+        let cube_name    = extract_from_token(trimmed, "FROM");
+        // Optional PARTITION filter: SHOW SHARDS FROM t PARTITION 'pid'
+        let partition_filter = if upper.contains(" PARTITION ") {
+            Some(extract_from_token(trimmed, "PARTITION"))
+        } else {
+            None
+        };
+
+        let columns = vec![
+            ColumnMeta { name: "shard_id".to_string(),        col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "partition_id".to_string(),    col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "partition_range".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "sn_node_id".to_string(),      col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "sn_endpoint".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "bucket_id".to_string(),       col_type: ColumnType::MYSQL_TYPE_LONG },
+            ColumnMeta { name: "role".to_string(),            col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "state".to_string(),           col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "row_count".to_string(),       col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+            ColumnMeta { name: "size_bytes".to_string(),      col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+            ColumnMeta { name: "part_count".to_string(),      col_type: ColumnType::MYSQL_TYPE_LONG },
+            ColumnMeta { name: "lsn".to_string(),             col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+        ];
+
+        let rows = if let Some(svc) = partition_svc {
+            let cube_id = cube_mgr.get_by_name(&cube_name).await.ok().flatten()
+                .map(|c| c.cube_id.to_string())
+                .unwrap_or(cube_name.clone());
+
+            svc.list_shards(&cube_id, partition_filter.as_deref()).await.unwrap_or_default()
+                .into_iter()
+                .map(|s| vec![
+                    Some(s.shard_id),
+                    Some(s.partition_id),
+                    Some(s.partition_range),
+                    Some(s.sn_node_id),
+                    Some(s.sn_endpoint),
+                    Some(s.bucket_id.to_string()),
+                    Some(s.role),
+                    Some(s.state),
+                    Some(s.row_count.to_string()),
+                    Some(s.size_bytes.to_string()),
+                    Some(s.part_count.to_string()),
+                    Some(s.lsn.to_string()),
+                ])
+                .collect()
+        } else {
+            vec![]
+        };
+
+        return Some(QueryOutput::Rows { columns, rows });
     }
 
     // ── SHOW PARTS FROM <cube> / SHOW PARTS ON PARTITION <pid> FROM <cube> (FR-045) ──
@@ -202,23 +262,73 @@ pub async fn handle_schema_command(
     //   SHOW PARTS FROM <cube> [PARTITION '<pid>'] [SHARD '<sid>'] [WHERE ...]
     //   SHOW PARTS ON PARTITION '<pid>' FROM <cube>
     if upper.starts_with("SHOW PARTS") {
-        return Some(QueryOutput::Rows {
-            columns: vec![
-                ColumnMeta { name: "part_id".to_string(),          col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "shard_id".to_string(),         col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "partition_id".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "sn_node_id".to_string(),       col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "level".to_string(),            col_type: ColumnType::MYSQL_TYPE_LONG },
-                ColumnMeta { name: "sequence_num".to_string(),     col_type: ColumnType::MYSQL_TYPE_LONGLONG },
-                ColumnMeta { name: "row_count".to_string(),        col_type: ColumnType::MYSQL_TYPE_LONGLONG },
-                ColumnMeta { name: "size_bytes".to_string(),       col_type: ColumnType::MYSQL_TYPE_LONGLONG },
-                ColumnMeta { name: "min_sort_key".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "max_sort_key".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "bloom_size_bytes".to_string(), col_type: ColumnType::MYSQL_TYPE_LONGLONG },
-                ColumnMeta { name: "created_at".to_string(),       col_type: ColumnType::MYSQL_TYPE_DATETIME },
-            ],
-            rows: vec![], // TODO: T138 PartitionInfoService + SN gRPC 연동 후 실 데이터
-        });
+        // Resolve cube name
+        let cube_name = if upper.contains(" ON PARTITION ") {
+            // "SHOW PARTS ON PARTITION 'pid' FROM cube"
+            extract_from_token(trimmed, "FROM")
+        } else {
+            extract_from_token(trimmed, "FROM")
+        };
+
+        // Optional partition filter
+        let partition_filter: Option<String> = if upper.contains(" PARTITION ") && !upper.contains(" ON PARTITION ") {
+            Some(extract_from_token(trimmed, "PARTITION"))
+        } else if upper.contains(" ON PARTITION ") {
+            Some(extract_from_token(trimmed, "PARTITION"))
+        } else {
+            None
+        };
+
+        // Optional shard filter
+        let shard_filter: Option<String> = if upper.contains(" SHARD ") {
+            Some(extract_from_token(trimmed, "SHARD"))
+        } else {
+            None
+        };
+
+        let columns = vec![
+            ColumnMeta { name: "part_id".to_string(),          col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "shard_id".to_string(),         col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "partition_id".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "sn_node_id".to_string(),       col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "level".to_string(),            col_type: ColumnType::MYSQL_TYPE_LONG },
+            ColumnMeta { name: "sequence_num".to_string(),     col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+            ColumnMeta { name: "row_count".to_string(),        col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+            ColumnMeta { name: "size_bytes".to_string(),       col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+            ColumnMeta { name: "min_sort_key".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "max_sort_key".to_string(),     col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "bloom_size_bytes".to_string(), col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+            ColumnMeta { name: "created_at".to_string(),       col_type: ColumnType::MYSQL_TYPE_DATETIME },
+        ];
+
+        let rows = if let Some(svc) = partition_svc {
+            let cube_id = cube_mgr.get_by_name(&cube_name).await.ok().flatten()
+                .map(|c| c.cube_id.to_string())
+                .unwrap_or(cube_name.clone());
+
+            svc.list_parts(&cube_id, partition_filter.as_deref(), shard_filter.as_deref())
+                .await.unwrap_or_default()
+                .into_iter()
+                .map(|p| vec![
+                    Some(p.part_id),
+                    Some(p.shard_id),
+                    Some(p.partition_id),
+                    Some(p.sn_node_id),
+                    Some(p.level.to_string()),
+                    Some(p.sequence_num.to_string()),
+                    Some(p.row_count.to_string()),
+                    Some(p.size_bytes.to_string()),
+                    Some(p.min_sort_key),
+                    Some(p.max_sort_key),
+                    Some(p.bloom_size_bytes.to_string()),
+                    Some(p.created_at),
+                ])
+                .collect()
+        } else {
+            vec![]
+        };
+
+        return Some(QueryOutput::Rows { columns, rows });
     }
 
     // ── SHOW DISTRIBUTED STATUS FROM <cube> (FR-046) ───────────────────────

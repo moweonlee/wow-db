@@ -11,3 +11,4 @@ pub mod shard_map;
 pub mod cluster_guard;
 pub mod cache;
 pub mod session_store;
+pub mod partition_info;

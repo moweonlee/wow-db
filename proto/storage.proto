@@ -32,6 +32,12 @@ service StorageService {
 
     // 헬스체크
     rpc Health(wowdb.compute.HealthRequest) returns (wowdb.compute.HealthResponse);
+
+    // QN → SN: Shard 내 Part(SSTable) 목록 조회 (FR-045)
+    rpc GetPartList(GetPartListRequest) returns (stream PartInfo);
+
+    // QN → SN: Shard 요약 통계 조회 (row_count, size_bytes, part_count, lsn)
+    rpc GetShardInfo(GetShardInfoRequest) returns (ShardInfoResponse);
 }
 
 message ScanRequest {
@@ -146,13 +152,48 @@ message PartListResponse {
 }
 
 message PartMeta {
-    bytes  part_id       = 1;   // UUID bytes
-    uint32 level         = 2;
-    uint64 sequence_num  = 3;
-    uint64 row_count     = 4;
-    bytes  min_sort_key  = 5;
-    bytes  max_sort_key  = 6;
-    uint64 size_bytes    = 7;
+    bytes  part_id            = 1;   // UUID bytes
+    uint32 level              = 2;
+    uint64 sequence_num       = 3;
+    uint64 row_count          = 4;
+    bytes  min_sort_key       = 5;
+    bytes  max_sort_key       = 6;
+    uint64 size_bytes         = 7;
+    uint64 bloom_size_bytes   = 8;   // Bloom Filter 파일 크기
+    int64  created_at_ms      = 9;   // 생성 시각 (Unix epoch ms)
+}
+
+// ─── Part 목록 조회 (FR-045) ──────────────────────────────────────────────────
+
+/// QN → SN: Shard 내 Part 목록 요청
+message GetPartListRequest {
+    bytes  shard_id = 1;   // UUID bytes (16B)
+}
+
+/// SN → QN: 단일 Part 메타데이터 (스트림)
+message PartInfo {
+    string part_id            = 1;   // UUID 문자열
+    uint32 level              = 2;
+    uint64 sequence_num       = 3;
+    uint64 row_count          = 4;
+    uint64 size_bytes         = 5;
+    string min_sort_key       = 6;   // 사람이 읽을 수 있는 정렬 키 (최솟값)
+    string max_sort_key       = 7;   // 사람이 읽을 수 있는 정렬 키 (최댓값)
+    uint64 bloom_size_bytes   = 8;
+    int64  created_at_ms      = 9;   // Unix epoch ms
+}
+
+/// QN → SN: Shard 요약 통계 요청
+message GetShardInfoRequest {
+    bytes  shard_id = 1;   // UUID bytes (16B)
+}
+
+/// SN → QN: Shard 요약 통계
+message ShardInfoResponse {
+    uint64 row_count  = 1;
+    uint64 size_bytes = 2;
+    uint32 part_count = 3;
+    uint64 lsn        = 4;
 }
 
 message RecordBatchChunk {
