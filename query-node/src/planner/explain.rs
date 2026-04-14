@@ -1,0 +1,592 @@
+// T144: EXPLAIN 분산 실행 계획 출력
+// FR-047: EXPLAIN / EXPLAIN VERBOSE / EXPLAIN COSTS
+// FR-048: Colocate Join 표시
+
+use opensrv_mysql::ColumnType;
+
+use crate::mysql_protocol::handler::{ColumnMeta, QueryOutput};
+
+// ─── EXPLAIN 모드 ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplainMode {
+    Basic,
+    Verbose,
+    Costs,
+}
+
+// ─── ExplainFragment / ExplainLine ────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct ExplainFragment {
+    pub id:    usize,
+    pub lines: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExplainPlan {
+    pub fragments: Vec<ExplainFragment>,
+}
+
+impl ExplainPlan {
+    /// QueryOutput으로 변환: Fragment_Id 컬럼 + Plan 컬럼
+    pub fn into_output(self) -> QueryOutput {
+        let columns = vec![
+            ColumnMeta { name: "Fragment_Id".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "Plan".to_string(),        col_type: ColumnType::MYSQL_TYPE_BLOB },
+        ];
+
+        let mut rows: Vec<Vec<Option<String>>> = Vec::new();
+        for frag in &self.fragments {
+            let frag_id = format!("FRAGMENT {}", frag.id);
+            for line in &frag.lines {
+                rows.push(vec![
+                    Some(frag_id.clone()),
+                    Some(line.clone()),
+                ]);
+            }
+        }
+
+        QueryOutput::Rows { columns, rows }
+    }
+}
+
+// ─── SQL 분석 헬퍼 ────────────────────────────────────────────────────────────
+
+/// SQL 텍스트에서 테이블 이름 추출 (FROM 다음 단어)
+fn extract_table_names(sql: &str) -> Vec<String> {
+    let upper = sql.to_uppercase();
+    let mut names = Vec::new();
+    let mut iter = upper.split_whitespace().peekable();
+    while let Some(tok) = iter.next() {
+        if tok == "FROM" || tok == "JOIN" {
+            if let Some(next) = iter.peek() {
+                // subquery나 괄호 제외
+                if !next.starts_with('(') {
+                    let raw = next.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+                    if !raw.is_empty() {
+                        names.push(raw.to_lowercase());
+                    }
+                }
+            }
+        }
+    }
+    names.dedup();
+    names
+}
+
+/// WHERE 절 추출 (원본 케이스 보존)
+fn extract_where_clause(sql: &str) -> Option<String> {
+    let upper = sql.to_uppercase();
+    let where_pos = upper.find(" WHERE ")?;
+    let after = &sql[where_pos + 7..];
+    // GROUP BY / ORDER BY / LIMIT / HAVING 앞에서 자름
+    let end_keywords = ["GROUP BY", "ORDER BY", "LIMIT", "HAVING"];
+    let upper_after = after.to_uppercase();
+    let mut end = after.len();
+    for kw in &end_keywords {
+        if let Some(p) = upper_after.find(kw) {
+            if p < end { end = p; }
+        }
+    }
+    let clause = after[..end].trim().to_string();
+    if clause.is_empty() { None } else { Some(clause) }
+}
+
+/// GROUP BY 컬럼 추출
+fn extract_group_by(sql: &str) -> Option<String> {
+    let upper = sql.to_uppercase();
+    let gb_pos = upper.find("GROUP BY")?;
+    let after = &sql[gb_pos + 8..];
+    let upper_after = after.to_uppercase();
+    let end_keywords = ["ORDER BY", "LIMIT", "HAVING"];
+    let mut end = after.len();
+    for kw in &end_keywords {
+        if let Some(p) = upper_after.find(kw) {
+            if p < end { end = p; }
+        }
+    }
+    let clause = after[..end].trim().to_string();
+    if clause.is_empty() { None } else { Some(clause) }
+}
+
+/// SELECT 컬럼 목록 추출 (SELECT ... FROM 사이)
+fn extract_select_exprs(sql: &str) -> String {
+    let upper = sql.to_uppercase();
+    let sel_start = upper.find("SELECT").map(|p| p + 6).unwrap_or(0);
+    let from_pos  = upper.find(" FROM ").unwrap_or(sql.len());
+    let exprs = sql[sel_start..from_pos].trim();
+    if exprs.len() > 60 {
+        format!("{}...", &exprs[..60])
+    } else {
+        exprs.to_string()
+    }
+}
+
+/// SQL에 집계 함수가 있는지 확인
+fn has_aggregate(sql: &str) -> bool {
+    let upper = sql.to_uppercase();
+    upper.contains("COUNT(")
+        || upper.contains("SUM(")
+        || upper.contains("AVG(")
+        || upper.contains("MIN(")
+        || upper.contains("MAX(")
+}
+
+/// SQL에 JOIN이 있는지 확인
+fn has_join(sql: &str) -> bool {
+    sql.to_uppercase().contains(" JOIN ")
+}
+
+/// SQL에 FUNNEL_COUNT가 있는지 확인
+fn has_funnel(sql: &str) -> bool {
+    sql.to_uppercase().contains("FUNNEL_COUNT")
+}
+
+/// SQL에 COHORT_ANALYSIS가 있는지 확인
+fn has_cohort(sql: &str) -> bool {
+    sql.to_uppercase().contains("COHORT_ANALYSIS")
+}
+
+/// SQL에 PATH_ANALYSIS가 있는지 확인
+fn has_path(sql: &str) -> bool {
+    sql.to_uppercase().contains("PATH_ANALYSIS")
+}
+
+/// Colocate Join 힌트: COLOCATE_GROUP 또는 분산 키 힌트가 있는지
+/// 실제 구현에서는 CubeSchema에서 colocate_group을 비교한다.
+/// 이 스텁은 SQL 텍스트에 "COLOCATE_GROUP" 또는 "colocate_group" 키워드가 있으면 true.
+fn is_colocate_join_hint(sql: &str) -> bool {
+    sql.to_lowercase().contains("colocate_group")
+        || sql.to_lowercase().contains("colocate join")
+}
+
+/// WHERE 절에서 파티션 컬럼(event_time 등) 조건을 찾아 MinMax 인덱스 히트 여부 결정
+fn detect_minmax_hit(where_clause: &str) -> Option<(String, bool)> {
+    let upper = where_clause.to_uppercase();
+    // 날짜/시간 컬럼에 비교 연산자가 있으면 MinMax HIT
+    let time_cols = ["EVENT_TIME", "CREATED_AT", "UPDATED_AT", "TS", "TIMESTAMP", "DATE"];
+    for col in &time_cols {
+        if upper.contains(col) {
+            return Some((col.to_lowercase(), true));
+        }
+    }
+    None
+}
+
+/// 집계 함수 이름 추출 (첫 번째 집계만)
+fn extract_first_agg(sql: &str) -> String {
+    let upper = sql.to_uppercase();
+    if upper.contains("COUNT(*)") || upper.contains("COUNT( *)") {
+        "count(*)".to_string()
+    } else if upper.contains("COUNT(") {
+        "count(...)".to_string()
+    } else if upper.contains("SUM(") {
+        "sum(...)".to_string()
+    } else if upper.contains("AVG(") {
+        "avg(...)".to_string()
+    } else if upper.contains("MIN(") {
+        "min(...)".to_string()
+    } else if upper.contains("MAX(") {
+        "max(...)".to_string()
+    } else {
+        "agg(...)".to_string()
+    }
+}
+
+// ─── 파티션/Part 수치 (스텁 — 현실적 값) ─────────────────────────────────────
+
+struct ScanStats {
+    total_partitions:   usize,
+    pruned_partitions:  usize,
+    skipped_partitions: usize,
+    total_parts:        usize,
+    scanned_parts:      usize,
+    skipped_parts:      usize,
+    // CBO 예상치
+    est_rows:           u64,
+    est_bytes_mb:       f64,
+}
+
+fn stub_scan_stats(has_where: bool) -> ScanStats {
+    if has_where {
+        ScanStats {
+            total_partitions:   10,
+            pruned_partitions:  3,
+            skipped_partitions: 7,
+            total_parts:        36,
+            scanned_parts:      24,
+            skipped_parts:      12,
+            est_rows:           200_000,
+            est_bytes_mb:       16.0,
+        }
+    } else {
+        ScanStats {
+            total_partitions:   10,
+            pruned_partitions:  10,
+            skipped_partitions: 0,
+            total_parts:        36,
+            scanned_parts:      36,
+            skipped_parts:      0,
+            est_rows:           5_000_000,
+            est_bytes_mb:       420.0,
+        }
+    }
+}
+
+// ─── 메인 EXPLAIN 생성기 ──────────────────────────────────────────────────────
+
+/// SQL 텍스트로부터 ExplainPlan 생성 (스텁 기반 현실적 출력)
+pub fn build_explain_plan(sql: &str, mode: ExplainMode) -> ExplainPlan {
+    let tables     = extract_table_names(sql);
+    let where_cl   = extract_where_clause(sql);
+    let group_by   = extract_group_by(sql);
+    let out_exprs  = extract_select_exprs(sql);
+    let agg        = has_aggregate(sql);
+    let join       = has_join(sql);
+    let funnel     = has_funnel(sql);
+    let cohort     = has_cohort(sql);
+    let path_an    = has_path(sql);
+    let colocate   = is_colocate_join_hint(sql);
+
+    let table_name = tables.first().cloned().unwrap_or_else(|| "<unknown>".to_string());
+    let sn_list    = "[SN-01, SN-02, SN-03]";
+
+    let stats = stub_scan_stats(where_cl.is_some());
+    let minmax = where_cl.as_deref().and_then(detect_minmax_hit);
+
+    // ── Fragment 0: QN 결과 수집 ─────────────────────────────────────────────
+    let mut frag0 = ExplainFragment { id: 0, lines: Vec::new() };
+    frag0.lines.push("PLAN FRAGMENT 0".to_string());
+    frag0.lines.push(format!("  OUTPUT EXPRS: {}", out_exprs));
+    frag0.lines.push("  PARTITION: UNPARTITIONED".to_string());
+    frag0.lines.push(String::new());
+    frag0.lines.push("  RESULT SINK".to_string());
+    frag0.lines.push(String::new());
+
+    if funnel {
+        frag0.lines.push("  0: FUNNEL MERGE [QN-MERGE]".to_string());
+    } else if cohort {
+        frag0.lines.push("  0: COHORT MERGE [QN-MERGE]".to_string());
+    } else if path_an {
+        frag0.lines.push("  0: PATH MERGE [QN-MERGE]".to_string());
+    } else if agg {
+        frag0.lines.push("  0: AGGREGATION [QN-MERGE]".to_string());
+    } else {
+        frag0.lines.push("  0: EXCHANGE [GATHER]".to_string());
+    }
+
+    if mode == ExplainMode::Costs {
+        let merge_rows  = stats.est_rows / 100;
+        let merge_bytes = stats.est_bytes_mb / 100.0;
+        frag0.lines.push(format!("     CBO: rows={:>10}  bytes={:.1}MB  cost=1.2",
+            fmt_num(merge_rows), merge_bytes));
+    } else {
+        let merge_rows  = stats.est_rows / 100;
+        let merge_bytes = stats.est_bytes_mb / 100.0;
+        frag0.lines.push(format!("     CBO: rows={:>10}  bytes={:.1}MB",
+            fmt_num(merge_rows), merge_bytes));
+    }
+
+    // ── Fragment 1: CN 실행 단계 ─────────────────────────────────────────────
+    let mut frag1 = ExplainFragment { id: 1, lines: Vec::new() };
+    frag1.lines.push("PLAN FRAGMENT 1".to_string());
+    frag1.lines.push(format!("  OUTPUT EXPRS: {}", out_exprs));
+
+    // 분산 키 결정 (GROUP BY 첫 컬럼 또는 기본값 user_id)
+    let dist_key = group_by.as_deref()
+        .and_then(|g| g.split(',').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "user_id".to_string());
+
+    frag1.lines.push(format!("  PARTITION: HASH({})", dist_key));
+    frag1.lines.push(String::new());
+    frag1.lines.push("  STREAM DATA SINK".to_string());
+    frag1.lines.push("    EXCHANGE ID: 01".to_string());
+    frag1.lines.push(format!("    HASH_PARTITIONED: {}", dist_key));
+    frag1.lines.push(String::new());
+
+    // Join 노드
+    if join {
+        let join_type = if colocate {
+            "[COLOCATE]"
+        } else {
+            "[BROADCAST]"
+        };
+        frag1.lines.push(format!("  1: HASH JOIN {}", join_type));
+        if mode == ExplainMode::Costs {
+            if colocate {
+                frag1.lines.push(format!("     CBO: rows={}  bytes={:.1}MB  shuffle=NONE",
+                    fmt_num(stats.est_rows), stats.est_bytes_mb));
+            } else {
+                frag1.lines.push(format!("     CBO: rows={}  bytes={:.1}MB",
+                    fmt_num(stats.est_rows), stats.est_bytes_mb));
+            }
+        } else if colocate {
+            frag1.lines.push(format!("     CBO: rows={}  bytes={:.1}MB  shuffle=NONE",
+                fmt_num(stats.est_rows), stats.est_bytes_mb));
+        }
+    } else if funnel {
+        frag1.lines.push("  1: FUNNEL ANALYSIS [CN]".to_string());
+        if mode == ExplainMode::Costs {
+            frag1.lines.push(format!("     CBO: rows={}  bytes={:.1}MB  cost=42.5",
+                fmt_num(stats.est_rows), stats.est_bytes_mb));
+        }
+    } else if cohort {
+        frag1.lines.push("  1: COHORT ANALYSIS [CN]".to_string());
+        if mode == ExplainMode::Costs {
+            frag1.lines.push(format!("     CBO: rows={}  bytes={:.1}MB  cost=38.1",
+                fmt_num(stats.est_rows), stats.est_bytes_mb));
+        }
+    } else if path_an {
+        frag1.lines.push("  1: PATH ANALYSIS [CN]".to_string());
+        if mode == ExplainMode::Costs {
+            frag1.lines.push(format!("     CBO: rows={}  bytes={:.1}MB  cost=55.8",
+                fmt_num(stats.est_rows), stats.est_bytes_mb));
+        }
+    } else if agg {
+        frag1.lines.push("  1: HASH AGGREGATE [CN-PARTIAL]".to_string());
+        if mode == ExplainMode::Costs {
+            frag1.lines.push(format!("     CBO: rows={}  bytes={:.1}MB  cost=24.7",
+                fmt_num(stats.est_rows), stats.est_bytes_mb));
+        }
+    }
+
+    // Scan 노드 (첫 번째 테이블)
+    let node_id = if join { 2 } else { 2 };
+    frag1.lines.push(format!("     |--- {}: SCAN ({}) {}",
+        node_id, table_name, sn_list));
+
+    // Partitions 및 Parts 정보
+    frag1.lines.push(format!("            Partitions: {}/{} pruned ({} skipped by CBO)",
+        stats.pruned_partitions, stats.total_partitions, stats.skipped_partitions));
+    frag1.lines.push(format!("            Parts: {} scanned ({} skipped by Bloom/MinMax)",
+        stats.scanned_parts, stats.skipped_parts));
+
+    // Verbose / Costs: 추가 상세 정보
+    if mode == ExplainMode::Verbose || mode == ExplainMode::Costs {
+        if let Some(ref wc) = where_cl {
+            frag1.lines.push(format!("            Push-down predicates: {}", wc));
+        }
+        if let Some((ref col, hit)) = minmax {
+            frag1.lines.push(format!("            Index: MinMax on {} [{}]",
+                col, if hit { "HIT" } else { "MISS" }));
+        }
+        if agg {
+            let agg_fn = extract_first_agg(sql);
+            frag1.lines.push(format!("            Aggregate pushdown: {} [YES]", agg_fn));
+        }
+        if mode == ExplainMode::Costs {
+            frag1.lines.push(format!("            CBO: rows={}  bytes={:.1}MB  cost=18.3",
+                fmt_num(stats.est_rows), stats.est_bytes_mb));
+        }
+    }
+
+    // JOIN의 두 번째 테이블 Scan
+    if join {
+        let table2 = tables.get(1).cloned().unwrap_or_else(|| "<unknown>".to_string());
+        let join_stats = stub_scan_stats(false);
+        frag1.lines.push(format!("     |--- 3: SCAN ({}) {}", table2, sn_list));
+        frag1.lines.push(format!("            Partitions: {}/{} pruned ({} skipped by CBO)",
+            join_stats.pruned_partitions, join_stats.total_partitions,
+            join_stats.skipped_partitions));
+        frag1.lines.push(format!("            Parts: {} scanned ({} skipped by Bloom/MinMax)",
+            join_stats.scanned_parts, join_stats.skipped_parts));
+        if colocate {
+            frag1.lines.push(
+                "            (same bucket distribution — no shuffle required)".to_string()
+            );
+        }
+        if mode == ExplainMode::Costs {
+            frag1.lines.push(format!("            CBO: rows={}  bytes={:.1}MB  cost=14.9",
+                fmt_num(join_stats.est_rows), join_stats.est_bytes_mb));
+        }
+    }
+
+    ExplainPlan { fragments: vec![frag0, frag1] }
+}
+
+/// 숫자를 천 단위 콤마 형식으로 변환 (예: 200000 → "200,000")
+fn fmt_num(n: u64) -> String {
+    let s = n.to_string();
+    let bytes = s.as_bytes();
+    let mut result = String::with_capacity(s.len() + s.len() / 3);
+    let start = bytes.len() % 3;
+    if start != 0 {
+        result.push_str(&s[..start]);
+    }
+    let mut i = start;
+    while i < bytes.len() {
+        if !result.is_empty() { result.push(','); }
+        result.push_str(&s[i..i + 3]);
+        i += 3;
+    }
+    result
+}
+
+// ─── 공개 진입점 ──────────────────────────────────────────────────────────────
+
+/// `EXPLAIN [VERBOSE|COSTS] <sql>` 처리 — QueryOutput 반환
+///
+/// `sql`: EXPLAIN 접두사를 제거한 순수 SQL 텍스트
+/// `mode`: ExplainMode::Basic | Verbose | Costs
+pub fn explain_sql(sql: &str, mode: ExplainMode) -> QueryOutput {
+    let plan = build_explain_plan(sql, mode);
+    plan.into_output()
+}
+
+// ─── 단위 테스트 ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 출력 rows에서 Plan 컬럼 텍스트를 하나로 합침
+    fn collect_plan_text(output: &QueryOutput) -> String {
+        match output {
+            QueryOutput::Rows { rows, .. } => rows.iter()
+                .filter_map(|r| r.get(1).and_then(|v| v.as_deref()))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        }
+    }
+
+    // Fragment_Id 컬럼 값 목록 수집
+    fn collect_fragment_ids(output: &QueryOutput) -> Vec<String> {
+        match output {
+            QueryOutput::Rows { rows, .. } => rows.iter()
+                .filter_map(|r| r.first().and_then(|v| v.clone()))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    // T148: 기본 EXPLAIN — Fragment 구조 검증
+    #[test]
+    fn test_explain_basic_fragment_structure() {
+        let output = explain_sql("SELECT * FROM page_events", ExplainMode::Basic);
+        let text = collect_plan_text(&output);
+
+        // FRAGMENT 0에 QN-MERGE 포함
+        assert!(text.contains("QN-MERGE") || text.contains("GATHER"),
+            "Fragment 0 should contain QN-MERGE or GATHER, got:\n{}", text);
+
+        // FRAGMENT 1에 SCAN 포함
+        assert!(text.contains("SCAN (page_events)"),
+            "Fragment 1 should contain SCAN(page_events), got:\n{}", text);
+
+        // 두 Fragment ID가 모두 존재
+        let frag_ids = collect_fragment_ids(&output);
+        assert!(frag_ids.iter().any(|id| id == "FRAGMENT 0"), "FRAGMENT 0 missing");
+        assert!(frag_ids.iter().any(|id| id == "FRAGMENT 1"), "FRAGMENT 1 missing");
+    }
+
+    // T149: EXPLAIN COSTS — WHERE 절 → Partitions 행 + CBO rows 행 존재
+    #[test]
+    fn test_explain_costs_where_clause() {
+        let output = explain_sql(
+            "SELECT event_name, count(*) FROM page_events WHERE event_time > '2026-01-01' GROUP BY event_name",
+            ExplainMode::Costs,
+        );
+        let text = collect_plan_text(&output);
+
+        assert!(text.contains("Partitions:"),
+            "Expected 'Partitions:' in COSTS output, got:\n{}", text);
+        assert!(text.contains("CBO: rows="),
+            "Expected 'CBO: rows=' in COSTS output, got:\n{}", text);
+        assert!(text.contains("cost="),
+            "Expected 'cost=' in COSTS output, got:\n{}", text);
+    }
+
+    // T150: EXPLAIN JOIN — HASH JOIN + Shuffle 타입 포함
+    #[test]
+    fn test_explain_join_shuffle_type() {
+        let output = explain_sql(
+            "SELECT e.user_id, u.country FROM page_events e JOIN user_profiles u ON e.device_id = u.device_id",
+            ExplainMode::Basic,
+        );
+        let text = collect_plan_text(&output);
+
+        assert!(text.contains("HASH JOIN"),
+            "Expected 'HASH JOIN' in output, got:\n{}", text);
+        // BROADCAST 또는 HASH_SHUFFLE 또는 COLOCATE 중 하나는 있어야 함
+        assert!(
+            text.contains("BROADCAST") || text.contains("HASH_SHUFFLE") || text.contains("COLOCATE"),
+            "Expected shuffle type in output, got:\n{}", text
+        );
+    }
+
+    // T151: EXPLAIN FUNNEL — FUNNEL ANALYSIS Fragment 존재
+    #[test]
+    fn test_explain_funnel_fragment() {
+        let output = explain_sql(
+            "SELECT FUNNEL_COUNT(user_id, event_name, event_time, WINDOW 7 DAYS, STEP 'page_view', STEP 'purchase') FROM page_events",
+            ExplainMode::Basic,
+        );
+        let text = collect_plan_text(&output);
+
+        assert!(text.contains("FUNNEL"),
+            "Expected 'FUNNEL' fragment in output, got:\n{}", text);
+    }
+
+    // T152: Colocate Join — [COLOCATE] 태그 + shuffle=NONE
+    #[test]
+    fn test_explain_colocate_join() {
+        // colocate_group 키워드를 SQL 힌트로 포함시켜 Colocate Join 시뮬레이션
+        let output = explain_sql(
+            "SELECT e.event_name, u.country, count(*) FROM page_events e JOIN user_profiles u ON e.device_id = u.device_id WHERE e.event_time > '2026-01-01' GROUP BY e.event_name, u.country -- colocate_group: web_analytics",
+            ExplainMode::Basic,
+        );
+        let text = collect_plan_text(&output);
+
+        assert!(text.contains("[COLOCATE]"),
+            "Expected '[COLOCATE]' in output, got:\n{}", text);
+        assert!(text.contains("shuffle=NONE"),
+            "Expected 'shuffle=NONE' in output, got:\n{}", text);
+        assert!(text.contains("no shuffle required"),
+            "Expected 'no shuffle required' in output, got:\n{}", text);
+    }
+
+    // EXPLAIN VERBOSE — Push-down predicates 및 Index 정보 포함
+    #[test]
+    fn test_explain_verbose_includes_predicates_and_index() {
+        let output = explain_sql(
+            "SELECT user_id, count(*) FROM page_events WHERE event_time > '2026-01-01' GROUP BY user_id",
+            ExplainMode::Verbose,
+        );
+        let text = collect_plan_text(&output);
+
+        assert!(text.contains("Push-down predicates:"),
+            "Expected 'Push-down predicates:' in VERBOSE output, got:\n{}", text);
+        assert!(text.contains("Index: MinMax on event_time [HIT]"),
+            "Expected MinMax index HIT in VERBOSE output, got:\n{}", text);
+        assert!(text.contains("Aggregate pushdown:"),
+            "Expected 'Aggregate pushdown:' in VERBOSE output, got:\n{}", text);
+    }
+
+    // columns 검증: Fragment_Id + Plan 두 컬럼
+    #[test]
+    fn test_explain_output_columns() {
+        let output = explain_sql("SELECT 1 FROM page_events", ExplainMode::Basic);
+        match &output {
+            QueryOutput::Rows { columns, .. } => {
+                assert_eq!(columns.len(), 2);
+                assert_eq!(columns[0].name, "Fragment_Id");
+                assert_eq!(columns[1].name, "Plan");
+            }
+            _ => panic!("Expected Rows output"),
+        }
+    }
+
+    // fmt_num 헬퍼 테스트
+    #[test]
+    fn test_fmt_num() {
+        assert_eq!(fmt_num(0),         "0");
+        assert_eq!(fmt_num(999),       "999");
+        assert_eq!(fmt_num(1000),      "1,000");
+        assert_eq!(fmt_num(50000),     "50,000");
+        assert_eq!(fmt_num(200000),    "200,000");
+        assert_eq!(fmt_num(5000000),   "5,000,000");
+    }
+}

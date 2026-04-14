@@ -30,7 +30,7 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_show_databases() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW DATABASES", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SHOW DATABASES", &mgr, "default", None).await.unwrap();
         match out {
             QueryOutput::Rows { columns, rows } => {
                 assert_eq!(columns[0].name, "Database", "컬럼명 'Database'");
@@ -47,7 +47,7 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_use_database() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("USE analytics", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("USE analytics", &mgr, "default", None).await.unwrap();
         assert!(matches!(out, QueryOutput::Affected(0)), "USE: Affected(0) 반환");
     }
 
@@ -58,14 +58,14 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_set_names() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SET NAMES utf8mb4", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SET NAMES utf8mb4", &mgr, "default", None).await.unwrap();
         assert!(matches!(out, QueryOutput::Affected(0)));
     }
 
     #[tokio::test]
     async fn sql_set_character_set() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SET character_set_client = utf8mb4", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SET character_set_client = utf8mb4", &mgr, "default", None).await.unwrap();
         assert!(matches!(out, QueryOutput::Affected(0)));
     }
 
@@ -133,7 +133,7 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_show_tables() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW TABLES", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SHOW TABLES", &mgr, "default", None).await.unwrap();
         match out {
             QueryOutput::Rows { columns, .. } => {
                 assert!(columns[0].name.starts_with("Tables_in_"), "컬럼명 Tables_in_<db>");
@@ -145,14 +145,14 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_show_tables_from_db() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW TABLES FROM analytics", &mgr, "analytics").await.unwrap();
+        let out = handle_schema_command("SHOW TABLES FROM analytics", &mgr, "analytics", None).await.unwrap();
         assert!(matches!(out, QueryOutput::Rows { .. }));
     }
 
     #[tokio::test]
     async fn sql_show_cubes() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW CUBES", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SHOW CUBES", &mgr, "default", None).await.unwrap();
         match out {
             QueryOutput::Rows { columns, .. } => {
                 let names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
@@ -166,7 +166,7 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_describe_not_found_returns_error() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("DESCRIBE nonexistent", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("DESCRIBE nonexistent", &mgr, "default", None).await.unwrap();
         assert!(matches!(out, QueryOutput::Error(_)), "없는 테이블 DESCRIBE → Error");
     }
 
@@ -182,7 +182,7 @@ mod sql_query_tests {
         let schema = crate::mysql_protocol::handler::stmt_to_schema_pub(stmt, "default");
         cube_mgr.create(&schema).await.unwrap();
 
-        let out = handle_schema_command("DESCRIBE events_test", &cube_mgr, "default").await.unwrap();
+        let out = handle_schema_command("DESCRIBE events_test", &cube_mgr, "default", None).await.unwrap();
         match out {
             QueryOutput::Rows { columns, rows } => {
                 let col_names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
@@ -197,7 +197,7 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_show_create_table() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW CREATE TABLE nonexistent", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SHOW CREATE TABLE nonexistent", &mgr, "default", None).await.unwrap();
         match out {
             QueryOutput::Rows { columns, rows } => {
                 assert_eq!(columns.len(), 2, "Table + Create Table 컬럼");
@@ -210,7 +210,7 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_show_columns_from() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW COLUMNS FROM my_table", &mgr, "default").await;
+        let out = handle_schema_command("SHOW COLUMNS FROM my_table", &mgr, "default", None).await;
         // 없는 테이블이면 None 또는 Error
         assert!(out.is_none() || matches!(out, Some(QueryOutput::Error(_)) | Some(QueryOutput::Rows { .. })));
     }
@@ -222,7 +222,7 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_show_status() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW STATUS", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SHOW STATUS", &mgr, "default", None).await.unwrap();
         match out {
             QueryOutput::Rows { columns, rows } => {
                 let col_names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
@@ -237,14 +237,14 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_show_global_status() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW GLOBAL STATUS", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SHOW GLOBAL STATUS", &mgr, "default", None).await.unwrap();
         assert!(matches!(out, QueryOutput::Rows { .. }));
     }
 
     #[tokio::test]
     async fn sql_show_variables() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW VARIABLES", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SHOW VARIABLES", &mgr, "default", None).await.unwrap();
         assert!(matches!(out, QueryOutput::Rows { .. }));
     }
 
@@ -255,7 +255,7 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_show_partitions_column_contract() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW PARTITIONS FROM page_events", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SHOW PARTITIONS FROM page_events", &mgr, "default", None).await.unwrap();
         match out {
             QueryOutput::Rows { columns, .. } => {
                 let names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
@@ -272,7 +272,7 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_show_shards_column_contract() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW SHARDS FROM page_events", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SHOW SHARDS FROM page_events", &mgr, "default", None).await.unwrap();
         match out {
             QueryOutput::Rows { columns, .. } => {
                 let names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
@@ -289,7 +289,7 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_show_parts_column_contract() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW PARTS FROM page_events", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SHOW PARTS FROM page_events", &mgr, "default", None).await.unwrap();
         match out {
             QueryOutput::Rows { columns, .. } => {
                 let names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
@@ -310,7 +310,7 @@ mod sql_query_tests {
         // "SHOW PARTS ON PARTITION" 별칭 구문 지원 확인
         let out = handle_schema_command(
             "SHOW PARTS ON PARTITION 'pid-001' FROM page_events",
-            &mgr, "default",
+            &mgr, "default", None,
         ).await;
         assert!(out.is_some(), "SHOW PARTS ON PARTITION 구문 인식되어야 함");
         assert!(matches!(out.unwrap(), QueryOutput::Rows { .. }));
@@ -321,7 +321,7 @@ mod sql_query_tests {
         let mgr = make_cube_mgr();
         let out = handle_schema_command(
             "SHOW PARTS FROM page_events SHARD 'shard-uuid-001'",
-            &mgr, "default",
+            &mgr, "default", None,
         ).await;
         assert!(out.is_some(), "SHOW PARTS FROM ... SHARD 구문 인식");
         assert!(matches!(out.unwrap(), QueryOutput::Rows { .. }));
@@ -330,7 +330,7 @@ mod sql_query_tests {
     #[tokio::test]
     async fn sql_show_distributed_status_column_contract() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW DISTRIBUTED STATUS FROM page_events", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SHOW DISTRIBUTED STATUS FROM page_events", &mgr, "default", None).await.unwrap();
         match out {
             QueryOutput::Rows { columns, .. } => {
                 let names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();

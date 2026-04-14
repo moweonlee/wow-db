@@ -1,5 +1,6 @@
 // T088: SHOW TABLES, SHOW DATABASES, DESCRIBE, INFORMATION_SCHEMA 가상 테이블
 // T138: SHOW PARTITIONS / SHARDS / PARTS / DISTRIBUTED STATUS — PartitionInfoService 연동
+// T147: EXPLAIN / EXPLAIN VERBOSE / EXPLAIN COSTS — FR-047
 
 use std::sync::Arc;
 
@@ -8,6 +9,7 @@ use opensrv_mysql::ColumnType;
 use super::handler::{ColumnMeta, QueryOutput};
 use crate::meta::cube::CubeManager;
 use crate::meta::partition_info::PartitionInfoService;
+use crate::planner::explain::{explain_sql, ExplainMode};
 
 /// 스키마 관련 명령 처리 — 해당하면 Some(QueryOutput), 아니면 None
 ///
@@ -30,6 +32,23 @@ pub async fn handle_schema_command(
     // SET commands (클라이언트 초기화 등)
     if upper.starts_with("SET ") {
         return Some(QueryOutput::Affected(0));
+    }
+
+    // ── EXPLAIN [VERBOSE|COSTS] <sql> (FR-047) ─────────────────────────────
+    if upper.starts_with("EXPLAIN ") || upper == "EXPLAIN" {
+        // "EXPLAIN" 단어를 제거한 나머지 부분
+        let after_explain = trimmed
+            .trim_start_matches(|c: char| !c.is_whitespace())
+            .trim_start();
+        let upper_after = after_explain.to_uppercase();
+        let (mode, inner_sql) = if upper_after.starts_with("VERBOSE ") {
+            (ExplainMode::Verbose, after_explain[7..].trim())
+        } else if upper_after.starts_with("COSTS ") {
+            (ExplainMode::Costs, after_explain[6..].trim())
+        } else {
+            (ExplainMode::Basic, after_explain)
+        };
+        return Some(explain_sql(inner_sql, mode));
     }
 
     // SHOW DATABASES
@@ -333,19 +352,42 @@ pub async fn handle_schema_command(
 
     // ── SHOW DISTRIBUTED STATUS FROM <cube> (FR-046) ───────────────────────
     if upper.starts_with("SHOW DISTRIBUTED STATUS") || upper.starts_with("SHOW DISTRIBUTED") && upper.contains("STATUS") {
-        return Some(QueryOutput::Rows {
-            columns: vec![
-                ColumnMeta { name: "sn_node_id".to_string(),          col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "sn_endpoint".to_string(),         col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
-                ColumnMeta { name: "shard_count".to_string(),         col_type: ColumnType::MYSQL_TYPE_LONG },
-                ColumnMeta { name: "leader_shard_count".to_string(),  col_type: ColumnType::MYSQL_TYPE_LONG },
-                ColumnMeta { name: "partition_count".to_string(),     col_type: ColumnType::MYSQL_TYPE_LONG },
-                ColumnMeta { name: "row_count".to_string(),           col_type: ColumnType::MYSQL_TYPE_LONGLONG },
-                ColumnMeta { name: "size_bytes".to_string(),          col_type: ColumnType::MYSQL_TYPE_LONGLONG },
-                ColumnMeta { name: "avg_part_per_shard".to_string(),  col_type: ColumnType::MYSQL_TYPE_FLOAT },
-            ],
-            rows: vec![], // TODO: T138 PartitionInfoService 연동 후 실 데이터
-        });
+        let cube_name = extract_from_token(trimmed, "FROM");
+
+        let columns = vec![
+            ColumnMeta { name: "sn_node_id".to_string(),          col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "sn_endpoint".to_string(),         col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ColumnMeta { name: "shard_count".to_string(),         col_type: ColumnType::MYSQL_TYPE_LONG },
+            ColumnMeta { name: "leader_shard_count".to_string(),  col_type: ColumnType::MYSQL_TYPE_LONG },
+            ColumnMeta { name: "partition_count".to_string(),     col_type: ColumnType::MYSQL_TYPE_LONG },
+            ColumnMeta { name: "row_count".to_string(),           col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+            ColumnMeta { name: "size_bytes".to_string(),          col_type: ColumnType::MYSQL_TYPE_LONGLONG },
+            ColumnMeta { name: "avg_part_per_shard".to_string(),  col_type: ColumnType::MYSQL_TYPE_FLOAT },
+        ];
+
+        let rows = if let Some(svc) = partition_svc {
+            let cube_id = cube_mgr.get_by_name(&cube_name).await.ok().flatten()
+                .map(|c| c.cube_id.to_string())
+                .unwrap_or(cube_name.clone());
+
+            svc.get_distributed_status(&cube_id).await.unwrap_or_default()
+                .into_iter()
+                .map(|s| vec![
+                    Some(s.sn_node_id),
+                    Some(s.sn_endpoint),
+                    Some(s.shard_count.to_string()),
+                    Some(s.leader_shard_count.to_string()),
+                    Some(s.partition_count.to_string()),
+                    Some(s.row_count.to_string()),
+                    Some(s.size_bytes.to_string()),
+                    Some(format!("{:.2}", s.avg_part_per_shard)),
+                ])
+                .collect()
+        } else {
+            vec![]
+        };
+
+        return Some(QueryOutput::Rows { columns, rows });
     }
 
     // SHOW STATUS / SHOW VARIABLES
@@ -414,7 +456,7 @@ mod tests {
     #[tokio::test]
     async fn test_show_databases() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW DATABASES", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SHOW DATABASES", &mgr, "default", None).await.unwrap();
         match out {
             QueryOutput::Rows { rows, .. } => assert!(rows.len() >= 1),
             _ => panic!("Expected Rows"),
@@ -424,21 +466,21 @@ mod tests {
     #[tokio::test]
     async fn test_set_command() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SET NAMES utf8mb4", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("SET NAMES utf8mb4", &mgr, "default", None).await.unwrap();
         assert!(matches!(out, QueryOutput::Affected(0)));
     }
 
     #[tokio::test]
     async fn test_use_command() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("USE analytics", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("USE analytics", &mgr, "default", None).await.unwrap();
         assert!(matches!(out, QueryOutput::Affected(0)));
     }
 
     #[tokio::test]
     async fn test_describe_not_found() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("DESCRIBE nonexistent_table", &mgr, "default").await.unwrap();
+        let out = handle_schema_command("DESCRIBE nonexistent_table", &mgr, "default", None).await.unwrap();
         assert!(matches!(out, QueryOutput::Error(_)));
     }
 
@@ -454,7 +496,7 @@ mod tests {
     #[tokio::test]
     async fn test_show_partitions_returns_correct_columns() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW PARTITIONS FROM page_events", &mgr, "default")
+        let out = handle_schema_command("SHOW PARTITIONS FROM page_events", &mgr, "default", None)
             .await
             .unwrap();
         match out {
@@ -467,8 +509,8 @@ mod tests {
                 assert!(col_names.contains(&"row_count"));
                 assert!(col_names.contains(&"shard_count"));
                 assert!(col_names.contains(&"tier"));
-                // 없는 Cube도 빈 결과셋 반환 (오류 아님)
-                assert!(rows.is_empty(), "스텁: 빈 결과셋");
+                // partition_svc=None → 빈 결과셋
+                assert!(rows.is_empty(), "스텁 모드: 빈 결과셋");
             }
             _ => panic!("Expected Rows output"),
         }
@@ -477,7 +519,7 @@ mod tests {
     #[tokio::test]
     async fn test_show_shards_returns_correct_columns() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW SHARDS FROM page_events", &mgr, "default")
+        let out = handle_schema_command("SHOW SHARDS FROM page_events", &mgr, "default", None)
             .await
             .unwrap();
         match out {
@@ -498,7 +540,7 @@ mod tests {
     #[tokio::test]
     async fn test_show_parts_returns_correct_columns() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW PARTS FROM page_events", &mgr, "default")
+        let out = handle_schema_command("SHOW PARTS FROM page_events", &mgr, "default", None)
             .await
             .unwrap();
         match out {
@@ -524,6 +566,7 @@ mod tests {
             "SHOW PARTS ON PARTITION 'part-uuid-001' FROM page_events",
             &mgr,
             "default",
+            None,
         ).await;
         // 이 구문은 "SHOW PARTS"로 시작하므로 처리되어야 함
         assert!(out.is_some(), "SHOW PARTS ON PARTITION 구문 처리되어야 함");
@@ -532,7 +575,7 @@ mod tests {
     #[tokio::test]
     async fn test_show_distributed_status_returns_correct_columns() {
         let mgr = make_cube_mgr();
-        let out = handle_schema_command("SHOW DISTRIBUTED STATUS FROM page_events", &mgr, "default")
+        let out = handle_schema_command("SHOW DISTRIBUTED STATUS FROM page_events", &mgr, "default", None)
             .await
             .unwrap();
         match out {

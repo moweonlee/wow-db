@@ -342,11 +342,11 @@
 
 ### Proto — SN 파티션/Part 조회 API [P]
 
-- [ ] T137 [P] `proto/storage.proto` 확장 (GetPartList/GetShardInfo RPC 추가 — GetPartListRequest: shard_id, PartInfo 스트림 응답(part_id, level, seq_num, row_count, size_bytes, min_sort_key, max_sort_key, bloom_size_bytes); GetShardInfoRequest: shard_id, ShardInfoResponse(row_count, size_bytes, part_count, lsn); FR-045)
+- [x] T137 [P] `proto/storage.proto` 확장 (GetPartList/GetShardInfo RPC 추가 — GetPartListRequest: shard_id, PartInfo 스트림 응답(part_id, level, seq_num, row_count, size_bytes, min_sort_key, max_sort_key, bloom_size_bytes); GetShardInfoRequest: shard_id, ShardInfoResponse(row_count, size_bytes, part_count, lsn); FR-045)
 
 ### Query Node — 파티션/Shard 메타 집계 서비스
 
-- [ ] T138 `query-node/src/meta/partition_info.rs` 구현 (PartitionInfoService — Raft KV에서 파티션·Shard 메타 집계: list_partitions(cube_id) → Vec<PartitionMeta>, list_shards(cube_id, partition_id?) → Vec<ShardMeta>, get_distributed_status(cube_id) → Vec<SnDistributionSummary>; SN gRPC로 Part 목록 조회: list_parts(shard_id) → Vec<PartMeta>; FR-043~FR-046)
+- [x] T138 `query-node/src/meta/partition_info.rs` 구현 (PartitionInfoService — Raft KV에서 파티션·Shard 메타 집계: list_partitions(cube_id) → Vec<PartitionMeta>, list_shards(cube_id, partition_id?) → Vec<ShardMeta>, get_distributed_status(cube_id) → Vec<SnDistributionSummary>; SN gRPC로 Part 목록 조회: list_parts(shard_id) → Vec<PartMeta>; FR-043~FR-046)
 
 ### Query Node — MySQL 프로토콜 SHOW 핸들러
 
@@ -360,6 +360,33 @@
 - [x] T143 `query-node/src/mysql_protocol/schema_cmds.rs` 단위 테스트 추가 (SHOW PARTITIONS/SHARDS/PARTS/DISTRIBUTED STATUS 핸들러 — stub 데이터 기반 컬럼 수·이름 정확성 검증, 없는 Cube에 대한 빈 결과셋 반환 검증)
 
 **체크포인트**: MySQL 클라이언트에서 `SHOW PARTITIONS FROM page_events` 실행 시 올바른 컬럼 헤더와 결과셋 반환, `SHOW PARTS FROM page_events WHERE level = 0` 구문 파싱 정상 동작
+
+---
+
+## Phase 15: EXPLAIN — 분산 쿼리 실행 계획 출력 (FR-047~FR-048)
+
+**목적**: `EXPLAIN <sql>`, `EXPLAIN VERBOSE <sql>`, `EXPLAIN COSTS <sql>` 명령으로 CBO가 생성하는 분산 실행 계획을 Fragment 단위로 MySQL 클라이언트에 출력. Colocate Join 여부를 EXPLAIN 출력에 명시적으로 표시하여 운영자가 Shuffle 비용을 즉시 파악할 수 있게 함.  
+**참조**: FR-047, FR-048, `design/sql_syntax.md § 9.5`
+
+### Query Node — Explain 핵심 모듈
+
+- [x] T144 `query-node/src/planner/explain.rs` 신규 구현 (`ExplainNode` 열거형 — Scan, HashAggregate, QnMergeAgg, HashJoin, Exchange, FunnelAnalysis, ResultSink 변형; `ExplainPlan` 구조체 — Vec<ExplainFragment>; `ExplainMode` 열거형 — Basic, Verbose, Costs; `explain_sql(sql, mode)` 진입점 → `QueryOutput::Rows` 반환; FR-047)
+- [x] T145 `query-node/src/planner/logical.rs` 확장 (LogicalPlan 노드에서 EXPLAIN용 메타 추출 — 테이블 이름, 프레디케이트 문자열, GROUP BY 컬럼 목록 노출; `LogicalPlan::describe() -> String` 메서드 추가)
+- [x] T146 `query-node/src/planner/physical.rs` 확장 (PhysicalNode/Fragment에 EXPLAIN 메타 추가 — `ExchangeMode` → Shuffle 방식 문자열 변환 `to_explain_str()` 메서드; Fragment `explain_header()` 메서드 — `PLAN FRAGMENT N` 헤더 생성)
+
+### Query Node — MySQL 프로토콜 핸들러 연결
+
+- [x] T147 `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (`handle_schema_command`에서 `EXPLAIN`, `EXPLAIN VERBOSE`, `EXPLAIN COSTS` 접두사 인식 → `explain::explain_sql()` 호출 → `QueryOutput::Rows` 반환; `Fragment_Id` + `Plan` 두 컬럼 반환; FR-047)
+
+### Tests
+
+- [x] T148 `query-node/src/planner/explain.rs` 단위 테스트 추가 (기본 EXPLAIN — Fragment 구조 검증: FRAGMENT 0에 `QN-MERGE` 포함, FRAGMENT 1에 `SCAN` 포함)
+- [x] T149 EXPLAIN COSTS 테스트 추가 (WHERE 절 포함 쿼리 → `Partitions:` 행 및 `CBO: rows=` 행 존재 검증)
+- [x] T150 EXPLAIN JOIN 테스트 추가 (JOIN 쿼리 → `HASH JOIN` 및 `BROADCAST` 또는 `HASH_SHUFFLE` 텍스트 포함 검증)
+- [x] T151 EXPLAIN FUNNEL 테스트 추가 (FUNNEL_COUNT 포함 SQL → `FUNNEL ANALYSIS` Fragment 존재 검증)
+- [x] T152 Colocate Join EXPLAIN 테스트 추가 (`[COLOCATE]` 태그 검증 — 분산 키 동일 + Colocate Group 힌트 포함 SQL 시뮬레이션; `shuffle=NONE` 텍스트 존재 검증; FR-048)
+
+**체크포인트**: `cargo test -p query-node -- explain` 전체 통과, MySQL 클라이언트에서 `EXPLAIN SELECT * FROM page_events` 실행 시 `Fragment_Id` / `Plan` 두 컬럼으로 결과셋 반환
 
 ---
 

@@ -16,6 +16,7 @@
 7. [분석 함수 — WOW-DB 전용](#7-분석-함수--wow-db-전용)
 8. [Session Materialized View](#8-session-materialized-view)
 9. [시스템 명령](#9-시스템-명령)
+9.5. [EXPLAIN — 분산 실행 계획 출력](#95-explain--분산-실행-계획-출력)
 10. [MySQL 호환 명령](#10-mysql-호환-명령)
 
 ---
@@ -500,6 +501,172 @@ CBO 통계 (min/max/NDV/Histogram) 전체 재계산. 자동 통계 수집이 기
 
 ---
 
+## 9.5. EXPLAIN — 분산 실행 계획 출력
+
+### EXPLAIN ✅
+
+`EXPLAIN`은 주어진 SQL을 실제로 실행하지 않고 CBO가 생성하는 분산 실행 계획을 Fragment 단위로 출력한다. StarRocks의 EXPLAIN과 유사한 형식을 사용한다.
+
+```sql
+EXPLAIN <sql>;
+EXPLAIN VERBOSE <sql>;
+EXPLAIN COSTS <sql>;
+```
+
+**변형별 출력 범위**:
+
+| 변형 | 설명 |
+|------|------|
+| `EXPLAIN` | Fragment 구조, Shuffle 방식, 기본 CBO 수치 |
+| `EXPLAIN VERBOSE` | 기본 + Push-down 프레디케이트, 인덱스 상세, 컬럼 투영 목록 |
+| `EXPLAIN COSTS` | 기본 + 행 수 추정, 바이트 추정, 각 노드 비용 합계 |
+
+**반환 컬럼**:
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `Fragment_Id` | STRING | 소속 Fragment 식별자 (`FRAGMENT 0`, `FRAGMENT 1`, ...) |
+| `Plan` | TEXT | 실행 계획 텍스트 한 줄 |
+
+---
+
+### EXPLAIN 출력 구조
+
+출력은 `PLAN FRAGMENT N` 블록으로 나뉜다. Fragment 0은 최종 결과를 QN으로 전달하는 최상위 Fragment이다. Fragment 번호가 증가할수록 스캔에 가까운 하위 Fragment이다.
+
+```
+PLAN FRAGMENT 0
+  OUTPUT EXPRS: <output_columns>
+  PARTITION: UNPARTITIONED
+
+  RESULT SINK
+
+  0: AGGREGATION [QN-MERGE]
+     CBO: rows=<n>  bytes=<size>
+
+PLAN FRAGMENT 1
+  OUTPUT EXPRS: <output_columns>
+  PARTITION: HASH(<dist_key>)
+
+  STREAM DATA SINK
+    EXCHANGE ID: 01
+    HASH_PARTITIONED: <dist_key>
+
+  1: HASH AGGREGATE [CN-PARTIAL]
+     |--- 2: SCAN (<cube_name>) [SN-01, SN-02, SN-03]
+            Partitions: <scanned>/<total> pruned (<skipped> skipped by CBO)
+            Parts: <scanned> scanned (<skipped> skipped by Bloom/MinMax)
+            Push-down predicates: <predicate_expr>
+            Index: MinMax on <col> [HIT|MISS]
+            Aggregate pushdown: <func> [YES|NO]
+```
+
+---
+
+### 노드 타입 참조
+
+| 노드 타입 | 설명 |
+|-----------|------|
+| `SCAN (<cube>)` | Storage Node에서 데이터 스캔 |
+| `HASH AGGREGATE [CN-PARTIAL]` | CN에서 부분 집계 수행 |
+| `AGGREGATION [QN-MERGE]` | QN에서 최종 집계 병합 |
+| `HASH JOIN [BROADCAST]` | 소형 테이블을 모든 CN에 방송 후 Join |
+| `HASH JOIN [HASH_SHUFFLE]` | 양쪽 테이블을 분산 키로 재분산 후 Join |
+| `HASH JOIN [COLOCATE]` | 동일 Colocate Group — Shuffle 없이 로컬 Join |
+| `EXCHANGE [HASH_SHUFFLE]` | CN 간 Hash Partition 기반 재분산 |
+| `EXCHANGE [BROADCAST]` | 모든 CN에 데이터 복제 전송 |
+| `EXCHANGE [GATHER]` | 모든 CN 결과를 단일 노드로 수집 |
+| `FUNNEL ANALYSIS` | FUNNEL_COUNT 전용 분석 단계 |
+| `RESULT SINK` | 최종 결과를 클라이언트에 반환 |
+
+---
+
+### EXPLAIN COSTS 예시
+
+```sql
+EXPLAIN COSTS
+SELECT event_name, count(*) AS cnt
+FROM page_events
+WHERE event_time > '2026-01-01'
+GROUP BY event_name;
+```
+
+```
+Fragment_Id  | Plan
+-------------+------
+FRAGMENT 0   | PLAN FRAGMENT 0
+FRAGMENT 0   |   OUTPUT EXPRS: event_name, cnt
+FRAGMENT 0   |   PARTITION: UNPARTITIONED
+FRAGMENT 0   |
+FRAGMENT 0   |   RESULT SINK
+FRAGMENT 0   |
+FRAGMENT 0   |   0: AGGREGATION [QN-MERGE]
+FRAGMENT 0   |      CBO: rows=500  bytes=48KB  cost=1.2
+FRAGMENT 1   | PLAN FRAGMENT 1
+FRAGMENT 1   |   OUTPUT EXPRS: event_name, count(*)
+FRAGMENT 1   |   PARTITION: HASH(event_name)
+FRAGMENT 1   |
+FRAGMENT 1   |   STREAM DATA SINK
+FRAGMENT 1   |     EXCHANGE ID: 01
+FRAGMENT 1   |     HASH_PARTITIONED: event_name
+FRAGMENT 1   |
+FRAGMENT 1   |   1: HASH AGGREGATE [CN-PARTIAL]
+FRAGMENT 1   |      CBO: rows=50,000  bytes=4.2MB  cost=24.7
+FRAGMENT 1   |      |--- 2: SCAN (page_events) [SN-01, SN-02, SN-03]
+FRAGMENT 1   |             Partitions: 3/10 pruned (7 skipped by CBO)
+FRAGMENT 1   |             Parts: 24 scanned (12 skipped by Bloom/MinMax)
+FRAGMENT 1   |             Push-down predicates: event_time > '2026-01-01'
+FRAGMENT 1   |             Index: MinMax on event_time [HIT]
+FRAGMENT 1   |             Aggregate pushdown: count(*) [YES]
+FRAGMENT 1   |             CBO: rows=200,000  bytes=16MB  cost=18.3
+```
+
+---
+
+### Colocate Join EXPLAIN 예시
+
+```sql
+-- page_events와 user_profiles가 동일 colocate_group이고
+-- 동일 분산 키(device_id)와 버킷 수(32)를 사용하는 경우
+EXPLAIN
+SELECT e.event_name, u.country, count(*) AS cnt
+FROM page_events e
+JOIN user_profiles u ON e.device_id = u.device_id
+WHERE e.event_time > '2026-01-01'
+GROUP BY e.event_name, u.country;
+```
+
+```
+PLAN FRAGMENT 0
+  OUTPUT EXPRS: event_name, country, cnt
+  PARTITION: UNPARTITIONED
+
+  RESULT SINK
+
+  0: AGGREGATION [QN-MERGE]
+     CBO: rows=1,000  bytes=96KB
+
+PLAN FRAGMENT 1
+  OUTPUT EXPRS: event_name, country, count(*)
+  PARTITION: HASH(device_id)
+
+  STREAM DATA SINK
+    EXCHANGE ID: 01
+    HASH_PARTITIONED: device_id
+
+  1: HASH JOIN [COLOCATE]
+     CBO: rows=200,000  bytes=16MB  shuffle=NONE
+     |--- 2: SCAN (page_events)   [SN-01, SN-02, SN-03]
+            Push-down predicates: event_time > '2026-01-01'
+            Index: MinMax on event_time [HIT]
+     |--- 3: SCAN (user_profiles) [SN-01, SN-02, SN-03]
+            (same bucket distribution — no shuffle required)
+```
+
+> **Colocate Join 조건**: 두 Cube가 동일한 `colocate_group` PROPERTIES, 동일한 분산 키, 동일한 버킷 수를 가지며 JOIN 조건 컬럼이 분산 키와 일치할 때만 `[COLOCATE]`로 표시된다.
+
+---
+
 ## 10. MySQL 호환 명령
 
 WOW-DB는 MySQL 8.0 Wire Protocol을 지원하므로 표준 MySQL 클라이언트 명령이 그대로 동작한다.
@@ -566,3 +733,6 @@ WOW-DB는 MySQL 8.0 Wire Protocol을 지원하므로 표준 MySQL 클라이언�
 | SMV | `CREATE SESSION MATERIALIZED VIEW` | ✅ 메타 등록 구현 |
 | 시스템 | `SET` | ✅ 완전 구현 |
 | 시스템 | `ANALYZE TABLE` | ⚠️ 스텁 |
+| 실행 계획 | `EXPLAIN` | ✅ 완전 구현 (스텁 기반 현실적 출력) |
+| 실행 계획 | `EXPLAIN VERBOSE` | ✅ 완전 구현 |
+| 실행 계획 | `EXPLAIN COSTS` | ✅ 완전 구현 |

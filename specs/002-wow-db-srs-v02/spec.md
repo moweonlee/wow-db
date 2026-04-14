@@ -381,6 +381,87 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
   SHOW DISTRIBUTED STATUS FROM page_events ORDER BY size_bytes DESC;
   ```
 
+- **FR-047**: **EXPLAIN — 분산 쿼리 실행 계획 출력** — `EXPLAIN <sql>` 명령으로 CBO가 생성한 분산 실행 계획을 Fragment 단위로 출력해야 한다. 각 Fragment에는 다음 정보가 포함되어야 한다.
+
+  - 집계 위치 (CN-level Partial Agg vs QN-level Merge Agg)
+  - SN별 예상 I/O 크기 (파티션 프루닝 전/후 비교)
+  - 인덱스 활용 여부 (Bloom Filter / MinMax / Data Skipping)
+  - 파티션 프루닝 결과 (전체 파티션 수 vs 실제 스캔할 파티션 수)
+  - CBO 통계 기반 예상 행 수 및 데이터 크기
+  - Join 유형 결정 근거 (Hash Join vs Sort-Merge Join)
+  - CN 간 데이터 Shuffle 방식 (BROADCAST vs HASH_SHUFFLE vs COLOCATE)
+  - Aggregate Pushdown 적용 여부 (SN 레벨 부분 집계 → 전송 크기 감소)
+  - 노드별 실행 단계 분해 (Fragment별 독립 출력)
+
+  **지원 변형**:
+  | 구문 | 출력 내용 |
+  |------|-----------|
+  | `EXPLAIN <sql>` | Fragment 구조 + Shuffle 방식 + 기본 CBO 수치 |
+  | `EXPLAIN VERBOSE <sql>` | 기본 출력 + Push-down 프레디케이트 + 인덱스 상세 + 컬럼 투영 목록 |
+  | `EXPLAIN COSTS <sql>` | 기본 출력 + 행 수 추정 + 바이트 추정 + 각 노드 비용 합계 |
+
+  **출력 컬럼**:
+  | 컬럼명 | 타입 | 설명 |
+  |--------|------|------|
+  | `Fragment_Id` | STRING | Fragment 식별자 (`FRAGMENT 0`, `FRAGMENT 1`, ...) |
+  | `Plan` | TEXT | 해당 Fragment 실행 계획 텍스트 (들여쓰기 형식) |
+
+  각 행이 실행 계획의 한 줄을 담는다. `Fragment_Id` 컬럼은 소속 Fragment ID를 표시하고 새 Fragment 시작 시 값이 변경된다.
+
+  **출력 예시** (`EXPLAIN SELECT ... FROM page_events WHERE event_time > '2026-01-01'`):
+  ```
+  PLAN FRAGMENT 0
+    OUTPUT EXPRS: user_id, event_name, event_time
+    PARTITION: UNPARTITIONED
+
+    RESULT SINK
+
+    0: AGGREGATION [QN-MERGE]
+       CBO: rows=50,000  bytes=4.2MB
+
+  PLAN FRAGMENT 1
+    OUTPUT EXPRS: user_id, event_name, event_time
+    PARTITION: HASH(user_id)
+
+    STREAM DATA SINK
+      EXCHANGE ID: 01
+      HASH_PARTITIONED: user_id
+
+    1: HASH AGGREGATE [CN-PARTIAL]
+       |--- 2: SCAN (page_events) [SN-01, SN-02, SN-03]
+              Partitions: 3/10 pruned (7 skipped by CBO)
+              Parts: 24 scanned (12 skipped by Bloom/MinMax)
+              Push-down predicates: event_time > '2026-01-01'
+              Index: MinMax on event_time [HIT]
+              Aggregate pushdown: count(*) [YES]
+  ```
+
+- **FR-048**: **EXPLAIN — Colocate Join 표시** — 동일 Colocate Group 내 두 Cube를 Join할 때 EXPLAIN 출력에서 Join 노드가 `[COLOCATE]` 태그로 표시되어야 한다. Colocate Join은 분산 키(Distribution Key)와 버킷 수(Bucket Count)가 동일한 두 Cube 사이에서 Shuffle 없이 로컬 Join으로 실행된다.
+
+  **Colocate Join 조건**:
+  1. 두 Cube가 동일한 `colocate_group` PROPERTIES 값을 가진다.
+  2. 두 Cube의 `DISTRIBUTED BY HASH(<col>)` 분산 키가 동일하다.
+  3. 두 Cube의 `BUCKETS <n>` 버킷 수가 동일하다.
+  4. JOIN 조건 컬럼이 분산 키와 일치한다.
+
+  **EXPLAIN 출력 비교**:
+  ```
+  -- 일반 Hash Join (Shuffle 필요)
+  HASH JOIN [BROADCAST]
+    CBO: rows=200,000  bytes=16MB
+    |--- 3: SCAN (page_events)   [SN-01, SN-02, SN-03]
+    |--- 4: SCAN (user_profiles) [SN-01, SN-02, SN-03]
+
+  -- Colocate Join (Shuffle 없음, 로컬 실행)
+  HASH JOIN [COLOCATE]
+    CBO: rows=200,000  bytes=16MB  shuffle=NONE
+    |--- 3: SCAN (page_events)   [SN-01, SN-02, SN-03]
+    |--- 4: SCAN (user_profiles) [SN-01, SN-02, SN-03]
+         (same bucket distribution — no shuffle required)
+  ```
+
+  Colocate Join이 성립하지 않는 경우(분산 키 불일치, 버킷 수 차이, Colocate Group 미설정) EXPLAIN은 `[HASH_SHUFFLE]` 또는 `[BROADCAST]`를 표시한다.
+
 ### 핵심 엔티티
 
 - **이벤트(Event)**: 웹 서비스에서 사용자가 발생시킨 단일 행동 단위. 타임스탬프, 사용자 식별자, 이벤트 타입명, 선택적 properties 페이로드를 포함한다.
