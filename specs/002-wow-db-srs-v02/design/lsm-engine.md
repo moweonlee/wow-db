@@ -373,7 +373,7 @@ WOW-DB 웹 이벤트 (sequential/append 특성) 예상:
 TTL 적용 시점: Compaction (행 단위 필터링)
 TTL 정책 종류:
   1. 파티션 단위 TTL: partition.ttl_expires < now() → 파티션 전체 삭제
-  2. 행 단위 TTL: CubeSchema.ttl_policy.column_name(보통 event_time) 기준
+  2. 행 단위 TTL: TableSchema.ttl_policy.column_name(보통 event_time) 기준
 
 Compaction 시 TTL 처리:
   for record in merge_iterator {
@@ -449,7 +449,7 @@ FPR 선택표:
 WOW-DB 기본 설정:
   SSTable-level bloom: bits_per_key = 10 (FPR 1%)
   Granule-level bloom: bits_per_key = 10 (FPR 1%) [기본]
-                       사용자가 CREATE CUBE 시 BLOOM_FILTER(bits=14) 지정 가능
+                       사용자가 CREATE TABLE 시 BLOOM_FILTER(bits=14) 지정 가능
 
 최적 hash 함수 수:
   k = bits_per_key × ln(2) ≈ bits_per_key × 0.693
@@ -521,7 +521,7 @@ Compaction 과정:
 ### 8.1 제약 조건 정의
 
 ```rust
-// Sort Key 검증 규칙 (query-node/src/sql_parser/cube_ddl.rs)
+// Sort Key 검증 규칙 (query-node/src/sql_parser/table_ddl.rs)
 const SORT_KEY_MAX_COLUMNS:    usize = 4;
 const SORT_KEY_MAX_BYTES:      usize = 128;
 const SORT_KEY_STRING_MAX_LEN: usize = 64;  // STRING 컬럼 Sort Key 시 최대 길이
@@ -585,20 +585,20 @@ Compaction에서의 키 비교 횟수:
 
 ```sql
 -- 패턴 1: 사용자 중심 분석 (Funnel/Cohort/Path 최적)
-CREATE CUBE page_events (...) 
+CREATE TABLE page_events (...) 
   PARTITION BY RANGE(event_time) INTERVAL '1 MONTH'
   ORDER BY (device_id, event_time);
 -- 이유: 파티션 내에서 device_id로 클러스터링 → 사용자별 이벤트 시퀀스가
 --       물리적으로 인접 → Funnel/Cohort 스캔 시 I/O 최소화
 
 -- 패턴 2: 이벤트 타입 필터링 최적
-CREATE CUBE page_events (...)
+CREATE TABLE page_events (...)
   PARTITION BY RANGE(event_time) INTERVAL '1 DAY'
   ORDER BY (event_name, event_time);
 -- 이유: MINMAX 인덱스로 event_name = 'purchase' 파티션 내 범위 스킵
 
 -- 패턴 3: 복합 (사용자 + 이벤트)
-CREATE CUBE page_events (...)
+CREATE TABLE page_events (...)
   PARTITION BY RANGE(event_time) INTERVAL '1 MONTH'
   ORDER BY (device_id, event_name, event_time);
 -- 이유: 사용자별 특정 이벤트 타입 조회 최적. 총 크기 ≈ 36+20+8 = 64 bytes
@@ -1004,7 +1004,7 @@ compaction_score:
 
 | 항목 | 현재 제약 | 향후 개선 방향 |
 |---|---|---|
-| **Compaction 전략** | Leveled 고정 | Cube별 Tiered/Leveled 선택 (FR 추가 필요) |
+| **Compaction 전략** | Leveled 고정 | Table별 Tiered/Leveled 선택 (FR 추가 필요) |
 | **Write Amplification** | 10~30× | Leveled-N + Tiered 하이브리드 전략 |
 | **Bloom Filter 크기** | 전체 메모리 불가 | 계층적 Block Cache로 Hot Bloom만 유지 |
 | **Sort Key 타입** | 기본 타입만 허용 | ENUM, DECIMAL, FIXED_STRING 추가 검토 |

@@ -7,7 +7,7 @@
 
 ## 목차
 
-1. [DDL — Cube 정의](#1-ddl--cube-정의)
+1. [DDL — Table 정의](#1-ddl--table-정의)
 2. [DDL — 데이터베이스 관리](#2-ddl--데이터베이스-관리)
 3. [DML — 데이터 쓰기](#3-dml--데이터-쓰기)
 4. [DQL — 데이터 조회](#4-dql--데이터-조회)
@@ -16,21 +16,21 @@
 7. [분석 함수 — WOW-DB 전용](#7-분석-함수--wow-db-전용)
 8. [Behavioral Table (Session Materialized View)](#8-behavioral-table-session-materialized-view)
 9. [시스템 명령](#9-시스템-명령)
-9.5. [EXPLAIN — 분산 실행 계획 출력](#95-explain--분산-실행-계획-출력)
-10. [MySQL 호환 명령](#10-mysql-호환-명령)
-11. [오류 처리 — 미지원 SQL](#11-오류-처리--미지원-sql)
-12. [클러스터 관리 명령](#12-클러스터-관리-명령)
+10. [EXPLAIN — 분산 실행 계획 출력](#10-explain--분산-실행-계획-출력)
+11. [MySQL 호환 명령](#11-mysql-호환-명령)
+12. [오류 처리 — 미지원 SQL](#12-오류-처리--미지원-sql)
+13. [클러스터 관리 명령](#13-클러스터-관리-명령)
 
 ---
 
-## 1. DDL — Cube 정의
+## 1. DDL — Table 정의
 
-### CREATE CUBE ✅
+### CREATE TABLE ✅
 
 WOW-DB의 기본 스키마 단위. MySQL `CREATE TABLE`과 유사하지만 파티션·분산·정렬 전략이 포함된다.
 
 ```sql
-CREATE CUBE [IF NOT EXISTS] <cube_name> (
+CREATE TABLE [IF NOT EXISTS] <table_name> (
     <column_name> <data_type> [NOT NULL] [DEFAULT <value>],
     ...
 )
@@ -70,7 +70,7 @@ CREATE CUBE [IF NOT EXISTS] <cube_name> (
 **예시**:
 
 ```sql
-CREATE CUBE IF NOT EXISTS page_events (
+CREATE TABLE IF NOT EXISTS page_events (
     event_id    BIGINT     NOT NULL,
     event_time  DATETIME   NOT NULL,
     user_id     VARCHAR    NOT NULL,
@@ -87,37 +87,36 @@ DISTRIBUTED BY HASH (device_id) BUCKETS 32;
 
 ---
 
-### DROP CUBE / DROP TABLE ✅
+### DROP TABLE ✅
 
 ```sql
-DROP CUBE [IF EXISTS] <cube_name>;
-DROP TABLE [IF EXISTS] <cube_name>;
+DROP TABLE [IF EXISTS] <table_name>;
 ```
 
 ---
 
-### ALTER CUBE ✅
+### ALTER TABLE ✅
 
 ```sql
 -- 컬럼 추가 (nullable / NOT NULL 지원)
-ALTER CUBE <cube_name> ADD COLUMN <col_name> <data_type> [NOT NULL];
+ALTER TABLE <table_name> ADD COLUMN <col_name> <data_type> [NOT NULL];
 
 -- 컬럼 삭제 (Sort Key 컬럼 삭제 시 오류)
-ALTER CUBE <cube_name> DROP COLUMN <col_name>;
+ALTER TABLE <table_name> DROP COLUMN <col_name>;
 
 -- TTL 정책 변경
-ALTER CUBE <cube_name> SET PROPERTIES ("ttl_days" = "90");
+ALTER TABLE <table_name> SET PROPERTIES ("ttl_days" = "90");
 
 -- Data Skipping Index 추가
-ALTER CUBE <cube_name> ADD INDEX <idx_name> (<col>) [USING BLOOMFILTER|MINMAX|SET];
+ALTER TABLE <table_name> ADD INDEX <idx_name> (<col>) [USING BLOOMFILTER|MINMAX|SET];
 
 -- Data Skipping Index 삭제
-ALTER CUBE <cube_name> DROP INDEX <idx_name>;
+ALTER TABLE <table_name> DROP INDEX <idx_name>;
 
 -- MySQL 호환: ALTER TABLE <name> … 도 동일하게 처리됨
 ```
 
-> ✅ 파서(WowDbParser) + 실행 엔진(AlterCubeHandler) 완전 연결. Raft KV에 스키마 영속화.
+> ✅ 파서(WowDbParser) + 실행 엔진(AlterTableHandler) 완전 연결. Raft KV에 스키마 영속화.
 > Sort Key 컬럼 DROP 시도 시 오류 반환. 중복 컬럼 추가 시 오류 반환.
 
 ---
@@ -152,10 +151,10 @@ USE <db_name>;
 
 ```sql
 -- 단건 삽입
-INSERT INTO <cube_name> (col1, col2, ...) VALUES (val1, val2, ...);
+INSERT INTO <table_name> (col1, col2, ...) VALUES (val1, val2, ...);
 
 -- 다건 삽입
-INSERT INTO <cube_name> (col1, col2, ...) VALUES
+INSERT INTO <table_name> (col1, col2, ...) VALUES
     (val1, val2, ...),
     (val3, val4, ...);
 ```
@@ -166,8 +165,8 @@ INSERT INTO <cube_name> (col1, col2, ...) VALUES
 ### DELETE / TRUNCATE ✅ (메모리 스토어)
 
 ```sql
-DELETE FROM <cube_name> [WHERE <condition>];
-TRUNCATE [TABLE] <cube_name>;
+DELETE FROM <table_name> [WHERE <condition>];
+TRUNCATE [TABLE] <table_name>;
 ```
 
 ---
@@ -178,7 +177,7 @@ TRUNCATE [TABLE] <cube_name>;
 
 ```sql
 SELECT <expr_list>
-FROM <cube_name>
+FROM <table_name>
 [WHERE <condition>]
 [GROUP BY <col_list>]
 [HAVING <condition>]
@@ -246,36 +245,26 @@ SHOW TABLES FROM <db_name>;
 SHOW FULL TABLES;
 ```
 
-반환 컬럼: `Tables_in_<db_name>` (FULL: `Table_type` 추가)
-
----
-
-### SHOW CUBES ✅
-
-```sql
-SHOW CUBES;
-```
-
-반환 컬럼: `Cube`, `Full_Name`, `Partition`, `Distribution`
+반환 컬럼 (기본): `Tables_in_<db_name>`  
+반환 컬럼 (`FULL`): `Table`, `Table_type`, `Full_Name`, `Partition`, `Distribution`
 
 ---
 
 ### DESCRIBE / DESC ✅
 
 ```sql
-DESCRIBE <cube_name>;
-DESC <cube_name>;
+DESCRIBE <table_name>;
+DESC <table_name>;
 ```
 
 반환 컬럼: `Field`, `Type`, `Null`, `Key`, `Default`, `Extra`
 
 ---
 
-### SHOW CREATE TABLE / SHOW CREATE CUBE ✅
+### SHOW CREATE TABLE ✅
 
 ```sql
-SHOW CREATE TABLE <cube_name>;
-SHOW CREATE CUBE <cube_name>;
+SHOW CREATE TABLE <table_name>;
 ```
 
 반환 컬럼: `Table`, `Create Table`
@@ -285,8 +274,8 @@ SHOW CREATE CUBE <cube_name>;
 ### SHOW COLUMNS ✅
 
 ```sql
-SHOW COLUMNS FROM <cube_name>;
-SHOW FULL COLUMNS FROM <cube_name>;
+SHOW COLUMNS FROM <table_name>;
+SHOW FULL COLUMNS FROM <table_name>;
 ```
 
 반환 컬럼: `Field`, `Type`, `Null`, `Key`, `Default`, `Extra`
@@ -309,19 +298,19 @@ SHOW GLOBAL VARIABLES;
 
 ## 6. SHOW 명령 — 데이터 분포 가시성
 
-> 계층 구조: **Cube → Partition → Shard → Part (LSM SSTable)**
+> 계층 구조: **Table → Partition → Shard → Part (LSM SSTable)**
 
 ### SHOW PARTITIONS ✅ (컬럼 정의 완료, 데이터 연동은 T138에서)
 
 ```sql
 -- 기본 조회
-SHOW PARTITIONS FROM <cube_name>;
+SHOW PARTITIONS FROM <table_name>;
 
 -- 조건 필터 (파서 지원, 실행은 Phase E)
-SHOW PARTITIONS FROM <cube_name> WHERE range_start >= '2024-01-01';
+SHOW PARTITIONS FROM <table_name> WHERE range_start >= '2024-01-01';
 
 -- 정렬
-SHOW PARTITIONS FROM <cube_name> ORDER BY size_bytes DESC LIMIT 10;
+SHOW PARTITIONS FROM <table_name> ORDER BY size_bytes DESC LIMIT 10;
 ```
 
 반환 컬럼: `partition_id`, `range_start`, `range_end`, `row_count`, `size_bytes`, `shard_count`, `part_count`, `tier`, `created_at`
@@ -332,13 +321,13 @@ SHOW PARTITIONS FROM <cube_name> ORDER BY size_bytes DESC LIMIT 10;
 
 ```sql
 -- 전체 Shard 조회
-SHOW SHARDS FROM <cube_name>;
+SHOW SHARDS FROM <table_name>;
 
 -- 특정 파티션의 Shard
-SHOW SHARDS FROM <cube_name> PARTITION '<partition_id>';
+SHOW SHARDS FROM <table_name> PARTITION '<partition_id>';
 
 -- 특정 SN의 Shard
-SHOW SHARDS FROM <cube_name> WHERE sn_node_id = 'sn-01';
+SHOW SHARDS FROM <table_name> WHERE sn_node_id = 'sn-01';
 ```
 
 반환 컬럼: `shard_id`, `partition_id`, `partition_range`, `sn_node_id`, `sn_endpoint`, `bucket_id`, `role`, `state`, `row_count`, `size_bytes`, `part_count`, `lsn`
@@ -349,22 +338,22 @@ SHOW SHARDS FROM <cube_name> WHERE sn_node_id = 'sn-01';
 
 ```sql
 -- 전체 Part 조회
-SHOW PARTS FROM <cube_name>;
+SHOW PARTS FROM <table_name>;
 
 -- 특정 파티션의 Part
-SHOW PARTS FROM <cube_name> PARTITION '<partition_id>';
+SHOW PARTS FROM <table_name> PARTITION '<partition_id>';
 
 -- 파티션 우선 명시 구문 (별칭)
-SHOW PARTS ON PARTITION '<partition_id>' FROM <cube_name>;
+SHOW PARTS ON PARTITION '<partition_id>' FROM <table_name>;
 
 -- 특정 Shard의 Part
-SHOW PARTS FROM <cube_name> SHARD '<shard_id>';
+SHOW PARTS FROM <table_name> SHARD '<shard_id>';
 
 -- L0 Part만 (Compaction 진단용)
-SHOW PARTS FROM <cube_name> WHERE level = 0;
+SHOW PARTS FROM <table_name> WHERE level = 0;
 
 -- 특정 SN, 크기 내림차순
-SHOW PARTS FROM <cube_name> WHERE sn_node_id = 'sn-01' ORDER BY size_bytes DESC;
+SHOW PARTS FROM <table_name> WHERE sn_node_id = 'sn-01' ORDER BY size_bytes DESC;
 ```
 
 반환 컬럼: `part_id`, `shard_id`, `partition_id`, `sn_node_id`, `level`, `sequence_num`, `row_count`, `size_bytes`, `min_sort_key`, `max_sort_key`, `bloom_size_bytes`, `created_at`
@@ -374,10 +363,10 @@ SHOW PARTS FROM <cube_name> WHERE sn_node_id = 'sn-01' ORDER BY size_bytes DESC;
 ### SHOW DISTRIBUTED STATUS ✅ (컬럼 정의 완료, 데이터 연동은 T138에서)
 
 ```sql
-SHOW DISTRIBUTED STATUS FROM <cube_name>;
+SHOW DISTRIBUTED STATUS FROM <table_name>;
 
 -- 부하 높은 SN 파악
-SHOW DISTRIBUTED STATUS FROM <cube_name> ORDER BY size_bytes DESC;
+SHOW DISTRIBUTED STATUS FROM <table_name> ORDER BY size_bytes DESC;
 ```
 
 반환 컬럼: `sn_node_id`, `sn_endpoint`, `shard_count`, `leader_shard_count`, `partition_count`, `row_count`, `size_bytes`, `avg_part_per_shard`
@@ -476,7 +465,7 @@ WHERE event_time BETWEEN '2024-01-01' AND '2024-03-31';
 
 ```sql
 CREATE SESSION MATERIALIZED VIEW [IF NOT EXISTS] <mv_name>
-FROM <source_cube>
+FROM <source_table>
 USER KEY <user_key_column>
 SESSION TIMEOUT <n> MINUTES | HOURS | SECONDS
 [REFRESH INCREMENTAL | MANUAL | SCHEDULED '<cron_expr>'];
@@ -486,7 +475,7 @@ SESSION TIMEOUT <n> MINUTES | HOURS | SECONDS
 
 | 절 | 설명 |
 |---|---|
-| `FROM <source_cube>` | Behavioral Table을 파생할 원본 Event Table (Cube) |
+| `FROM <source_table>` | Behavioral Table을 파생할 원본 Event Table (Table) |
 | `USER KEY <col>` | 사용자 식별 컬럼 (`device_id`, `user_id` 등 String/Int 타입) |
 | `SESSION TIMEOUT <n> MINUTES\|HOURS\|SECONDS` | 연속 이벤트 간 허용 비활성 시간. 초과 시 새 세션 시작 |
 | `REFRESH INCREMENTAL` | INSERT 시점 증분 갱신 (기본값) |
@@ -549,15 +538,15 @@ SET GLOBAL wowdb_read_only = OFF;  -- Read-Only 수동 해제
 ### ANALYZE TABLE ⚠️ (스텁)
 
 ```sql
-ANALYZE TABLE <cube_name>;
-ANALYZE TABLE <cube_name> PARTITION <partition_id>;
+ANALYZE TABLE <table_name>;
+ANALYZE TABLE <table_name> PARTITION <partition_id>;
 ```
 
 CBO 통계 (min/max/NDV/Histogram) 전체 재계산. 자동 통계 수집이 기본값이므로 수동 실행은 선택적.
 
 ---
 
-## 9.5. EXPLAIN — 분산 실행 계획 출력
+## 10. EXPLAIN — 분산 실행 계획 출력
 
 ### EXPLAIN ✅
 
@@ -609,7 +598,7 @@ PLAN FRAGMENT 1
     HASH_PARTITIONED: <dist_key>
 
   1: HASH AGGREGATE [CN-PARTIAL]
-     |--- 2: SCAN (<cube_name>) [SN-01, SN-02, SN-03]
+     |--- 2: SCAN (<table_name>) [SN-01, SN-02, SN-03]
             Partitions: <scanned>/<total> pruned (<skipped> skipped by CBO)
             Parts: <scanned> scanned (<skipped> skipped by Bloom/MinMax)
             Push-down predicates: <predicate_expr>
@@ -623,7 +612,7 @@ PLAN FRAGMENT 1
 
 | 노드 타입 | 설명 |
 |-----------|------|
-| `SCAN (<cube>)` | Storage Node에서 데이터 스캔 |
+| `SCAN (<table>)` | Storage Node에서 데이터 스캔 |
 | `HASH AGGREGATE [CN-PARTIAL]` | CN에서 부분 집계 수행 |
 | `AGGREGATION [QN-MERGE]` | QN에서 최종 집계 병합 |
 | `HASH JOIN [BROADCAST]` | 소형 테이블을 모든 CN에 방송 후 Join |
@@ -719,11 +708,11 @@ PLAN FRAGMENT 1
             (same bucket distribution — no shuffle required)
 ```
 
-> **Colocate Join 조건**: 두 Cube가 동일한 `colocate_group` PROPERTIES, 동일한 분산 키, 동일한 버킷 수를 가지며 JOIN 조건 컬럼이 분산 키와 일치할 때만 `[COLOCATE]`로 표시된다.
+> **Colocate Join 조건**: 두 Table이 동일한 `colocate_group` PROPERTIES, 동일한 분산 키, 동일한 버킷 수를 가지며 JOIN 조건 컬럼이 분산 키와 일치할 때만 `[COLOCATE]`로 표시된다.
 
 ---
 
-## 10. MySQL 호환 명령
+## 11. MySQL 호환 명령
 
 WOW-DB는 MySQL 8.0 Wire Protocol을 지원하므로 표준 MySQL 클라이언트 명령이 그대로 동작한다.
 
@@ -756,8 +745,8 @@ WOW-DB는 MySQL 8.0 Wire Protocol을 지원하므로 표준 MySQL 클라이언�
 | 에러 코드 | SQL State | 상황 |
 |---------|-----------|------|
 | 1064 `ER_PARSE_ERROR` | 42000 | SQL 파싱 실패 |
-| 1050 `ER_TABLE_EXISTS_ERROR` | 42S01 | Cube 이미 존재 |
-| 1051 `ER_BAD_TABLE_ERROR` | 42S02 | 없는 Cube에 DDL |
+| 1050 `ER_TABLE_EXISTS_ERROR` | 42S01 | Table 이미 존재 |
+| 1051 `ER_BAD_TABLE_ERROR` | 42S02 | 없는 Table에 DDL |
 | 1049 `ER_BAD_DB_ERROR` | 42000 | 없는 DB DROP |
 | 1290 `ER_OPTION_PREVENTS_STATEMENT` | HY000 | Read-Only 모드에서 쓰기 시도 |
 
@@ -767,16 +756,16 @@ WOW-DB는 MySQL 8.0 Wire Protocol을 지원하므로 표준 MySQL 클라이언�
 
 | 카테고리 | 명령 | 상태 |
 |---------|------|------|
-| DDL | `CREATE CUBE` | ✅ 완전 구현 |
-| DDL | `DROP CUBE` | ✅ 완전 구현 |
-| DDL | `ALTER CUBE` | ✅ 파서·실행 엔진 완전 연결 (ADD/DROP COLUMN, TTL, INDEX) |
+| DDL | `CREATE TABLE` | ✅ 완전 구현 |
+| DDL | `DROP TABLE` | ✅ 완전 구현 |
+| DDL | `ALTER TABLE` | ✅ 파서·실행 엔진 완전 연결 (ADD/DROP COLUMN, TTL, INDEX) |
 | DDL | `CREATE DATABASE` | ✅ 완전 구현 |
 | DDL | `DROP DATABASE` | ✅ 완전 구현 |
 | DML | `INSERT` | ✅ 메모리 스토어 (LSM Phase E) |
 | DML | `DELETE/TRUNCATE` | ✅ 메모리 스토어 |
 | DQL | `SELECT` | ✅ 메모리 스토어 (분산 실행 Phase D) |
 | SHOW | `SHOW DATABASES` | ✅ 완전 구현 |
-| SHOW | `SHOW TABLES/CUBES` | ✅ 완전 구현 |
+| SHOW | `SHOW TABLES` | ✅ 완전 구현 |
 | SHOW | `DESCRIBE/DESC` | ✅ 완전 구현 |
 | SHOW | `SHOW CREATE TABLE` | ✅ 완전 구현 |
 | SHOW | `SHOW PARTITIONS` | ✅ 컬럼 정의 완료 (데이터 T138) |
@@ -796,13 +785,13 @@ WOW-DB는 MySQL 8.0 Wire Protocol을 지원하므로 표준 MySQL 클라이언�
 | 실행 계획 | `EXPLAIN ANALYZE` | ✅ 구현 (예상 통계 기반, 실측치는 Phase D) |
 | MySQL 호환 | `SHOW INDEX FROM` | ✅ 13-컬럼 MySQL 호환 |
 | MySQL 호환 | `SHOW PROCESSLIST` | ✅ 8-컬럼 MySQL 호환 |
-| MySQL 호환 | `INFORMATION_SCHEMA.TABLES` | ✅ Cube 목록 반환 |
-| MySQL 호환 | `INFORMATION_SCHEMA.COLUMNS` | ✅ 모든 Cube 컬럼 반환 |
+| MySQL 호환 | `INFORMATION_SCHEMA.TABLES` | ✅ Table 목록 반환 |
+| MySQL 호환 | `INFORMATION_SCHEMA.COLUMNS` | ✅ 모든 Table 컬럼 반환 |
 | MySQL 호환 | `INFORMATION_SCHEMA.SCHEMATA` | ✅ DB 목록 반환 |
 
 ---
 
-## 11. 오류 처리 — 미지원 SQL
+## 12. 오류 처리 — 미지원 SQL
 
 WOW-DB는 인식되지 않거나 아직 구현되지 않은 SQL에 대해 MySQL 표준 오류 코드를 반환한다. 결과 행(`stub`)을 반환하지 않는다. 상세 사양: [`design/error-handling.md`](./error-handling.md)
 
@@ -813,15 +802,15 @@ WOW-DB는 인식되지 않거나 아직 구현되지 않은 SQL에 대해 MySQL 
 | 문법 오류 / 임의 문자열 | `1064 ER_PARSE_ERROR` | `sdc sdf;` |
 | 유효하나 미구현 문 | `1235 ER_NOT_SUPPORTED_YET` | `UPDATE`, `CREATE TABLE` |
 | 존재하지 않는 테이블 | `1146 ER_NO_SUCH_TABLE` | `SELECT * FROM nonexistent` |
-| Cube 이미 존재 | `1050 ER_TABLE_EXISTS_ERROR` | 중복 `CREATE CUBE` |
+| Table 이미 존재 | `1050 ER_TABLE_EXISTS_ERROR` | 중복 `CREATE TABLE` |
 | 읽기 전용 모드 | `1290 ER_OPTION_PREVENTS_STATEMENT` | 읽기 전용 클러스터 쓰기 |
 
 ### 미지원 MySQL 문 — WOW-DB 대체
 
 | MySQL 문 ❌ | WOW-DB 대체 ✅ |
 |------------|----------------|
-| `CREATE TABLE` | `CREATE CUBE` |
-| `CREATE INDEX` | `ALTER CUBE ... ADD INDEX` |
+| `CREATE TABLE` | `CREATE TABLE` |
+| `CREATE INDEX` | `ALTER TABLE ... ADD INDEX` |
 | `CREATE VIEW` | `CREATE SESSION MATERIALIZED VIEW` |
 | `UPDATE` | 해당 없음 (OLAP — point update 미지원) |
 | `BEGIN` / `COMMIT` | 해당 없음 (내부 2PC만 지원) |
@@ -837,12 +826,12 @@ mysql> UPDATE page_events SET event_name = 'click' WHERE id = 1;
 ERROR 1235 (42000): This version of WOW-DB doesn't yet support 'UPDATE statement'
 
 mysql> CREATE TABLE foo (id INT);
-ERROR 1235 (42000): This version of WOW-DB doesn't yet support 'CREATE TABLE (use CREATE CUBE instead)'
+ERROR 1235 (42000): This version of WOW-DB doesn't yet support 'CREATE TABLE (use CREATE TABLE instead)'
 ```
 
 ---
 
-## 12. 클러스터 관리 명령
+## 13. 클러스터 관리 명령
 
 ❌ 미구현 (Phase CM — `tasks-cluster-management.md` 참조)  
 상세 설계: [`design/cluster-management.md`](./cluster-management.md)

@@ -93,7 +93,7 @@ tracing-appender (0.2)    ← 비동기 Rolling File I/O
 |---|---|---|
 | `ERROR` | 데이터 유실·서비스 중단 가능성 있는 오류 | WAL 쓰기 실패, Raft 합의 실패 |
 | `WARN` | 성능 저하·재시도 가능한 일시 오류 | Compaction 지연, 슬로우 쿼리 |
-| `INFO` | 주요 오퍼레이션 완료 및 상태 변경 | Cube 생성, Tablet 할당, Flush 완료 |
+| `INFO` | 주요 오퍼레이션 완료 및 상태 변경 | Table 생성, Tablet 할당, Flush 완료 |
 | `DEBUG` | 내부 처리 흐름 (개발·QA 환경용) | WHERE 조건 평가, 파티션 Pruning 결과 |
 | `TRACE` | 매우 세밀한 디버깅 (성능 측정 포함) | 개별 행 삽입, Bloom Filter 프로브 |
 
@@ -126,7 +126,7 @@ RUST_LOG=query_node::planner=trace,query_node=info
 |---|---|---|
 | `mysql_protocol` | INFO | 커넥션 수락, COM_QUERY 처리, 오류 응답 |
 | `planner::cbo` | INFO | 쿼리 실행 계획 선택, 파티션 Pruning 결과 |
-| `meta::cube` | INFO | Cube DDL(CREATE/ALTER/DROP), 스키마 버전 변경 |
+| `meta::table` | INFO | Table DDL(CREATE/ALTER/DROP), 스키마 버전 변경 |
 | `raft` | INFO | Leader 선출, 메타데이터 복제 완료 |
 | `session_mv` | INFO | SMV 생성·갱신 시작/완료 |
 | `profiler` | WARN | 슬로우 쿼리 (> 1초) |
@@ -165,7 +165,7 @@ RUST_LOG=query_node::planner=trace,query_node=info
 | 필드명 | 타입 | 설명 |
 |---|---|---|
 | `node_id` | String | 노드 식별자 (예: `qn-1`, `sn-2`) |
-| `cube` | String | Cube/테이블 이름 |
+| `table` | String | Table/테이블 이름 |
 | `database` | String | 데이터베이스 이름 |
 | `tx_id` | u64 | 트랜잭션 ID |
 | `query_id` | UUID | 쿼리 식별자 |
@@ -329,7 +329,7 @@ debug!(query_id = %qid, sql = %sql_text, "Query started");
 // 파티션 Pruning 결과 (DEBUG)
 debug!(
     query_id          = %qid,
-    cube              = %cube_name,
+    table              = %table_name,
     partitions_total  = total,
     partitions_pruned = pruned,
     partitions_scanned = total - pruned,

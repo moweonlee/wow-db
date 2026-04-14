@@ -11,7 +11,7 @@
 
 | 용어 | 설명 |
 |---|---|
-| **Event Table** | `CREATE CUBE` DDL로 생성. 이벤트 1건 = 1행. 원시 이벤트 저장소 |
+| **Event Table** | `CREATE TABLE` DDL로 생성. 이벤트 1건 = 1행. 원시 이벤트 저장소 |
 | **Behavioral Table (BT)** | `CREATE SESSION MATERIALIZED VIEW` DDL로 생성. 세션 1개 = 1행. Funnel/Cohort/Path 분석에 최적화된 파생 테이블 |
 | **Behavioral Query** | FUNNEL_COUNT, COHORT_ANALYSIS, PATH_ANALYSIS 등 행동 패턴 분석 쿼리 |
 | **Event Query** | COUNT, GROUP BY 집계 등 단순 이벤트 롤업 쿼리 |
@@ -101,7 +101,7 @@ Behavioral Table에서 Funnel 계산:
 | Behavioral Query가 처음 실행되고 Behavioral Table이 없을 때 | `"이 쿼리는 Behavioral Table을 생성하면 약 {X}배 빨라집니다. [지금 생성하기]"` |
 | EXPLAIN 실행 시 Behavioral Table이 없을 때 | `"Behavioral Table 부재: 현재 Event Table 스캔 {N}행. 생성 시 {M}행으로 감소 예상"` |
 | 쿼리 실행 시간이 임계값 초과 + Behavioral Table로 해결 가능할 때 | Query Profiler에 `"Behavioral Table 생성으로 개선 가능"` 표시 |
-| Web UI에서 Cube 생성 직후 | `"Session Materialized View를 생성하시겠습니까?"` 마법사 자동 제안 |
+| Web UI에서 Table 생성 직후 | `"Session Materialized View를 생성하시겠습니까?"` 마법사 자동 제안 |
 
 ### 2.3 생성 유도 흐름
 
@@ -399,7 +399,7 @@ Exchange (Merge)
 
 | ID | 요구사항 | 우선순위 |
 |---|---|---|
-| FR-NEW-001-01 | 사용자는 항상 Event Table(Cube)만을 FROM에 사용해도 된다. Behavioral Table 참조를 강제하지 않는다. | P0 |
+| FR-NEW-001-01 | 사용자는 항상 Event Table(Table)만을 FROM에 사용해도 된다. Behavioral Table 참조를 강제하지 않는다. | P0 |
 | FR-NEW-001-02 | Behavioral Router가 FUNNEL_COUNT, COHORT_ANALYSIS, PATH_ANALYSIS 함수 사용을 감지하면 Behavioral Table 라우팅을 시도한다. | P0 |
 | FR-NEW-001-03 | session_id, session_start, session_end, event_sequence 컬럼 참조 감지 시 Behavioral Table 라우팅을 시도한다. | P0 |
 | FR-NEW-001-04 | Behavioral Table 라우팅 시 컬럼 참조(event_time → session_start 등)를 자동으로 매핑한다. 사용자 쿼리 수정 불필요. | P0 |

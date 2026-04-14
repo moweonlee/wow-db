@@ -61,7 +61,8 @@
       "Bash(grep -E \"^error\\\\[|test result|FAILED|ok$\")",
       "Bash(ls \"D:\\\\projects\\\\wow-db\\\\specs\\\\002-wow-db-srs-v02\\\\tasks\"*)",
       "Bash(chmod +x:*)",
-      "Bash(powershell.exe -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks)"
+      "Bash(powershell.exe -File .specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks)",
+      "Bash(python3:*)"
     ]
   }
 }

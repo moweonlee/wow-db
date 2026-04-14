@@ -56,7 +56,7 @@ SQL Parser (sqlparser-rs + 커스텀 확장)
   ↓
 Logical Planner
   → AST → LogicalPlan 변환
-  → Cube 이름 → CubeSchema 해석
+  → Table 이름 → TableSchema 해석
   → 서브쿼리 인라이닝, 중복 제거
   ↓
 CBO Optimizer

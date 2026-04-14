@@ -27,7 +27,7 @@ WOW-DB는 **논리 계층**과 **물리 계층**을 명확하게 분리한다.
 
 ```
 Database
-  └── Table (= Cube)
+  └── Table
         ├── Partition p_2024_q1
         │     ├── Shard 0  (distribution_key % N == 0)
         │     ├── Shard 1  (distribution_key % N == 1)
@@ -39,14 +39,14 @@ Database
               └── ...
 ```
 
-### 2.1 Table (= Cube)
+### 2.1 Table
 
 ```
 Table {
-    table_id:     Uuid,           // = cube_id
+    table_id:     Uuid,           // 전역 고유 식별자
     name:         String,         // 사용자 정의 이름 (예: "page_events")
     database:     String,
-    schema:       CubeSchema,     // 컬럼 정의, Sort Key, 분산 키 등
+    schema:       TableSchema,     // 컬럼 정의, Sort Key, 분산 키 등
     partitions:   Vec<Partition>, // 현재 활성 파티션 목록
     stats:        TableStats,     // 전체 테이블 수준 통계
 }
@@ -57,7 +57,7 @@ TableStats {
     last_analyzed: Timestamp, // ANALYZE TABLE 마지막 실행 시각
 }
 
-// Raft KV 경로: /cubes/{table_id}
+// Raft KV 경로: /tables/{table_id}
 // CBO 통계 경로: /stats/{table_id}
 ```
 
@@ -368,7 +368,7 @@ L1+ Part: key range 비중첩 불변 조건 → 중복 없음 → Merge Sort 불
 
 | 키 패턴 | 값 타입 | 설명 | 갱신 주체 |
 |---|---|---|---|
-| `/cubes/{table_id}` | `CubeSchema` | Cube 스키마 정의 | QN (DDL) |
+| `/tables/{table_id}` | `TableSchema` | Table 스키마 정의 | QN (DDL) |
 | `/partitions/{table_id}/{partition_id}` | `Partition` | 파티션 메타데이터 | QN (DDL/AutoPartition) |
 | `/tablets/{shard_id}` | `Shard` (with replicas) | Shard → SN 매핑 | QN (Tablet 할당) |
 | `/stats/{table_id}` | `TableStats` | 테이블 수준 통계 | QN (증분 갱신) |

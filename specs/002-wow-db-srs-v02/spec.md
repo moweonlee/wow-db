@@ -11,16 +11,16 @@
 
 WOW-DB의 가장 중요한 설계 철학은 **두 개의 물리 레이아웃(Event Table / Behavioral Table)을 유지하면서, 엔진이 쿼리 패턴을 분석하여 자동으로 최적 레이아웃을 선택하는 3단계 구조**이다.
 
-웹 분석에서 "cube"란 특정 목적으로 구조화된 데이터 덩어리를 가리키는 일반적인 OLAP 용어이다. WOW-DB는 이 개념을 두 종류의 물리 테이블로 구체화한다.
+웹 분석에서 "table"란 특정 목적으로 구조화된 데이터 덩어리를 가리키는 일반적인 OLAP 용어이다. WOW-DB는 이 개념을 두 종류의 물리 테이블로 구체화한다.
 
 ---
 
 ### 1단계: Event Table (이벤트 원시 저장소)
 
-사용자가 발생시키는 모든 행동(page_view, click, purchase 등)을 **시계열 순서 그대로** 저장하는 테이블이다. `CREATE CUBE` DDL로 정의하며, WOW-DB의 스토리지 엔진(LSM-Tree, 컬럼 지향, 파티션 분산)이 그대로 적용된다.
+사용자가 발생시키는 모든 행동(page_view, click, purchase 등)을 **시계열 순서 그대로** 저장하는 테이블이다. `CREATE TABLE` DDL로 정의하며, WOW-DB의 스토리지 엔진(LSM-Tree, 컬럼 지향, 파티션 분산)이 그대로 적용된다.
 
 ```sql
-CREATE CUBE page_events (
+CREATE TABLE page_events (
     event_time   DATETIME     NOT NULL,
     device_id    VARCHAR(64)  NOT NULL,
     event_name   VARCHAR(128) ENCODING(DICT),
@@ -63,7 +63,7 @@ REFRESH INCREMENTAL;
           │
           ▼
 ┌─────────────────────────┐
-│   Event Table (Cube)    │  ← CREATE CUBE
+│   Event Table (Table)    │  ← CREATE TABLE
 │  device_id, event_time  │     이벤트 1건 = 1행
 │  event_name, properties │     LSM + 컬럼 지향 저장
 └───────────┬─────────────┘
@@ -87,7 +87,7 @@ FUNNEL_COUNT  COHORT_ANALYSIS  PATH_ANALYSIS
 | 구분 | Event Table | Behavioral Table |
 |---|---|---|
 | 약어 | ET | BT |
-| 생성 방법 | `CREATE CUBE` | `CREATE SESSION MATERIALIZED VIEW ... FROM <event_table>` |
+| 생성 방법 | `CREATE TABLE` | `CREATE SESSION MATERIALIZED VIEW ... FROM <event_table>` |
 | 저장 단위 | 이벤트 1건 = 1행 | 세션 1개 = 1행 |
 | 주요 용도 | 수집, 이벤트 롤업, 원시 이벤트 조회 | Funnel / Cohort / Path 행동 분석 |
 | 데이터 갱신 | INSERT 즉시 | INCREMENTAL 또는 SCHEDULED |
@@ -151,8 +151,8 @@ Suggestion: CREATE SESSION MATERIALIZED VIEW page_events_sessions
 
 **인수 시나리오**:
 
-1. **Given** page_view·add_to_cart·purchase 이벤트가 포함된 Cube, **When** 순서가 정해진 단계 조건과 시간 윈도우를 지정하여 FUNNEL_COUNT 쿼리를 실행하면, **Then** 각 퍼널 단계에 도달한 사용자 수가 반환된다.
-2. **Given** 30일 이상의 이벤트 데이터가 있는 Cube, **When** 최초 이벤트 날짜를 기준으로 사용자를 그룹화하는 COHORT_ANALYSIS 쿼리를 실행하면, **Then** 코호트별·기간별 재방문율이 반환된다.
+1. **Given** page_view·add_to_cart·purchase 이벤트가 포함된 Table, **When** 순서가 정해진 단계 조건과 시간 윈도우를 지정하여 FUNNEL_COUNT 쿼리를 실행하면, **Then** 각 퍼널 단계에 도달한 사용자 수가 반환된다.
+2. **Given** 30일 이상의 이벤트 데이터가 있는 Table, **When** 최초 이벤트 날짜를 기준으로 사용자를 그룹화하는 COHORT_ANALYSIS 쿼리를 실행하면, **Then** 코호트별·기간별 재방문율이 반환된다.
 3. **Given** 세션 기반 이벤트 뷰, **When** PATH_ANALYSIS 쿼리를 실행하면, **Then** 사용자들이 실제로 따른 가장 빈도 높은 이벤트 시퀀스 패턴이 반환된다.
 4. **Given** MySQL Workbench, JDBC 드라이버, MySQL CLI 중 어떤 클라이언트에서든 위 쿼리를 제출하면, **Then** 표준 MySQL 결과셋 형식으로 결과가 반환된다.
 
@@ -186,27 +186,27 @@ Suggestion: CREATE SESSION MATERIALIZED VIEW page_events_sessions
 **인수 시나리오**:
 
 1. **Given** Behavioral Table이 없는 상태에서 분석가가 FUNNEL_COUNT 쿼리를 실행하면, **Then** 시스템이 Event Table로 Fallback하여 결과를 반환하면서, 응답에 `"Behavioral Table을 생성하면 약 X배 빨라집니다"` Guidance 힌트와 권장 DDL을 포함한다.
-2. **Given** Cube가 생성된 상태, **When** 분석가가 Web UI에서 "Behavioral Table 생성" 마법사를 실행하면, **Then** 시스템이 User Key 컬럼(드롭다운) 선택과 Session Timeout 값을 안내하고 DDL 미리보기를 표시한다.
+2. **Given** Table이 생성된 상태, **When** 분석가가 Web UI에서 "Behavioral Table 생성" 마법사를 실행하면, **Then** 시스템이 User Key 컬럼(드롭다운) 선택과 Session Timeout 값을 안내하고 DDL 미리보기를 표시한다.
 3. **Given** 분석가가 DDL 미리보기를 확정하면, **Then** 시스템이 Behavioral Table을 구체화하고 결과 데이터(`session_id`, `event_sequence` 포함) 샘플을 보여준다.
 4. **Given** Behavioral Table 생성 완료 후 분석가가 동일한 FUNNEL_COUNT 쿼리를 다시 실행하면, **Then** 쿼리 수정 없이 자동으로 Behavioral Table을 사용하며, 응답 시간이 이전 대비 유의미하게 개선된다.
 5. **Given** Behavioral Table 생성 후 소스 Event Table에 새 이벤트가 도착하면, **Then** 예약된 갱신이 실행될 때 새 이벤트가 Behavioral Table에 반영된다.
 
 ---
 
-### 사용자 스토리 4 - 이벤트 스키마(Cube) 정의 (우선순위: P2)
+### 사용자 스토리 4 - 이벤트 스키마(Table) 정의 (우선순위: P2)
 
 데이터 엔지니어는 SQL DDL을 이용해 웹 이벤트의 스키마(컬럼, 데이터 타입, 파티션 전략, 스토리지 설정)를 명시적으로 정의해야 한다.
 
 **이 우선순위인 이유**: 스키마 정의는 분석의 기반이 되는 초기 설정으로, 한 번 수행되는 전제 조건 작업이다. 지속적인 사용자 가치를 직접 제공하지 않으므로 P1 분석보다 낮다.
 
-**독립 테스트**: MySQL 클라이언트에서 CREATE CUBE 구문을 실행하고, 샘플 행을 삽입한 뒤 쿼리 가능함을 확인하면 독립적으로 검증할 수 있다.
+**독립 테스트**: MySQL 클라이언트에서 CREATE TABLE 구문을 실행하고, 샘플 행을 삽입한 뒤 쿼리 가능함을 확인하면 독립적으로 검증할 수 있다.
 
 **인수 시나리오**:
 
-1. **Given** 데이터 엔지니어가 컬럼 정의, 파티션 키, 분산 전략을 포함한 CREATE CUBE 구문을 작성하면, **When** 이를 실행하면, **Then** 스키마가 등록되어 즉시 데이터를 받을 수 있게 된다.
-2. **Given** 기존 Cube에 새 컬럼이 필요한 경우, **When** ALTER CUBE 구문으로 컬럼을 추가하면, **Then** 데이터 손실 없이 컬럼이 추가되고 기존 행은 새 컬럼에 NULL을 갖는다.
-3. **Given** 시간 기반 파티셔닝이 설정된 Cube, **When** 기존 파티션이 커버하지 않는 날짜로 이벤트가 도착하면, **Then** 관리자 개입 없이 새 파티션이 자동으로 생성된다.
-4. **Given** Cube에 JSON properties 컬럼이 있고 시간이 지남에 따라 데이터가 적재되면, **When** 시스템이 특정 JSON 키가 레코드 전반에 걸쳐 자주 출현함을 감지하면, **Then** 해당 키들이 일반 컬럼과 동일한 필터링·집계 성능을 갖는 독립 컬럼으로 쿼리 가능해진다.
+1. **Given** 데이터 엔지니어가 컬럼 정의, 파티션 키, 분산 전략을 포함한 CREATE TABLE 구문을 작성하면, **When** 이를 실행하면, **Then** 스키마가 등록되어 즉시 데이터를 받을 수 있게 된다.
+2. **Given** 기존 Table에 새 컬럼이 필요한 경우, **When** ALTER TABLE 구문으로 컬럼을 추가하면, **Then** 데이터 손실 없이 컬럼이 추가되고 기존 행은 새 컬럼에 NULL을 갖는다.
+3. **Given** 시간 기반 파티셔닝이 설정된 Table, **When** 기존 파티션이 커버하지 않는 날짜로 이벤트가 도착하면, **Then** 관리자 개입 없이 새 파티션이 자동으로 생성된다.
+4. **Given** Table에 JSON properties 컬럼이 있고 시간이 지남에 따라 데이터가 적재되면, **When** 시스템이 특정 JSON 키가 레코드 전반에 걸쳐 자주 출현함을 감지하면, **Then** 해당 키들이 일반 컬럼과 동일한 필터링·집계 성능을 갖는 독립 컬럼으로 쿼리 가능해진다.
 
 ---
 
@@ -222,13 +222,13 @@ Suggestion: CREATE SESSION MATERIALIZED VIEW page_events_sessions
 
 1. **Given** WOW-DB의 호스트와 포트로 설정된 MySQL 클라이언트, **When** 표준 MySQL 사용자명과 비밀번호로 연결하면, **Then** 드라이버 수정이나 특별한 설정 없이 연결이 성공한다.
 2. **Given** 연결된 MySQL 클라이언트, **When** 표준 SQL 구문(SELECT, INSERT, SHOW TABLES, DESCRIBE)을 실행하면, **Then** 결과가 표준 MySQL 결과셋 형식으로 반환된다.
-3. **Given** 표준 MySQL JDBC 드라이버로 설정된 JDBC 기반 BI 도구, **When** WOW-DB에 연결하고 Cube를 쿼리하면, **Then** 오류 없이 데이터와 스키마 정보가 올바르게 표시된다.
+3. **Given** 표준 MySQL JDBC 드라이버로 설정된 JDBC 기반 BI 도구, **When** WOW-DB에 연결하고 Table을 쿼리하면, **Then** 오류 없이 데이터와 스키마 정보가 올바르게 표시된다.
 
 ---
 
 ### 사용자 스토리 7 - 데이터 분포 가시성 (우선순위: P2)
 
-플랫폼 엔지니어와 데이터 엔지니어는 각 Cube의 데이터가 Storage Node들에 어떻게 분산되어 있는지, 어떤 파티션에 얼마나 많은 데이터가 있는지, 어떤 분산 키로 어떤 Shard가 어느 SN에 위치하는지, 그리고 각 Shard의 LSM Part 수와 크기를 실시간으로 확인해야 한다.
+플랫폼 엔지니어와 데이터 엔지니어는 각 Table의 데이터가 Storage Node들에 어떻게 분산되어 있는지, 어떤 파티션에 얼마나 많은 데이터가 있는지, 어떤 분산 키로 어떤 Shard가 어느 SN에 위치하는지, 그리고 각 Shard의 LSM Part 수와 크기를 실시간으로 확인해야 한다.
 
 **이 우선순위인 이유**: 운영 중 데이터 불균형 감지, Compaction 상태 파악, Hot Shard 진단, 파티션 프루닝 효과 확인에 필수적이다. StarRocks의 `SHOW PARTITIONS`나 ClickHouse의 `system.parts` 테이블이 제공하는 수준의 운영 가시성이 요구된다.
 
@@ -236,8 +236,8 @@ Suggestion: CREATE SESSION MATERIALIZED VIEW page_events_sessions
 
 **인수 시나리오**:
 
-1. **Given** 데이터가 로딩된 Cube `page_events`, **When** `SHOW PARTITIONS FROM page_events`를 실행하면, **Then** 각 파티션의 ID, 키 범위, row_count, size_bytes, shard_count, 티어 상태가 반환된다.
-2. **Given** 분산 키 `device_id`로 정의된 Cube, **When** `SHOW SHARDS FROM page_events`를 실행하면, **Then** 각 Shard의 shard_id, 소속 Storage Node, bucket_id, 역할(Leader/Follower), row_count, LSM part_count가 반환된다.
+1. **Given** 데이터가 로딩된 Table `page_events`, **When** `SHOW PARTITIONS FROM page_events`를 실행하면, **Then** 각 파티션의 ID, 키 범위, row_count, size_bytes, shard_count, 티어 상태가 반환된다.
+2. **Given** 분산 키 `device_id`로 정의된 Table, **When** `SHOW SHARDS FROM page_events`를 실행하면, **Then** 각 Shard의 shard_id, 소속 Storage Node, bucket_id, 역할(Leader/Follower), row_count, LSM part_count가 반환된다.
 3. **Given** 특정 파티션, **When** `SHOW PARTS FROM page_events PARTITION <partition_id>`를 실행하면, **Then** 해당 파티션의 모든 LSM Part 목록과 레벨, sort key 범위, 크기, Bloom Filter 크기가 반환된다.
 4. **Given** 클러스터 운영자, **When** `SHOW DISTRIBUTED STATUS FROM page_events`를 실행하면, **Then** 각 SN별 Shard 수, 총 데이터 크기, 평균 Part 수가 반환되어 데이터 편중 여부를 즉시 파악할 수 있다.
 
@@ -262,8 +262,8 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 
 ### 엣지 케이스
 
-- Cube 스키마에 정의되지 않은 필드를 가진 이벤트가 Kafka 토픽을 통해 유입되면 어떻게 처리하는가?
-- Session MV 갱신 중 소스 Cube에 동시에 쓰기가 발생하면 어떻게 처리하는가?
+- Table 스키마에 정의되지 않은 필드를 가진 이벤트가 Kafka 토픽을 통해 유입되면 어떻게 처리하는가?
+- Session MV 갱신 중 소스 Table에 동시에 쓰기가 발생하면 어떻게 처리하는가?
 - 쿼리 실행 도중 Data Node가 오프라인이 되면 실행 중인 쿼리는 어떻게 처리되는가?
 - 파티션의 TTL이 만료되면 데이터가 즉시 삭제되는가, 아니면 다음 예약된 Compaction 시점에 삭제되는가?
 - 극단적인 지속 쓰기 부하에서 버퍼 삽입 대기열이 용량에 도달하면 어떻게 되는가?
@@ -277,11 +277,11 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 
 ### 기능 요구사항
 
-- **FR-000**: **Behavioral Routing — 자동 쿼리 라우팅 (핵심 차별화 요소)** — 시스템은 사용자가 항상 Event Table(Cube)에 쿼리를 작성하더라도, Behavioral Router가 쿼리 패턴을 분석하여 Event Query 또는 Behavioral Query 중 최적의 물리 레이아웃으로 자동 라우팅해야 한다. `FUNNEL_COUNT`, `COHORT_ANALYSIS`, `PATH_ANALYSIS` 함수 사용 또는 Behavioral Table 전용 컬럼(`session_id`, `session_start`, `session_end`, `event_sequence`) 참조가 감지되면 Behavioral Table(Session MV)로 라우팅한다. Behavioral Table이 없거나 갱신 지연(STALE) 상태이면 오류 없이 Event Table로 Fallback하며 Behavioral Guidance 힌트를 제공한다. 상세 설계: `specs/002-wow-db-srs-v02/design/query-routing-smv.md` 참조.
-- **FR-001**: 사용자는 컬럼명, 데이터 타입, 파티션 키, 정렬 순서, 분산 전략을 지정하는 SQL DDL(`CREATE CUBE`)을 사용하여 이벤트 스키마("Cube")를 정의할 수 있어야 한다.
+- **FR-000**: **Behavioral Routing — 자동 쿼리 라우팅 (핵심 차별화 요소)** — 시스템은 사용자가 항상 Event Table(Table)에 쿼리를 작성하더라도, Behavioral Router가 쿼리 패턴을 분석하여 Event Query 또는 Behavioral Query 중 최적의 물리 레이아웃으로 자동 라우팅해야 한다. `FUNNEL_COUNT`, `COHORT_ANALYSIS`, `PATH_ANALYSIS` 함수 사용 또는 Behavioral Table 전용 컬럼(`session_id`, `session_start`, `session_end`, `event_sequence`) 참조가 감지되면 Behavioral Table(Session MV)로 라우팅한다. Behavioral Table이 없거나 갱신 지연(STALE) 상태이면 오류 없이 Event Table로 Fallback하며 Behavioral Guidance 힌트를 제공한다. 상세 설계: `specs/002-wow-db-srs-v02/design/query-routing-smv.md` 참조.
+- **FR-001**: 사용자는 컬럼명, 데이터 타입, 파티션 키, 정렬 순서, 분산 전략을 지정하는 SQL DDL(`CREATE TABLE`)을 사용하여 이벤트 스키마("Table")를 정의할 수 있어야 한다.
 - **FR-002**: 시스템은 수신 데이터가 기존 파티션이 커버하지 않는 날짜 범위에 해당할 때 시간 기반 파티션을 자동으로 생성해야 한다(`Auto Partition`).
 - **FR-003**: 사용자는 JSON 또는 Avro 형식의 Apache Kafka 토픽으로부터 상시 수집(`Routine Load`)을 설정할 수 있어야 하며, 자동 장애 복구와 정확히 한 번(exactly-once) 전달을 보장해야 한다.
-- **FR-004**: 사용자는 Apache Spark(버전 3.1 및 3.4) 잡에서 이벤트 데이터를 단일 원자적 트랜잭션으로 Cube에 적재할 수 있어야 한다.
+- **FR-004**: 사용자는 Apache Spark(버전 3.1 및 3.4) 잡에서 이벤트 데이터를 단일 원자적 트랜잭션으로 Table에 적재할 수 있어야 한다.
 - **FR-005**: 시스템은 이벤트 수집을 위한 표준 MySQL INSERT 구문을 받아야 하며, 고빈도 소형 INSERT를 누적하여 효율적인 배치로 플러시하는 설정 가능한 버퍼 모드(`Async INSERT`)를 제공해야 한다.
 - **FR-006**: 시스템은 설정 가능한 시간 윈도우 내에서 정해진 순서의 이벤트 타입 조건에 걸친 사용자 전환율을 계산하는 `FUNNEL_COUNT` 함수를 제공해야 한다.
 - **FR-007**: 시스템은 최초 자격 이벤트(코호트 진입)를 기준으로 사용자를 그룹화하고 이후 기간에 걸친 행동을 추적하는 `COHORT_ANALYSIS` 함수를 제공해야 한다.
@@ -290,15 +290,15 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 - **FR-010**: Web UI는 Behavioral Table 생성을 위한 대화형 마법사를 제공해야 하며, 드롭다운을 통한 컬럼 선택, 사전 설정 타임아웃 옵션, 변경 확정 전 DDL 미리보기 단계를 포함해야 한다. 첫 Behavioral Query 실행 시 Behavioral Table이 없으면 마법사를 자동으로 제안해야 한다 (Behavioral Guidance, FR-NEW-001-07 참조).
 - **FR-011**: 시스템은 MySQL 8.0 호환 클라이언트(CLI 도구, GUI 클라이언트, JDBC 드라이버, Python 커넥터, BI 도구)로부터의 연결을 받아야 한다.
 - **FR-012**: 사용자는 각 Data Node의 물리 스토리지를 로컬 디스크, S3 호환 오브젝트 스토리지, 또는 HDFS(Kerberos 인증 필수)로 설정할 수 있어야 한다.
-- **FR-013**: 사용자는 Cube 데이터로부터 GROUP BY 집계를 사전 계산하여 반복적인 대시보드·리포팅 쿼리를 가속하는 사전 집계 Materialized View(`Pre-aggregation MV`)를 정의할 수 있어야 한다.
+- **FR-013**: 사용자는 Table 데이터로부터 GROUP BY 집계를 사전 계산하여 반복적인 대시보드·리포팅 쿼리를 가속하는 사전 집계 Materialized View(`Pre-aggregation MV`)를 정의할 수 있어야 한다.
 - **FR-014**: 사용자는 파티션 수준에서 데이터 만료 정책(`TTL`)을 정의하여, 지정된 기간이 지난 데이터가 백그라운드 유지보수 과정에서 자동으로 제거되도록 할 수 있어야 한다.
 - **FR-015**: 사용자는 지정된 기간보다 오래된 데이터가 수동 개입 없이 빠른 로컬 스토리지에서 저비용 오브젝트 스토리지로 자동 마이그레이션되도록 스토리지 티어링(`Tiered Storage`)을 설정할 수 있어야 한다.
 - **FR-016**: 시스템은 로컬 소프트웨어 설치 없이 쿼리를 작성·실행하고 결과를 볼 수 있는 브라우저 기반 SQL 에디터를 제공해야 한다.
 - **FR-017**: 시스템은 최근 1,000건의 쿼리 실행(SQL 텍스트, 총 소요 시간, 처리 행 수, 노드별 처리 메트릭 포함)을 기록하는 Query Profiler를 유지해야 한다.
 - **FR-018**: 시스템은 표준 모니터링 플랫폼(Prometheus 등)과 호환되는 엔드포인트(`/metrics`)를 통해 클러스터 상태 메트릭(노드 상태, 리소스 사용률, 쿼리 처리량, 수집 속도)을 노출해야 한다.
-- **FR-019**: 사용자는 외부 스토리지 시스템(S3, HDFS, Hive 호환 카탈로그, Iceberg 테이블)의 데이터를 데이터 임포트 없이 네이티브 Cube처럼 쿼리할 수 있어야 한다(`External Table`).
+- **FR-019**: 사용자는 외부 스토리지 시스템(S3, HDFS, Hive 호환 카탈로그, Iceberg 테이블)의 데이터를 데이터 임포트 없이 네이티브 Table처럼 쿼리할 수 있어야 한다(`External Table`).
 - **FR-020**: 관리자는 사용자 또는 역할(Role)별로 CPU 점유율, 메모리 사용량, 동시 쿼리 수, 최대 쿼리 실행 시간 제한을 설정하는 리소스 정책(`Resource Group`)을 정의할 수 있어야 한다.
-- **FR-021**: 사용자는 Cube에 JSON 컬럼을 정의할 수 있어야 하며, 시스템은 백그라운드 처리(`Flat JSON`)를 통해 자주 출현하는 JSON 키를 자동으로 식별하여 SIMD 스캔·Bloom Filter·CBO 통계가 적용되는 효율적인 하위 컬럼으로 쿼리 가능하게 만들어야 한다.
+- **FR-021**: 사용자는 Table에 JSON 컬럼을 정의할 수 있어야 하며, 시스템은 백그라운드 처리(`Flat JSON`)를 통해 자주 출현하는 JSON 키를 자동으로 식별하여 SIMD 스캔·Bloom Filter·CBO 통계가 적용되는 효율적인 하위 컬럼으로 쿼리 가능하게 만들어야 한다.
 - **FR-022**: 시스템은 Granule 단위로 MINMAX, BLOOM_FILTER, SET, NGRAMBF_V1 인덱스를 지원하여 불필요한 Granule 읽기를 건너뛸 수 있어야 한다(`Data Skipping Index`).
 - **FR-023**: Query Node는 홀수 개(최소 3개)로 구성되는 Raft 클러스터를 형성하여 메타데이터 고가용성을 보장해야 하며, 모든 QN이 동일한 복제 메타데이터를 보유하여 K8s LoadBalancer의 무작위 라우팅을 지원해야 한다.
 - **FR-024**: 시스템은 Hash Join의 Build Side에서 생성한 Bloom/In-list/MinMax 필터를 Probe Side CN 및 DN 스캔에 동적으로 전파하여 스캔량을 감소시키는 Runtime Filter를 지원해야 한다.
@@ -306,27 +306,27 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 
 ### LSM 엔진 동작 요구사항
 
-- **FR-026**: `CREATE CUBE`의 `ORDER BY` 절(Sort Key)은 최대 4개 컬럼을 허용하며, 직렬화된 키 크기가 128 bytes를 초과하면 DDL 에러를 반환해야 한다. JSON 타입 컬럼은 Sort Key에 사용할 수 없다.
+- **FR-026**: `CREATE TABLE`의 `ORDER BY` 절(Sort Key)은 최대 4개 컬럼을 허용하며, 직렬화된 키 크기가 128 bytes를 초과하면 DDL 에러를 반환해야 한다. JSON 타입 컬럼은 Sort Key에 사용할 수 없다.
 - **FR-027**: LSM Compaction은 파티션 경계 내에서만 발생해야 한다. 서로 다른 파티션의 SSTable을 병합하는 Compaction은 절대 발생하지 않아야 한다.
 - **FR-028**: Leveled Compaction에서 Level-1 이상의 동일 레벨 내 SSTable들은 Sort Key 범위가 서로 겹치지 않는 불변 조건을 항상 만족해야 한다. Level-0 SSTable은 key range 겹침이 허용된다.
 - **FR-029**: Storage Node는 SSTable당 Bloom Filter를 유지해야 하며, Compaction으로 새 SSTable이 생성될 때 이전 Bloom Filter를 재사용하지 않고 출력 레코드 기반으로 새로 빌드해야 한다.
-- **FR-030**: 관리자는 `OPTIMIZE TABLE <cube_name> FORCE` 명령으로 특정 Cube의 파티션별 Full Compaction(모든 레벨 → L6 단일 통합)을 명시적으로 트리거할 수 있어야 한다.
+- **FR-030**: 관리자는 `OPTIMIZE TABLE <table_name> FORCE` 명령으로 특정 Table의 파티션별 Full Compaction(모든 레벨 → L6 단일 통합)을 명시적으로 트리거할 수 있어야 한다.
 - **FR-031**: SSTable 물리 파일(`.col`, `.bloom`, `.min_max`)은 파일 헤더에 magic bytes, 포맷 버전 번호, SSTable sequence_num을 포함해야 하며, 버전 불일치 시 로딩을 거부해야 한다.
 - **FR-032**: Storage Node는 MANIFEST 파일을 통해 현재 활성 SSTable 전체 목록을 원자적으로 관리해야 하며, 크래시 복구 시 MANIFEST만으로 전체 LSM 상태를 복원할 수 있어야 한다.
 
 ### Query Node 메타데이터 일관성 요구사항
 
-- **FR-033**: **단일 시스템 이미지(Single System Image) 보장** — 클라이언트가 어떤 Query Node에 접속하더라도 동일한 Cube 스키마, 파티션 목록, Tablet 위치 정보, CBO 통계를 조회할 수 있어야 한다. DDL(CREATE/ALTER/DROP CUBE)이 Raft quorum 쓰기로 커밋되면, 해당 변경은 이후 어떤 QN에서 발행하는 메타데이터 조회에도 즉시 반영되어야 한다. QN 간 메타데이터 뷰의 불일치는 허용하지 않는다.
+- **FR-033**: **단일 시스템 이미지(Single System Image) 보장** — 클라이언트가 어떤 Query Node에 접속하더라도 동일한 Table 스키마, 파티션 목록, Tablet 위치 정보, CBO 통계를 조회할 수 있어야 한다. DDL(CREATE/ALTER/DROP TABLE)이 Raft quorum 쓰기로 커밋되면, 해당 변경은 이후 어떤 QN에서 발행하는 메타데이터 조회에도 즉시 반영되어야 한다. QN 간 메타데이터 뷰의 불일치는 허용하지 않는다.
 
-- **FR-034**: **메타데이터 캐시 Staleness 상한** — QN의 로컬 메타데이터 캐시는 스키마 버전(`CubeSchema.version`)을 기준으로 TTL 무효화를 적용해야 한다. DDL 변경(CREATE/ALTER/DROP CUBE)은 캐시 즉시 무효화(write-through) 방식으로 처리해야 하며, CBO 통계(min/max/NDV/Histogram)의 최대 staleness는 설정 가능(기본 500ms)해야 한다. 캐시의 스키마 버전이 Raft 메타스토어의 최신 버전과 불일치하는 경우 즉시 재조회해야 한다.
+- **FR-034**: **메타데이터 캐시 Staleness 상한** — QN의 로컬 메타데이터 캐시는 스키마 버전(`TableSchema.version`)을 기준으로 TTL 무효화를 적용해야 한다. DDL 변경(CREATE/ALTER/DROP TABLE)은 캐시 즉시 무효화(write-through) 방식으로 처리해야 하며, CBO 통계(min/max/NDV/Histogram)의 최대 staleness는 설정 가능(기본 500ms)해야 한다. 캐시의 스키마 버전이 Raft 메타스토어의 최신 버전과 불일치하는 경우 즉시 재조회해야 한다.
 
 - **FR-035**: **세션 토큰 클러스터 공유** — Web Client 세션 토큰은 Raft KV(`/sessions/{token}`)에 저장되어야 하며, 클러스터 내 모든 QN에서 유효성 검증이 가능해야 한다. 특정 QN이 재시작되더라도 기존 웹 세션이 유지되어야 하며, 토큰 만료는 Raft KV의 TTL(기본 24시간, 설정 가능)로 관리되어야 한다.
 
 ### 클러스터 보호 요구사항
 
 - **FR-036**: **디스크 용량 초과 시 읽기 전용 모드(Read-Only Mode)** — Storage Node의 데이터 디스크 또는 Query Node의 Raft WAL 디스크의 사용률이 설정된 임계값(기본 95%, `disk_full_threshold`)을 초과하여 새로운 데이터·메타데이터를 기록할 수 없는 상태가 감지되면, 클러스터 전체는 즉시 읽기 전용 모드로 전환되어야 한다.
-  - **쓰기 차단 대상**: INSERT, CREATE CUBE, ALTER CUBE, DROP CUBE, Kafka Routine Load 수집, Spark Stream Load, Async INSERT, Compaction 출력 쓰기
-  - **정상 처리 대상**: SELECT, SHOW CUBES, DESCRIBE, EXPLAIN, SHOW STATUS 등 모든 읽기 전용 연산
+  - **쓰기 차단 대상**: INSERT, CREATE TABLE, ALTER TABLE, DROP TABLE, Kafka Routine Load 수집, Spark Stream Load, Async INSERT, Compaction 출력 쓰기
+  - **정상 처리 대상**: SELECT, SHOW TABLES, DESCRIBE, EXPLAIN, SHOW STATUS 등 모든 읽기 전용 연산
   - **클라이언트 오류 응답**: MySQL 호환 에러 — `ERROR 1290 (HY000): The WOW-DB server is running in read-only mode so it cannot execute this statement`
   - **자동 복귀**: 디스크 사용률이 회복 임계값(기본 85%, `disk_recovery_threshold`) 이하로 감소하면 쓰기 가능 상태로 자동 복귀해야 한다
   - **Prometheus 지표**: `wowdb_cluster_read_only{reason="disk_full"}` 메트릭을 노출해야 하며, 읽기 전용 진입 시 값 1, 복귀 시 값 0으로 설정되어야 한다
@@ -335,7 +335,7 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 ### 쿼리 실행 단위 및 논리-물리 매핑 요구사항
 
 - **FR-037**: **논리 단위 계층 (Query Node 관점)** — Query Node는 데이터를 세 계층의 논리 단위로 인식하고 스케줄링 결정을 내려야 한다.
-  - **Table** (= Cube): 최상위 논리 엔티티. SQL에서 FROM 절에 명시되는 단위
+  - **Table**: 최상위 논리 엔티티. SQL에서 FROM 절에 명시되는 단위
   - **Partition**: Table을 시간 범위 또는 키 범위로 나눈 논리 분할 단위. CBO의 Partition Pruning 최소 단위
   - **Shard** (= Tablet): Partition 내에서 분산 키(distribution key)의 해시 버킷으로 나눈 스케줄링 최소 단위. Fragment가 CN에 할당될 때의 기본 단위이며, 각 Shard는 하나 이상의 Storage Node에 복제본을 가진다
   - CBO 통계는 이 세 계층 모두에서 독립적으로 저장·조회되어야 한다
@@ -353,9 +353,9 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
   - **상세 설계**: `specs/002-wow-db-srs-v02/design/logical-to-physical-mapping.md` 참조
 
 - **FR-040**: **CBO 통계 계층적 저장** — CBO 통계는 논리 단위 계층(Table/Partition/Shard)과 물리 단위(Part) 모두에서 저장·관리되어야 한다.
-  - **Table 수준** (Raft KV `/stats/{cube_id}`): 전체 row_count, size_bytes, last_analyzed
-  - **Partition 수준** (Raft KV `/stats/{cube_id}/{partition_id}`): row_count, size_bytes, partition key min/max
-  - **Shard 수준** (Raft KV `/stats/{cube_id}/{partition_id}/{shard_id}`): row_count, size_bytes, 컬럼별 min/max/NDV/null_count/Histogram
+  - **Table 수준** (Raft KV `/stats/{table_id}`): 전체 row_count, size_bytes, last_analyzed
+  - **Partition 수준** (Raft KV `/stats/{table_id}/{partition_id}`): row_count, size_bytes, partition key min/max
+  - **Shard 수준** (Raft KV `/stats/{table_id}/{partition_id}/{shard_id}`): row_count, size_bytes, 컬럼별 min/max/NDV/null_count/Histogram
   - **Part 수준** (MANIFEST 내 SstRef 필드): row_count, min_sort_key, max_sort_key (Raft KV 비저장, SN 로컬)
   - CBO Optimizer는 Partition Pruning 시 Partition 수준 통계를, Join 순서 결정 시 Shard 수준 통계를, 파일 스킵 시 Part 수준 통계를 각각 활용해야 한다
 
@@ -379,7 +379,7 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 
 ### 데이터 분포 가시성 요구사항 (FR-043~FR-046)
 
-- **FR-043**: **SHOW PARTITIONS — 파티션 분포 조회** — MySQL 클라이언트에서 `SHOW PARTITIONS FROM <cube>` 명령으로 해당 Cube의 모든 파티션 목록과 메타데이터를 조회할 수 있어야 한다.
+- **FR-043**: **SHOW PARTITIONS — 파티션 분포 조회** — MySQL 클라이언트에서 `SHOW PARTITIONS FROM <table>` 명령으로 해당 Table의 모든 파티션 목록과 메타데이터를 조회할 수 있어야 한다.
 
   **출력 컬럼**:
   | 컬럼명 | 타입 | 설명 |
@@ -406,7 +406,7 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
   SHOW PARTITIONS FROM page_events ORDER BY size_bytes DESC LIMIT 10;
   ```
 
-- **FR-044**: **SHOW SHARDS — Shard 분산 조회** — `SHOW SHARDS FROM <cube>` 명령으로 Cube의 모든 Shard(Tablet)와 각 Shard를 담당하는 Storage Node 정보를 조회할 수 있어야 한다. 분산 키별로 어떤 데이터가 어느 SN에 저장되어 있는지, 데이터 편중 여부를 확인하는 데 사용한다.
+- **FR-044**: **SHOW SHARDS — Shard 분산 조회** — `SHOW SHARDS FROM <table>` 명령으로 Table의 모든 Shard(Tablet)와 각 Shard를 담당하는 Storage Node 정보를 조회할 수 있어야 한다. 분산 키별로 어떤 데이터가 어느 SN에 저장되어 있는지, 데이터 편중 여부를 확인하는 데 사용한다.
 
   **출력 컬럼**:
   | 컬럼명 | 타입 | 설명 |
@@ -439,11 +439,11 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
   SHOW SHARDS FROM page_events ORDER BY size_bytes DESC LIMIT 20;
   ```
 
-- **FR-045**: **SHOW PARTS — LSM Part(SSTable) 조회** — `SHOW PARTS FROM <cube>` 명령으로 Cube의 모든 물리 LSM Part 목록과 각 Part의 레벨, Sort Key 범위, 크기, Bloom Filter 정보를 조회할 수 있어야 한다. `SHOW PARTS ON PARTITION <partition_id> FROM <cube>` 구문을 통해 특정 파티션으로 드릴다운이 가능해야 한다.
+- **FR-045**: **SHOW PARTS — LSM Part(SSTable) 조회** — `SHOW PARTS FROM <table>` 명령으로 Table의 모든 물리 LSM Part 목록과 각 Part의 레벨, Sort Key 범위, 크기, Bloom Filter 정보를 조회할 수 있어야 한다. `SHOW PARTS ON PARTITION <partition_id> FROM <table>` 구문을 통해 특정 파티션으로 드릴다운이 가능해야 한다.
 
   **계층 구조 (Drill-down)**:
   ```
-  Cube
+  Table
     └─ SHOW PARTITIONS → Partition
           └─ SHOW SHARDS → Shard (Tablet, SN별 분산 단위)
                 └─ SHOW PARTS → Part (LSM SSTable, 실제 파일 단위)
@@ -467,7 +467,7 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 
   **지원 구문**:
   ```sql
-  -- 전체 Part 목록 (Cube 전체)
+  -- 전체 Part 목록 (Table 전체)
   SHOW PARTS FROM page_events;
 
   -- 특정 파티션의 Part만 (Partition 단위 drill-down)
@@ -487,7 +487,7 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 
   > **운영 팁**: `level = 0` Part가 많다면 Compaction이 지연되고 있는 것을 의미한다. `size_bytes`가 비정상적으로 큰 Part는 Hot Shard의 징후일 수 있다.
 
-- **FR-046**: **SHOW DISTRIBUTED STATUS — 노드별 분포 요약** — `SHOW DISTRIBUTED STATUS FROM <cube>` 명령으로 각 Storage Node가 담당하는 Shard 수, 총 데이터 크기, 행 수를 요약 조회할 수 있어야 한다. 데이터 편중(skew) 여부를 신속히 파악하는 데 사용한다.
+- **FR-046**: **SHOW DISTRIBUTED STATUS — 노드별 분포 요약** — `SHOW DISTRIBUTED STATUS FROM <table>` 명령으로 각 Storage Node가 담당하는 Shard 수, 총 데이터 크기, 행 수를 요약 조회할 수 있어야 한다. 데이터 편중(skew) 여부를 신속히 파악하는 데 사용한다.
 
   **출력 컬럼**:
   | 컬럼명 | 타입 | 설명 |
@@ -565,12 +565,12 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
               Aggregate pushdown: count(*) [YES]
   ```
 
-- **FR-048**: **EXPLAIN — Colocate Join 표시** — 동일 Colocate Group 내 두 Cube를 Join할 때 EXPLAIN 출력에서 Join 노드가 `[COLOCATE]` 태그로 표시되어야 한다. Colocate Join은 분산 키(Distribution Key)와 버킷 수(Bucket Count)가 동일한 두 Cube 사이에서 Shuffle 없이 로컬 Join으로 실행된다.
+- **FR-048**: **EXPLAIN — Colocate Join 표시** — 동일 Colocate Group 내 두 Table을 Join할 때 EXPLAIN 출력에서 Join 노드가 `[COLOCATE]` 태그로 표시되어야 한다. Colocate Join은 분산 키(Distribution Key)와 버킷 수(Bucket Count)가 동일한 두 Table 사이에서 Shuffle 없이 로컬 Join으로 실행된다.
 
   **Colocate Join 조건**:
-  1. 두 Cube가 동일한 `colocate_group` PROPERTIES 값을 가진다.
-  2. 두 Cube의 `DISTRIBUTED BY HASH(<col>)` 분산 키가 동일하다.
-  3. 두 Cube의 `BUCKETS <n>` 버킷 수가 동일하다.
+  1. 두 Table이 동일한 `colocate_group` PROPERTIES 값을 가진다.
+  2. 두 Table의 `DISTRIBUTED BY HASH(<col>)` 분산 키가 동일하다.
+  3. 두 Table의 `BUCKETS <n>` 버킷 수가 동일하다.
   4. JOIN 조건 컬럼이 분산 키와 일치한다.
 
   **EXPLAIN 출력 비교**:
@@ -634,13 +634,13 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 ### 핵심 엔티티
 
 - **이벤트(Event)**: 웹 서비스에서 사용자가 발생시킨 단일 행동 단위. 타임스탬프, 사용자 식별자, 이벤트 타입명, 선택적 properties 페이로드를 포함한다.
-- **Cube**: 이벤트 데이터를 위한 명명된 논리 스키마 및 스토리지 컨테이너. 컬럼, 파티션 전략, 정렬 순서로 정의된다. WOW-DB의 기본 데이터 조직 단위.
+- **Table**: 이벤트 데이터를 위한 명명된 논리 스키마 및 스토리지 컨테이너. 컬럼, 파티션 전략, 정렬 순서로 정의된다. WOW-DB의 기본 데이터 조직 단위.
 - **세션(Session)**: 설정 가능한 비활성 타임아웃으로 경계가 정해지는 연속적 활동 기간 내에 단일 사용자에 귀속된 연속적인 이벤트 그룹.
-- **Session Materialized View (SMV)**: 이벤트를 세션으로 조직화하는 Cube의 파생되고 사전 계산된 뷰. 세션 ID, 세션 시작·종료 시각, 세션별 정렬된 이벤트 시퀀스를 포함한다.
-- **파티션(Partition)**: 쿼리 범위 지정 및 유지보수 작업의 효율적인 처리를 위해 Cube 데이터를 시간 범위 또는 키 범위로 분할한 단위. 파티션 내에서만 LSM Merge 발생.
+- **Session Materialized View (SMV)**: 이벤트를 세션으로 조직화하는 Table의 파생되고 사전 계산된 뷰. 세션 ID, 세션 시작·종료 시각, 세션별 정렬된 이벤트 시퀀스를 포함한다.
+- **파티션(Partition)**: 쿼리 범위 지정 및 유지보수 작업의 효율적인 처리를 위해 Table 데이터를 시간 범위 또는 키 범위로 분할한 단위. 파티션 내에서만 LSM Merge 발생.
 - **퍼널 단계(Funnel Step)**: 사용자 여정 분석의 한 단계를 나타내는 명명된 이벤트 매칭 조건.
 - **코호트(Cohort)**: 공유된 자격 최초 이벤트와 진입 날짜로 정의되는 사용자 그룹.
-- **사전 집계 Materialized View(Pre-aggregation MV)**: 특정 GROUP BY 형태로 Cube 데이터의 사전 계산된 집계를 저장하는 물리 뷰.
+- **사전 집계 Materialized View(Pre-aggregation MV)**: 특정 GROUP BY 형태로 Table 데이터의 사전 계산된 집계를 저장하는 물리 뷰.
 - **리소스 그룹(Resource Group)**: 하나 이상의 사용자 또는 역할에 할당된 CPU, 메모리, 동시 쿼리 수, 쿼리 타임아웃 제한 설정.
 - **External Table**: 데이터 임포트 없이 외부 스토리지 시스템(S3, HDFS, Iceberg)에 매핑되어 즉시 쿼리 가능한 가상 테이블.
 - **Query Node (QN)**: SQL 파싱·CBO·플래닝·메타데이터 관리·사용자 Frontend를 담당하는 노드. 홀수 개로 Raft 클러스터 구성.
@@ -656,7 +656,7 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 
 - **SC-001**: 시스템은 스키마 마이그레이션, 수동 Compaction 트리거, 스토리지 재구성 없이 200억 건 이상의 이벤트 레코드를 저장하고 분석 쿼리를 처리해야 한다.
 - **SC-002**: 10억 건 이상의 이벤트 레코드 데이터셋에 대한 Funnel·Cohort·Path 분석 쿼리가 결과를 반환해야 한다.
-- **SC-003**: WOW-DB 경험이 없는 데이터 분석가가 시스템에 처음 접근한 후 15분 이내에 Cube를 생성하고, Web UI 마법사를 통해 Session Materialized View를 생성하며, Funnel 분석 쿼리를 실행할 수 있어야 한다.
+- **SC-003**: WOW-DB 경험이 없는 데이터 분석가가 시스템에 처음 접근한 후 15분 이내에 Table을 생성하고, Web UI 마법사를 통해 Session Materialized View를 생성하며, Funnel 분석 쿼리를 실행할 수 있어야 한다.
 - **SC-004**: 표준 MySQL 클라이언트 도구, JDBC 기반 BI 도구, Python mysql-connector 스크립트가 코드 변경, 드라이버 교체, 특별한 설정 플래그 없이 WOW-DB에 연결하고 쿼리할 수 있어야 한다.
 - **SC-005**: 설정된 Kafka 토픽에 게시된 이벤트는 정상 운영 조건에서 브로커에 도착한 후 60초 이내에 WOW-DB에서 쿼리 가능해야 한다.
 - **SC-006**: 단일 Query Node 또는 Data Node 장애 발생 후 진행 중인 쿼리가 데이터 손상 없이 재시도되거나 완료되며, 관리자 개입 없이 시스템이 자동으로 완전한 운영을 재개해야 한다.
@@ -672,7 +672,7 @@ WOW-DB 클러스터를 관리하는 플랫폼 엔지니어는 노드 상태를 �
 - HDFS 스토리지 백엔드 배포는 Hadoop 클러스터에 Kerberos 인증이 설정되어 있다고 가정한다. 비인증 HDFS 접속은 지원하지 않는다.
 - MySQL 프로토콜로 연결하는 클라이언트는 MySQL 8.0 Wire Protocol과 호환되는 드라이버를 사용한다고 가정한다.
 - Web SQL 에디터는 데스크톱 브라우저(Chrome, Firefox, Edge, Safari)를 대상으로 한다. 초기 릴리스에서 모바일 브라우저 지원은 요구사항이 아니다.
-- Session MV 마법사는 소스 Cube가 이미 생성되어 있고 사용자 식별자로 사용할 수 있는 컬럼이 하나 이상 포함되어 있다고 가정한다.
+- Session MV 마법사는 소스 Table이 이미 생성되어 있고 사용자 식별자로 사용할 수 있는 컬럼이 하나 이상 포함되어 있다고 가정한다.
 - 시스템은 고가용성을 위해 최소 3개의 Query Node와 데이터 중복성을 위해 최소 3개의 Data Node를 갖춘 환경에 배포된다고 가정한다.
 - Avro 형식의 Kafka 이벤트는 Confluent Schema Registry API와 호환되는 스키마 레지스트리에 스키마가 등록되어 있다고 가정한다.
 - HDFS 스토리지 백엔드를 사용하는 경우, `kerberos_renew_interval_sec` 설정을 통해 keytab 자동 갱신이 구성되어 있다고 가정한다.

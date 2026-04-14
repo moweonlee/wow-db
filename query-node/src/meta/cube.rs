@@ -1,23 +1,70 @@
 // T031: CubeSchema CRUD via Raft KV
 // create / get / list / drop — RaftManager를 통한 메타데이터 영속화
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use anyhow::{bail, Result};
 use shared::types::CubeSchema;
 use tracing::info;
 
+use crate::meta::bt_registry::{BtEntry, BtRegistry, BtState};
 use crate::raft::{RaftCommand, RaftManager};
 
 // ─── Cube 관리자 ──────────────────────────────────────────────────────────────
 
 pub struct CubeManager {
     raft: Arc<RaftManager>,
+    /// Registry of Behavioral Tables (Session MVs) associated with event cubes
+    bt_registry: RwLock<BtRegistry>,
 }
 
 impl CubeManager {
     pub fn new(raft: Arc<RaftManager>) -> Self {
-        Self { raft }
+        Self {
+            raft,
+            bt_registry: RwLock::new(BtRegistry::new()),
+        }
+    }
+
+    // ── BtRegistry 접근자 ─────────────────────────────────────────────────────
+
+    /// Read-only access to the BtRegistry.
+    pub fn bt_registry(&self) -> RwLockReadGuard<BtRegistry> {
+        self.bt_registry.read().expect("BtRegistry RwLock poisoned")
+    }
+
+    /// Mutable access to the BtRegistry.
+    pub fn bt_registry_mut(&self) -> RwLockWriteGuard<BtRegistry> {
+        self.bt_registry.write().expect("BtRegistry RwLock poisoned")
+    }
+
+    /// Register a Session MV (Behavioral Table) in the BtRegistry.
+    ///
+    /// Called when `CREATE SESSION MATERIALIZED VIEW` is executed.
+    /// The BT is initially registered in `Building` state; callers should update
+    /// to `Active` once materialization completes.
+    pub fn register_behavioral_table(
+        &self,
+        smv_name: &str,
+        source_cube: &str,
+        user_key: &str,
+        session_timeout_sec: u64,
+    ) {
+        let entry = BtEntry {
+            bt_name: smv_name.to_string(),
+            event_table: source_cube.to_string(),
+            user_key: user_key.to_string(),
+            session_timeout_sec,
+            state: BtState::Building,
+            last_refresh: None,
+        };
+        self.bt_registry_mut().register(entry);
+        info!(
+            smv = %smv_name,
+            source = %source_cube,
+            user_key = %user_key,
+            "BT registered in BtRegistry (state=Building)"
+        );
     }
 
     // ── 생성 ─────────────────────────────────────────────────────────────────

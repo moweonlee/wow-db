@@ -39,7 +39,7 @@ Deferred TODOs:
 WOW-DB의 핵심 자산은 **두 개의 물리 레이아웃**이다. 모든 웹 분석 워크로드는
 이 두 레이아웃의 존재를 전제로 설계되어야 한다.
 
-- **Event Table** (`CREATE CUBE`): 이벤트 1건 = 1행. 원시 이벤트 스트림 저장소.
+- **Event Table** (`CREATE TABLE`): 이벤트 1건 = 1행. 원시 이벤트 스트림 저장소.
   시계열 집계(COUNT, GROUP BY date) 및 원시 이벤트 조회에 최적화.
 - **Behavioral Table** (`CREATE SESSION MATERIALIZED VIEW`): 세션 1개 = 1행.
   Event Table로부터 파생된 행동 집약 레이아웃.
@@ -162,7 +162,7 @@ WOW-DB는 기존 MySQL 8.0 클라이언트, JDBC 드라이버, BI 도구가 **�
 
 - **Wire Protocol**: MySQL 8.0 클라이언트 인증 및 패킷 형식 완전 호환.
   포트 9030에서 MySQL 프로토콜 수신.
-- **DDL/DML 확장**: `CREATE CUBE`, `ALTER CUBE`, `CREATE SESSION MATERIALIZED VIEW` 등은
+- **DDL/DML 확장**: `CREATE TABLE`, `ALTER TABLE`, `CREATE SESSION MATERIALIZED VIEW` 등은
   MySQL 표준 위에 **추가(additive)**된 확장이다. 기존 MySQL DDL/DML을 제거하거나
   의미를 변경해서는 안 된다.
 - **결과셋 형식**: 모든 쿼리 결과는 MySQL Result Set 형식으로 반환되어야 한다.

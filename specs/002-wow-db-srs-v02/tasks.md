@@ -22,7 +22,7 @@
 - [x] T006 [P] `integration-tests/Cargo.toml` 생성 (tokio, mysql_async, reqwest 의존성, `features = ["integration"]`)
 - [x] T007 `proto/compute.proto` 작성 (FragmentRequest, FragmentResult, StageMetrics, CancelRequest)
 - [x] T008 [P] `proto/storage.proto` 작성 (ScanRequest, ScanBatch, WriteRequest, Prepare/Commit/Rollback, RuntimeFilter)
-- [x] T009 [P] `proto/raft.proto` 작성 (MetaService: CreateCube, AlterCube, GetStats, AllocateTablets 등)
+- [x] T009 [P] `proto/raft.proto` 작성 (MetaService: CreateTable, AlterTable, GetStats, AllocateTablets 등)
 - [x] T010 [P] `proto/ingestion.proto` 작성 (RoutineLoad CRUD, StreamLoad Begin/Commit/Abort)
 - [x] T011 [P] `proto/health.proto` 작성 (HealthService Check, HealthRequest, HealthResponse)
 - [x] T012 `query-node/build.rs`, `compute-node/build.rs`, `storage-node/build.rs` 생성 (prost/tonic 코드 생성 설정)
@@ -54,7 +54,7 @@
 - [x] T028 `compute-node/src/executor/pipeline.rs` 구현 (비동기 파이프라인 실행기 스켈레톤 — operator chain, backpressure 채널)
 - [x] T029 `compute-node/src/grpc/server.rs` 구현 (tonic gRPC 서버 — ExecuteFragment, CancelFragment, Health)
 - [x] T030 `query-node/src/raft/mod.rs` 구현 (openraft 통합 — StateMachine, Log Storage, Network, QN Raft 클러스터 초기화)
-- [x] T031 `query-node/src/meta/cube.rs` 구현 (CubeSchema CRUD via Raft KV — create/get/list/delete)
+- [x] T031 `query-node/src/meta/table.rs` 구현 (TableSchema CRUD via Raft KV — create/get/list/delete)
 - [x] T032 `query-node/src/meta/tablet.rs` 구현 (Tablet 할당, Tablet → SN 매핑 관리)
 - [x] T033 `query-node/src/mysql_protocol/server.rs` 구현 (opensrv-mysql 기반 서버 스켈레톤 — 포트 9030, 연결 수락, 쿼리 디스패치)
 - [x] T034 `query-node/src/sql_parser/mod.rs` 구현 (sqlparser-rs MySQL 방언 파서 통합, 커스텀 WOW-DB AST 노드 뼈대 정의)
@@ -67,7 +67,7 @@
 
 **목표**: MySQL 클라이언트에서 FUNNEL_COUNT, COHORT_ANALYSIS, PATH_ANALYSIS 쿼리를 제출하면 WOW-DB가 QN→CN→SN 파이프라인을 통해 결과를 반환한다.
 
-**독립 테스트**: `mysql -h 127.0.0.1 -P 9030` 접속 후 CREATE CUBE, INSERT, FUNNEL_COUNT 쿼리 실행 → 결과 반환 확인
+**독립 테스트**: `mysql -h 127.0.0.1 -P 9030` 접속 후 CREATE TABLE, INSERT, FUNNEL_COUNT 쿼리 실행 → 결과 반환 확인
 
 ### Storage Node — 컬럼 스토리지
 
@@ -127,15 +127,15 @@
 
 ---
 
-## Phase 5: US4 — 이벤트 스키마(Cube) 정의 (Priority: P2)
+## Phase 5: US4 — 이벤트 스키마(Table) 정의 (Priority: P2)
 
-**목표**: CREATE CUBE, ALTER CUBE, PARTITION, Storage Backend, Flat JSON 등 전체 DDL 지원
+**목표**: CREATE TABLE, ALTER TABLE, PARTITION, Storage Backend, Flat JSON 등 전체 DDL 지원
 
-**독립 테스트**: CREATE CUBE (JSON 컬럼 포함) → INSERT → Compaction 후 Flat JSON 컬럼 쿼리 확인
+**독립 테스트**: CREATE TABLE (JSON 컬럼 포함) → INSERT → Compaction 후 Flat JSON 컬럼 쿼리 확인
 
-- [x] T069 [US4] `query-node/src/sql_parser/cube_ddl.rs` 구현 (전체 CREATE CUBE 문법 — PARTITION BY RANGE, AUTO PARTITION, ORDER BY, DISTRIBUTED BY HASH, COLOCATE WITH, STORAGE BACKEND)
-- [x] T070 [P] [US4] `query-node/src/meta/alter_cube.rs` 구현 (ALTER CUBE ADD/DROP COLUMN — 스키마 버전 관리, Raft 복제)
-- [x] T071 [P] [US4] `query-node/src/meta/drop_cube.rs` 구현 (DROP CUBE — Tablet 삭제 코디네이션, Raft 메타 정리)
+- [x] T069 [US4] `query-node/src/sql_parser/table_ddl.rs` 구현 (전체 CREATE TABLE 문법 — PARTITION BY RANGE, AUTO PARTITION, ORDER BY, DISTRIBUTED BY HASH, COLOCATE WITH, STORAGE BACKEND)
+- [x] T070 [P] [US4] `query-node/src/meta/alter_table.rs` 구현 (ALTER TABLE ADD/DROP COLUMN — 스키마 버전 관리, Raft 복제)
+- [x] T071 [P] [US4] `query-node/src/meta/drop_table.rs` 구현 (DROP TABLE — Tablet 삭제 코디네이션, Raft 메타 정리)
 - [x] T072 [US4] `storage-node/src/backend/s3.rs` 구현 (object_store 기반 S3/MinIO 백엔드 — SSTable PUT/GET/DELETE, 로컬 LRU 캐시 레이어)
 - [x] T073 [US4] `storage-node/src/columnar/flat_json.rs` 구현 (Flat JSON 자동 컬럼 추출 — Compaction 시 key 출현율 분석, 임계값 이상 key → 독립 `.col` 파일, `_flat_meta.json` 갱신)
 - [x] T074 [P] [US4] `storage-node/src/ttl.rs` 구현 (TTL 만료 — Compaction 시 파티션 단위 행 자동 삭제)
@@ -144,13 +144,13 @@
 - [x] T077 [P] [US4] `storage-node/src/index/set_index.rs` 구현 (per-Granule SET 인덱스)
 - [x] T078 [P] [US4] `storage-node/src/index/ngrambf.rs` 구현 (per-Granule NGRAMBF_V1 인덱스 — N-gram Bloom Filter, 텍스트 LIKE 쿼리 가속)
 
-**체크포인트**: ALTER CUBE로 컬럼 추가 후 기존 데이터 쿼리 유지 확인, Flat JSON 컬럼 자동 생성 확인
+**체크포인트**: ALTER TABLE로 컬럼 추가 후 기존 데이터 쿼리 유지 확인, Flat JSON 컬럼 자동 생성 확인
 
 ---
 
 ## Phase 6: US3 — Web UI를 통한 세션 뷰 생성 (Priority: P2)
 
-**목표**: 브라우저에서 Cube 선택 → User Key 지정 → Timeout 설정 → DDL 미리보기 → SMV 생성 완료
+**목표**: 브라우저에서 Table 선택 → User Key 지정 → Timeout 설정 → DDL 미리보기 → SMV 생성 완료
 
 **독립 테스트**: `http://localhost:8080` 접속 → SMV 마법사 → 생성 완료 후 샘플 세션 데이터 표시 확인
 
@@ -158,7 +158,7 @@
 - [x] T080 [US3] `query-node/src/session_mv/manager.rs` 구현 (SMV 라이프사이클 — 생성/삭제, 갱신 스케줄 관리, 구체화 진행 상태 추적)
 - [x] T081 [US3] `compute-node/src/analytics/sessionize.rs` 구현 (SMV 구체화 실행기 — User Key 기준 이벤트 그룹화, Timeout 기반 세션 경계 결정, session_id UUID 생성)
 - [x] T082 [US3] `query-node/src/web_ui/server.rs` 구현 (axum HTTP/WebSocket 서버 — 포트 8080, 정적 파일 서빙, API 라우팅)
-- [x] T083 [P] [US3] `query-node/src/web_ui/api.rs` 구현 (Web UI REST API — Cube 목록, 컬럼 목록, Cube 생성 엔드포인트)
+- [x] T083 [P] [US3] `query-node/src/web_ui/api.rs` 구현 (Web UI REST API — Table 목록, 컬럼 목록, Table 생성 엔드포인트)
 - [x] T084 [US3] `query-node/src/web_ui/smv_wizard.rs` 구현 (SMV 마법사 API — User Key 드롭다운, 타임아웃 프리셋, DDL 미리보기 생성, 확정 시 SMV 생성 실행)
 - [x] T085 [P] [US3] `query-node/src/web_ui/sql_editor.rs` 구현 (Web SQL 에디터 — SQL 실행, 결과 스트리밍, 쿼리 히스토리 표시)
 
@@ -205,7 +205,7 @@
 - [x] T096 [P] `query-node/src/meta/global_dict.rs` 구현 (Global Dictionary — 저기수 문자열 컬럼 클러스터 전체 공유 정수 사전, QN Raft KV 저장)
 - [x] T097 [P] `compute-node/src/result_cache.rs` 구현 (Query Result Cache — 동일 LogicalPlan + 파티션 버전 기준 Tablet 단위 집계 결과 CN 메모리 캐시)
 - [x] T098 [P] `query-node/src/meta/external_table.rs` 구현 (External Table — S3, HDFS, Iceberg/Hive Metastore 가상 테이블 메타데이터 등록)
-- [x] T099 [P] `query-node/src/meta/colocate.rs` 구현 (Colocate Group — 동일 분산 키/버킷 수 Cube 동일 SN 버킷 배치, 그룹 내 Join 네트워크 Shuffle 제거)
+- [x] T099 [P] `query-node/src/meta/colocate.rs` 구현 (Colocate Group — 동일 분산 키/버킷 수 Table 동일 SN 버킷 배치, 그룹 내 Join 네트워크 Shuffle 제거)
 
 ---
 
@@ -213,13 +213,13 @@
 
 **목적**: 전체 스택 통합 검증, 성능 벤치마크
 
-- [x] T100 `integration-tests/tests/ddl_tests.rs` 구현 (CREATE CUBE, ALTER CUBE, DROP CUBE, CREATE SESSION MV, CREATE MV DDL 통합 테스트)
+- [x] T100 `integration-tests/tests/ddl_tests.rs` 구현 (CREATE TABLE, ALTER TABLE, DROP TABLE, CREATE SESSION MV, CREATE MV DDL 통합 테스트)
 - [x] T101 [P] `integration-tests/tests/ingestion_tests.rs` 구현 (Kafka Routine Load, Spark Stream Load, MySQL INSERT, Async INSERT Buffer 통합 테스트)
 - [x] T102 [P] `integration-tests/tests/analytics_tests.rs` 구현 (FUNNEL_COUNT, COHORT_ANALYSIS, PATH_ANALYSIS 쿼리 정확성 통합 테스트)
 - [x] T103 [P] `integration-tests/tests/compat_tests.rs` 구현 (mysql-connector-python, JDBC, MySQL CLI 연결 및 쿼리 호환성 테스트)
 - [x] T104 [P] `integration-tests/tests/failover_tests.rs` 구현 (SN 단일 장애 복구, QN Raft Leader 전환, 진행 중 쿼리 재시도 시나리오)
 - [x] T105 `integration-tests/benches/throughput.rs` 구현 (수집 처리량 벤치마크 — SC-001: 200억 레코드 목표, SC-005: 60초 수집 레이턴시)
-- [x] T106 [P] `quickstart.md` 기반 로컬 검증 실행 (`docker compose up → CREATE CUBE → INSERT → FUNNEL 쿼리` 전체 플로우 smoke test)
+- [x] T106 [P] `quickstart.md` 기반 로컬 검증 실행 (`docker compose up → CREATE TABLE → INSERT → FUNNEL 쿼리` 전체 플로우 smoke test)
 
 ---
 
@@ -255,7 +255,7 @@
 
 ### Query Node — Sort Key DDL 검증
 
-- [x] T116 `query-node/src/sql_parser/cube_ddl.rs` 수정 (Sort Key 검증 강제 — ORDER BY 컬럼 수 > 4 이면 DDL 에러, 직렬화 크기 > 128 bytes 이면 DDL 에러, JSON 타입 컬럼 Sort Key 사용 시 에러, STRING 컬럼 > 64 bytes 경고 메시지, FR-026)
+- [x] T116 `query-node/src/sql_parser/table_ddl.rs` 수정 (Sort Key 검증 강제 — ORDER BY 컬럼 수 > 4 이면 DDL 에러, 직렬화 크기 > 128 bytes 이면 DDL 에러, JSON 타입 컬럼 Sort Key 사용 시 에러, STRING 컬럼 > 64 bytes 경고 메시지, FR-026)
 
 ### Integration Tests — LSM 동작 검증
 
@@ -337,7 +337,7 @@
 
 ## Phase 14: 데이터 분포 가시성 — SHOW PARTITIONS / SHARDS / PARTS (FR-043~FR-046)
 
-**목적**: 운영자와 데이터 엔지니어가 각 Cube의 데이터 분산 현황(파티션 범위, Shard별 SN 배치, LSM Part 수준)을 MySQL 클라이언트로 직접 조회할 수 있는 가시성 명령 제공  
+**목적**: 운영자와 데이터 엔지니어가 각 Table의 데이터 분산 현황(파티션 범위, Shard별 SN 배치, LSM Part 수준)을 MySQL 클라이언트로 직접 조회할 수 있는 가시성 명령 제공  
 **참조**: FR-043, FR-044, FR-045, FR-046
 
 ### Proto — SN 파티션/Part 조회 API [P]
@@ -346,18 +346,18 @@
 
 ### Query Node — 파티션/Shard 메타 집계 서비스
 
-- [x] T138 `query-node/src/meta/partition_info.rs` 구현 (PartitionInfoService — Raft KV에서 파티션·Shard 메타 집계: list_partitions(cube_id) → Vec<PartitionMeta>, list_shards(cube_id, partition_id?) → Vec<ShardMeta>, get_distributed_status(cube_id) → Vec<SnDistributionSummary>; SN gRPC로 Part 목록 조회: list_parts(shard_id) → Vec<PartMeta>; FR-043~FR-046)
+- [x] T138 `query-node/src/meta/partition_info.rs` 구현 (PartitionInfoService — Raft KV에서 파티션·Shard 메타 집계: list_partitions(table_id) → Vec<PartitionMeta>, list_shards(table_id, partition_id?) → Vec<ShardMeta>, get_distributed_status(table_id) → Vec<SnDistributionSummary>; SN gRPC로 Part 목록 조회: list_parts(shard_id) → Vec<PartMeta>; FR-043~FR-046)
 
 ### Query Node — MySQL 프로토콜 SHOW 핸들러
 
-- [x] T139 `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW PARTITIONS FROM <cube> 핸들러 추가 — partition_id, range_start/end, row_count, size_bytes, shard_count, part_count, tier, created_at 컬럼; FR-043)
-- [x] T140 `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW SHARDS FROM <cube> [PARTITION <pid>] 핸들러 추가 — shard_id, partition_id, partition_range, sn_node_id, sn_endpoint, bucket_id, role, state, row_count, size_bytes, part_count, lsn 컬럼; FR-044)
-- [x] T141 `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW PARTS FROM <cube> [PARTITION <pid>] [SHARD <sid>] / SHOW PARTS ON PARTITION <pid> FROM <cube> 핸들러 추가 — part_id, shard_id, partition_id, sn_node_id, level, sequence_num, row_count, size_bytes, min_sort_key, max_sort_key, bloom_size_bytes, created_at 컬럼; FR-045)
-- [x] T142 [P] `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW DISTRIBUTED STATUS FROM <cube> 핸들러 추가 — sn_node_id, sn_endpoint, shard_count, leader_shard_count, partition_count, row_count, size_bytes, avg_part_per_shard 컬럼; FR-046)
+- [x] T139 `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW PARTITIONS FROM <table> 핸들러 추가 — partition_id, range_start/end, row_count, size_bytes, shard_count, part_count, tier, created_at 컬럼; FR-043)
+- [x] T140 `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW SHARDS FROM <table> [PARTITION <pid>] 핸들러 추가 — shard_id, partition_id, partition_range, sn_node_id, sn_endpoint, bucket_id, role, state, row_count, size_bytes, part_count, lsn 컬럼; FR-044)
+- [x] T141 `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW PARTS FROM <table> [PARTITION <pid>] [SHARD <sid>] / SHOW PARTS ON PARTITION <pid> FROM <table> 핸들러 추가 — part_id, shard_id, partition_id, sn_node_id, level, sequence_num, row_count, size_bytes, min_sort_key, max_sort_key, bloom_size_bytes, created_at 컬럼; FR-045)
+- [x] T142 [P] `query-node/src/mysql_protocol/schema_cmds.rs` 수정 (SHOW DISTRIBUTED STATUS FROM <table> 핸들러 추가 — sn_node_id, sn_endpoint, shard_count, leader_shard_count, partition_count, row_count, size_bytes, avg_part_per_shard 컬럼; FR-046)
 
 ### Integration Tests — SHOW 명령 검증
 
-- [x] T143 `query-node/src/mysql_protocol/schema_cmds.rs` 단위 테스트 추가 (SHOW PARTITIONS/SHARDS/PARTS/DISTRIBUTED STATUS 핸들러 — stub 데이터 기반 컬럼 수·이름 정확성 검증, 없는 Cube에 대한 빈 결과셋 반환 검증)
+- [x] T143 `query-node/src/mysql_protocol/schema_cmds.rs` 단위 테스트 추가 (SHOW PARTITIONS/SHARDS/PARTS/DISTRIBUTED STATUS 핸들러 — stub 데이터 기반 컬럼 수·이름 정확성 검증, 없는 Table에 대한 빈 결과셋 반환 검증)
 
 **체크포인트**: MySQL 클라이언트에서 `SHOW PARTITIONS FROM page_events` 실행 시 올바른 컬럼 헤더와 결과셋 반환, `SHOW PARTS FROM page_events WHERE level = 0` 구문 파싱 정상 동작
 
@@ -400,7 +400,7 @@ Phase 2: Foundational   → Phase 1 완료 후 시작 (모든 Phase 3+ 차단)
 Phase 3: US1 (P1)       → Phase 2 완료 후 시작
 Phase 4: US2 (P1)       → Phase 2 완료 후 시작 (Phase 3과 병렬 가능)
 Phase 5: US4 (P2)       → Phase 2 완료 후 시작
-Phase 6: US3 (P2)       → Phase 5 완료 후 시작 (Cube DDL 필요)
+Phase 6: US3 (P2)       → Phase 5 완료 후 시작 (Table DDL 필요)
 Phase 7: US5 (P2)       → Phase 2 완료 후 시작 (MySQL Protocol 스켈레톤 기반)
 Phase 8: US6 (P3)       → Phase 3 완료 후 시작 (Query 실행 흐름 완성 필요)
 Phase 9: Advanced       → Phase 3~8 완료 후 시작
@@ -412,7 +412,7 @@ Phase 10: Polish        → Phase 3~8 완료 후 시작
 - **US1 (P1)**: Phase 2 이후 독립 시작 — 다른 Story에 의존 없음
 - **US2 (P1)**: Phase 2 이후 US1과 병렬 시작 가능
 - **US4 (P2)**: Phase 2 이후 독립 시작 — US3의 전제 조건
-- **US3 (P2)**: US4 완료 후 시작 (SMV 생성에 Cube DDL 필요)
+- **US3 (P2)**: US4 완료 후 시작 (SMV 생성에 Table DDL 필요)
 - **US5 (P2)**: Phase 2 이후 독립 시작
 - **US6 (P3)**: US1 완료 후 시작 (Query Profiler가 쿼리 실행 흐름 필요)
 
@@ -525,10 +525,10 @@ Phase 2 완료 후:
 
 ### 검증 테스트
 
-- [ ] T203 `scripts/dev/run-local.sh` 검증 (기동 → MySQL 접속 → `SHOW TABLES` → `CREATE CUBE` → `INSERT` → `SELECT COUNT(*)` 전체 플로우 5초 이내 완료)
+- [ ] T203 `scripts/dev/run-local.sh` 검증 (기동 → MySQL 접속 → `SHOW TABLES` → `CREATE TABLE` → `INSERT` → `SELECT COUNT(*)` 전체 플로우 5초 이내 완료)
 - [ ] T204 [P] `scripts/dev/reset-local.sh` + `run-local.sh` 반복 검증 (초기화 후 재기동 3회 연속 정상 동작)
 
-**체크포인트**: `./scripts/dev/run-local.sh --no-build` 실행 후 5초 이내 `mysql -h 127.0.0.1 -P 9030` 접속 성공, `CREATE CUBE` DDL 실행 가능
+**체크포인트**: `./scripts/dev/run-local.sh --no-build` 실행 후 5초 이내 `mysql -h 127.0.0.1 -P 9030` 접속 성공, `CREATE TABLE` DDL 실행 가능
 
 ---
 
@@ -539,37 +539,37 @@ Phase 2 완료 후:
 
 ### 기반 인프라
 
-- [ ] T153 [P] `query-node/src/planner/behavioral_pattern.rs` 구현 (QueryPattern 열거형 Behavioral/Event/Hybrid, BehavioralTrigger, `detect_pattern(ast)` — FUNNEL_COUNT/COHORT_ANALYSIS/PATH_ANALYSIS 함수명 및 session_id/session_start/event_sequence 컬럼 참조 감지)
-- [ ] T154 [P] `query-node/src/meta/bt_registry.rs` 구현 (BtRegistry — Event Table ↔ BT(Session MV) 페어링 메타데이터 관리, BtEntry/BtState, get_bt_for_table/register/update_state/get_active_bt 메서드, Stale 상태면 get_active_bt None 반환)
-- [ ] T155 `query-node/src/meta/cube_manager.rs` 수정 (CubeManager에 BtRegistry 통합 — CREATE SESSION MATERIALIZED VIEW DDL 처리 시 register_behavioral_table() 자동 호출, bt_registry()/bt_registry_mut() 메서드 추가)
+- [x] T153 [P] `query-node/src/planner/behavioral_pattern.rs` 구현 (QueryPattern 열거형 Behavioral/Event/Hybrid, BehavioralTrigger, `detect_pattern(ast)` — FUNNEL_COUNT/COHORT_ANALYSIS/PATH_ANALYSIS 함수명 및 session_id/session_start/event_sequence 컬럼 참조 감지)
+- [x] T154 [P] `query-node/src/meta/bt_registry.rs` 구현 (BtRegistry — Event Table ↔ BT(Session MV) 페어링 메타데이터 관리, BtEntry/BtState, get_bt_for_table/register/update_state/get_active_bt 메서드, Stale 상태면 get_active_bt None 반환)
+- [x] T155 `query-node/src/meta/table_manager.rs` 수정 (TableManager에 BtRegistry 통합 — CREATE SESSION MATERIALIZED VIEW DDL 처리 시 register_behavioral_table() 자동 호출, bt_registry()/bt_registry_mut() 메서드 추가)
 
 ### Behavioral Guidance
 
-- [ ] T156 [P] `query-node/src/planner/behavioral_guidance.rs` 구현 (BehavioralGuidance 구조체 — warning/suggested_ddl/estimated_speedup/actual_duration_ms 필드, build_guidance() — "No Behavioral Table found" 경고 + CREATE SESSION MV DDL 제안 + row_count 기반 예상 성능 향상 배수)
-- [ ] T157 `query-node/src/mysql_protocol/handler.rs` 수정 (Behavioral 패턴 감지 후 Active BT 없으면 Event Table Fallback 실행 + MySQL warnings 필드에 BehavioralGuidance.warning 첨부)
-- [ ] T158 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (Guidance 검증 테스트 3건: BT 없을 때 FUNNEL Query → Warning 포함, Event COUNT(*) → Warning 없음, BT pair 미등록 일반 테이블 → Warning 없음)
+- [x] T156 [P] `query-node/src/planner/behavioral_guidance.rs` 구현 (BehavioralGuidance 구조체 — warning/suggested_ddl/estimated_speedup/actual_duration_ms 필드, build_guidance() — "No Behavioral Table found" 경고 + CREATE SESSION MV DDL 제안 + row_count 기반 예상 성능 향상 배수)
+- [x] T157 `query-node/src/mysql_protocol/handler.rs` 수정 (Behavioral 패턴 감지 후 Active BT 없으면 Event Table Fallback 실행 + MySQL warnings 필드에 BehavioralGuidance.warning 첨부)
+- [x] T158 `query-node/src/planner/behavioral_tests.rs` 구현 (Guidance 검증 테스트 3건: BT 없을 때 FUNNEL Query → Warning 포함, Event COUNT(*) → Warning 없음, BT pair 미등록 일반 테이블 → Warning 없음)
 
 ### Behavioral Router
 
-- [ ] T159 [P] `query-node/src/planner/behavioral_router.rs` 구현 (BehavioralRouter — LogicalPlan Rewriter, BT Registry에서 Active BT 조회, TableScan 노드 BT로 교체, RoutingResult: plan/routed/bt_used/guidance 필드)
-- [ ] T160 [P] `query-node/src/planner/behavioral_column_map.rs` 구현 (Column Mapping — event_time→session_start (WHERE/Projection 컨텍스트), user_id/device_id 동일 유지, map_column() 함수)
-- [ ] T161 `query-node/src/mysql_protocol/handler.rs` 수정 (Behavioral Router를 Logical Plan 생성 직후 CBO 이전에 실행 — 라우팅 성공 시 BT 스캔, 라우팅 실패 시 Fallback+Warning, 로그 기록)
-- [ ] T162 `query-node/src/planner/explain.rs` 수정 (EXPLAIN 출력에 "== Behavioral Routing ==" 섹션 추가 — 원본 테이블, 라우팅 대상 BT, 트리거, BT 마지막 갱신, 예상 speedup; BT 없으면 Guidance DDL 표시)
+- [x] T159 [P] `query-node/src/planner/behavioral_router.rs` 구현 (BehavioralRouter — LogicalPlan Rewriter, BT Registry에서 Active BT 조회, TableScan 노드 BT로 교체, RoutingResult: plan/routed/bt_used/guidance 필드)
+- [x] T160 [P] `query-node/src/planner/behavioral_column_map.rs` 구현 (Column Mapping — event_time→session_start (WHERE/Projection 컨텍스트), user_id/device_id 동일 유지, map_column() 함수)
+- [x] T161 `query-node/src/mysql_protocol/handler.rs` 수정 (Behavioral Router를 Logical Plan 생성 직후 CBO 이전에 실행 — 라우팅 성공 시 BT 스캔, 라우팅 실패 시 Fallback+Warning, 로그 기록)
+- [x] T162 `query-node/src/planner/explain.rs` 수정 (EXPLAIN 출력에 "== Behavioral Routing ==" 섹션 추가 — 원본 테이블, 라우팅 대상 BT, 트리거, BT 마지막 갱신, 예상 speedup; BT 없으면 Guidance DDL 표시)
 
 ### 통합 검증 테스트
 
-- [ ] T163 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-001: BT 생성 후 FUNNEL_COUNT 자동 라우팅 — BT없음+Guidance→BT생성→라우팅→EXPLAIN확인→결과동등성)
-- [ ] T164 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-002: BT 생성 후 COHORT_ANALYSIS 자동 라우팅 — Warning 없음 + 결과 동등성)
-- [ ] T165 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-003: BT 생성 후 PATH_ANALYSIS 자동 라우팅 — Warning 없음 + 결과 동등성)
-- [ ] T166 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-004: Event Query는 BT 있어도 라우팅 안 됨 — COUNT(*)/GROUP BY EXPLAIN에 Behavioral Routing 섹션 없음)
-- [ ] T167 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-005: BT pair 미등록 일반 테이블 — session_id 등 컬럼명에 관계없이 라우팅/Guidance 없음)
-- [ ] T168 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-006: BT Stale 상태 → Fallback + Guidance — Warning에 Stale 사유 포함)
-- [ ] T169 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-007: CREATE SESSION MV 직후 즉시 라우팅 가능 — 지연 없음)
-- [ ] T170 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (D-008: Guidance 메시지 품질 — table명/CREATE SESSION MV DDL/USER KEY/SESSION TIMEOUT/성능힌트 포함)
+- [x] T163 `query-node/src/planner/behavioral_tests.rs` 구현 (D-001: BT 생성 후 FUNNEL_COUNT 자동 라우팅 — BT없음+Guidance→BT생성→라우팅→EXPLAIN확인→결과동등성)
+- [x] T164 `query-node/src/planner/behavioral_tests.rs` 구현 (D-002: BT 생성 후 COHORT_ANALYSIS 자동 라우팅 — Warning 없음 + 결과 동등성)
+- [x] T165 `query-node/src/planner/behavioral_tests.rs` 구현 (D-003: BT 생성 후 PATH_ANALYSIS 자동 라우팅 — Warning 없음 + 결과 동등성)
+- [x] T166 `query-node/src/planner/behavioral_tests.rs` 구현 (D-004: Event Query는 BT 있어도 라우팅 안 됨 — COUNT(*)/GROUP BY EXPLAIN에 Behavioral Routing 섹션 없음)
+- [x] T167 `query-node/src/planner/behavioral_tests.rs` 구현 (D-005: BT pair 미등록 일반 테이블 — session_id 등 컬럼명에 관계없이 라우팅/Guidance 없음)
+- [x] T168 `query-node/src/planner/behavioral_tests.rs` 구현 (D-006: BT Stale 상태 → Fallback + Guidance — Warning에 Stale 사유 포함)
+- [x] T169 `query-node/src/planner/behavioral_tests.rs` 구현 (D-007: CREATE SESSION MV 직후 즉시 라우팅 가능 — 지연 없음)
+- [x] T170 `query-node/src/planner/behavioral_tests.rs` 구현 (D-008: Guidance 메시지 품질 — table명/CREATE SESSION MV DDL/USER KEY/SESSION TIMEOUT/성능힌트 포함)
 
 ### 성능 검증
 
-- [ ] T171 `query-node/src/mysql_protocol/behavioral_routing_tests.rs` 구현 (E-001: BT 라우팅 성능 비교 — 100k행 FUNNEL 쿼리, BT 사용 시 Event Table보다 느리지 않음 검증, 결과 동등성)
+- [x] T171 `query-node/src/planner/behavioral_tests.rs` 구현 (E-001: BT 라우팅 성능 비교 — 100k행 FUNNEL 쿼리, BT 사용 시 Event Table보다 느리지 않음 검증, 결과 동등성)
 
 **체크포인트**: BT pair 없는 Behavioral Query 실행 시 warnings에 DDL 제안 포함, BT 생성 후 동일 쿼리 재실행 시 자동 BT 라우팅, EXPLAIN에 "Behavioral Routing" 섹션 표시
 

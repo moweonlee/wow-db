@@ -28,6 +28,8 @@ use crate::meta::alter_cube::AlterCubeHandler;
 use crate::meta::cluster_guard::{ClusterGuard, ReadOnlyError};
 use crate::meta::cube::CubeManager;
 use crate::meta::partition_info::PartitionInfoService;
+use crate::planner::behavioral_pattern::{detect_pattern, QueryPattern};
+use crate::planner::behavioral_router::BehavioralRouter;
 use crate::raft::RaftManager;
 use crate::session_mv::manager::SmvManager;
 use crate::sql_parser::cube_ddl::parse_create_cube_full;
@@ -43,6 +45,8 @@ pub struct WowDbMysqlHandler {
     pub cluster_guard:  Arc<ClusterGuard>,
     pub partition_svc:  Arc<PartitionInfoService>,
     current_db:         std::sync::Mutex<String>,
+    /// Pending MySQL warnings — returned on SHOW WARNINGS
+    pending_warnings:   std::sync::Mutex<Vec<String>>,
 }
 
 impl WowDbMysqlHandler {
@@ -60,6 +64,7 @@ impl WowDbMysqlHandler {
             cluster_guard,
             partition_svc,
             current_db: std::sync::Mutex::new("default".to_string()),
+            pending_warnings: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -77,7 +82,18 @@ impl WowDbMysqlHandler {
             cluster_guard,
             partition_svc,
             current_db: std::sync::Mutex::new("default".to_string()),
+            pending_warnings: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    /// Add a warning to the pending warnings list (returned on SHOW WARNINGS).
+    fn push_warning(&self, msg: String) {
+        self.pending_warnings.lock().unwrap().push(msg);
+    }
+
+    /// Take all pending warnings, clearing the list.
+    fn take_warnings(&self) -> Vec<String> {
+        std::mem::take(&mut *self.pending_warnings.lock().unwrap())
     }
 
     pub fn current_db(&self) -> String {
@@ -110,6 +126,24 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
         // SET commands
         if lower.starts_with("set ") {
             return results.completed(OkResponse::default()).await.map_err(Into::into);
+        }
+
+        // SHOW WARNINGS — return pending warnings from previous query
+        if lower.trim_end_matches(';') == "show warnings" {
+            let warnings = self.take_warnings();
+            let columns = vec![
+                ColumnMeta { name: "Level".to_string(),   col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+                ColumnMeta { name: "Code".to_string(),    col_type: ColumnType::MYSQL_TYPE_LONG },
+                ColumnMeta { name: "Message".to_string(), col_type: ColumnType::MYSQL_TYPE_VAR_STRING },
+            ];
+            let rows: Vec<Vec<Option<String>>> = warnings.into_iter().map(|msg| {
+                vec![
+                    Some("Warning".to_string()),
+                    Some("1292".to_string()),
+                    Some(msg),
+                ]
+            }).collect();
+            return write_output(results, QueryOutput::Rows { columns, rows }).await;
         }
 
         // ── 쓰기 작업 Read-Only 검사 (INSERT/DDL/DELETE/TRUNCATE) ──────────────
@@ -212,12 +246,50 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
                 .and_then(|(i, _)| words.get(i+1))
                 .map(|s| s.trim_matches('`').trim_end_matches(';').to_string())
                 .unwrap_or_else(|| "session_mv".to_string());
-            info!(mv = %mv_name, "Session MV created (stub)");
+
+            // Extract source cube (after ON keyword)
+            let source_cube = words.iter().enumerate()
+                .find(|(_, w)| w.to_lowercase() == "on")
+                .and_then(|(i, _)| words.get(i+1))
+                .map(|s| s.trim_matches('`').trim_end_matches(';').to_string())
+                .unwrap_or_default();
+
+            // Extract USER KEY (after "KEY" keyword)
+            let user_key = words.iter().enumerate()
+                .find(|(_, w)| w.to_lowercase() == "key")
+                .and_then(|(i, _)| words.get(i+1))
+                .map(|s| s.trim_matches('`').trim_end_matches(';').to_string())
+                .unwrap_or_else(|| "user_id".to_string());
+
+            // Extract SESSION TIMEOUT value (after "TIMEOUT")
+            let session_timeout_sec: u64 = words.iter().enumerate()
+                .find(|(_, w)| w.to_lowercase() == "timeout")
+                .and_then(|(i, _)| words.get(i+1))
+                .and_then(|s| s.trim_end_matches(';').parse::<u64>().ok())
+                .map(|mins| mins * 60)
+                .unwrap_or(1800); // default 30 minutes
+
+            info!(mv = %mv_name, source = %source_cube, "Session MV created (stub)");
+
             // SMV 메타 등록
             let key = format!("smv:{mv_name}");
             let _ = self.raft.write(crate::raft::RaftCommand::UpsertKv {
                 key, value: sql.to_string()
             }).await;
+
+            // BtRegistry에 등록
+            if !source_cube.is_empty() {
+                self.cube_mgr.register_behavioral_table(
+                    &mv_name,
+                    &source_cube,
+                    &user_key,
+                    session_timeout_sec,
+                );
+                // Immediately mark as Active (stub — in production would wait for materialization)
+                self.cube_mgr.bt_registry_mut().update_state(&mv_name, crate::meta::bt_registry::BtState::Active);
+                info!(mv = %mv_name, "BT marked Active after CREATE SESSION MATERIALIZED VIEW");
+            }
+
             return results.completed(OkResponse::default()).await.map_err(Into::into);
         }
 
@@ -329,18 +401,66 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
             }
         }
 
+        // ── Behavioral Routing (T157/T161) ────────────────────────────────────
+        // For SELECT/analytics queries: detect pattern and optionally rewrite
+        // SQL to use an Active Behavioral Table (Session MV).
+        let effective_sql: std::borrow::Cow<str> = if lower.starts_with("select ")
+            || lower.contains("funnel_count(")
+            || lower.contains("cohort_analysis(")
+            || lower.contains("path_analysis(")
+        {
+            let pattern = detect_pattern(sql);
+            match &pattern {
+                QueryPattern::Behavioral { .. } | QueryPattern::Hybrid => {
+                    let bt_reg = self.cube_mgr.bt_registry();
+                    let router = BehavioralRouter::new(&*bt_reg);
+                    let routing = router.route(sql, &pattern, 0, 0);
+                    drop(bt_reg);
+
+                    if routing.routed {
+                        if let Some(rewritten) = routing.rewritten_sql {
+                            info!(
+                                original_table = %crate::planner::behavioral_pattern::extract_scan_table(sql).unwrap_or_default(),
+                                bt = %routing.bt_used.unwrap_or_default(),
+                                "Behavioral routing: query rewritten to use BT"
+                            );
+                            std::borrow::Cow::Owned(rewritten)
+                        } else {
+                            std::borrow::Cow::Borrowed(sql)
+                        }
+                    } else {
+                        // No BT found — attach guidance as a warning
+                        if let Some(guidance) = routing.guidance {
+                            warn!(
+                                warning = %guidance.warning,
+                                "Behavioral query has no Active BT — falling back to event table"
+                            );
+                            self.push_warning(guidance.warning);
+                        }
+                        std::borrow::Cow::Borrowed(sql)
+                    }
+                }
+                QueryPattern::Event => std::borrow::Cow::Borrowed(sql),
+            }
+        } else {
+            std::borrow::Cow::Borrowed(sql)
+        };
+        let sql_to_exec: &str = &effective_sql;
+        let lower_exec = sql_to_exec.trim().to_lowercase();
+
         // ── WOW-DB 분석 함수 (FUNNEL_COUNT, COHORT_ANALYSIS, PATH_ANALYSIS) ──
-        let analytics_fn = if lower.contains("funnel_count(") {
-            Some(execute_funnel_count(sql))
-        } else if lower.contains("cohort_analysis(") {
-            Some(execute_cohort_analysis(sql))
-        } else if lower.contains("path_analysis(") {
-            Some(execute_path_analysis(sql))
+        let analytics_fn = if lower_exec.contains("funnel_count(") {
+            Some(execute_funnel_count(sql_to_exec))
+        } else if lower_exec.contains("cohort_analysis(") {
+            Some(execute_cohort_analysis(sql_to_exec))
+        } else if lower_exec.contains("path_analysis(") {
+            Some(execute_path_analysis(sql_to_exec))
         } else {
             None
         };
 
         if let Some(analytics_result) = analytics_fn {
+            let warnings_count = self.pending_warnings.lock().unwrap().len() as u16;
             match analytics_result {
                 Ok(sel) => {
                     let col_defs: Vec<_> = sel.columns.iter()
@@ -356,6 +476,7 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
                         let refs: Vec<Option<&str>> = strs.iter().map(|s| s.as_deref()).collect();
                         rw.write_row(refs).await?;
                     }
+                    let _ = warnings_count; // included in finish via OkResponse below
                     return rw.finish().await.map_err(Into::into);
                 }
                 Err(e) => {
@@ -366,8 +487,9 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
         }
 
         // ── SELECT ────────────────────────────────────────────────────────────
-        if lower.starts_with("select ") {
-            match execute_select(sql) {
+        if lower_exec.starts_with("select ") {
+            let warnings_count = self.pending_warnings.lock().unwrap().len() as u16;
+            match execute_select(sql_to_exec) {
                 Ok(sel) => {
                     let col_defs: Vec<_> = sel.columns.iter()
                         .map(|c| build_columns(c, ColumnType::MYSQL_TYPE_VAR_STRING))
@@ -382,6 +504,7 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
                         let refs: Vec<Option<&str>> = strs.iter().map(|s| s.as_deref()).collect();
                         rw.write_row(refs).await?;
                     }
+                    let _ = warnings_count;
                     return rw.finish().await.map_err(Into::into);
                 }
                 Err(e) => return results.error(ErrorKind::ER_PARSE_ERROR, e.as_bytes()).await.map_err(Into::into),

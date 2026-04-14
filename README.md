@@ -173,7 +173,7 @@ And the engine automatically routes this to the Session MV where session boundar
 │  │ CBO / Stats  │   └──────────────┘   └──────────────┘            │
 │  │ Logical Plan │                                                   │
 │  │ Phys. Plan   │  All QN pods hold identical Raft-replicated       │
-│  │ Cube Manager │  metadata → any pod handles any request           │
+│  │ Table Manager │  metadata → any pod handles any request           │
 │  │ Session Mgr  │  (K8s LoadBalancer friendly)                      │
 │  │ ClusterGuard │                                                   │
 │  └──────┬───────┘                                                   │
@@ -463,7 +463,7 @@ mysql -h 127.0.0.1 -P 9030 -u admin -p''
 ### First query
 
 ```sql
-CREATE CUBE IF NOT EXISTS page_events (
+CREATE TABLE IF NOT EXISTS page_events (
     event_time  DATETIME    NOT NULL,
     user_id     VARCHAR(64) NOT NULL,
     event_name  VARCHAR(128) NOT NULL,
@@ -541,7 +541,7 @@ specs/              Software Requirements Specification
 - **Stateless Query Nodes**: all state lives in Raft KV, so Kubernetes can route any request to any QN pod
 - **Dynamic cluster management**: nodes join and leave while queries run; `ALTER CLUSTER JOIN/DRAIN/DISMISS` is the single interface for topology changes; Shard rebalancing happens automatically in the background
 - **Graceful drain**: a Storage Node with data can never be force-removed without explicit `FORCE` — by default, draining migrates all Shards first, so no data is lost
-- **Schema-on-write**: Cube schema is fixed at creation; the optimizer knows all types and cardinalities ahead of time
+- **Schema-on-write**: Table schema is fixed at creation; the optimizer knows all types and cardinalities ahead of time
 
 ---
 

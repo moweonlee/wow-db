@@ -50,7 +50,7 @@ pub async fn handle_schema_command(
         } else {
             (ExplainMode::Basic, after_explain)
         };
-        return Some(explain_sql(inner_sql, mode));
+        return Some(explain_sql(inner_sql, mode, None));
     }
 
     // SHOW DATABASES

@@ -7,10 +7,10 @@ WOW-DB는 MySQL 8.0 표준 SQL에 다음 확장을 추가한다.
 
 ---
 
-## 1. DDL 확장: CREATE CUBE
+## 1. DDL 확장: CREATE TABLE
 
 ```sql
-CREATE CUBE [IF NOT EXISTS] <cube_name>
+CREATE TABLE [IF NOT EXISTS] <table_name>
 (
     <column_name> <data_type> [NOT NULL] [DEFAULT <value>],
     ...
@@ -30,7 +30,7 @@ DISTRIBUTED BY HASH(<column>) BUCKETS <n>
 )];
 
 -- 예시:
-CREATE CUBE IF NOT EXISTS page_events (
+CREATE TABLE IF NOT EXISTS page_events (
     event_time   DATETIME     NOT NULL,
     user_id      VARCHAR(64)  NOT NULL,
     event_name   VARCHAR(128) NOT NULL,
@@ -58,7 +58,7 @@ PROPERTIES (
 
 ```sql
 CREATE SESSION MATERIALIZED VIEW [IF NOT EXISTS] <bt_name>
-FROM <source_cube>
+FROM <source_table>
 USER KEY (<user_key_column>)
 SESSION TIMEOUT <n> (MINUTE | HOUR | SECOND)
 [REFRESH (
@@ -82,7 +82,7 @@ REFRESH EVERY 5 MINUTE;
 - `session_end` DATETIME — 세션 마지막 이벤트 시각
 - `session_event_count` INT — 세션 내 이벤트 수
 - `event_sequence` ARRAY — 시간 순 이벤트 시퀀스 (Behavioral Routing의 핵심 컬럼)
-- 소스 Cube의 모든 컬럼 (세션 첫 이벤트 값 또는 집계)
+- 소스 Table의 모든 컬럼 (세션 첫 이벤트 값 또는 집계)
 
 > **Behavioral Guidance**: Behavioral Table이 없는 상태에서 FUNNEL_COUNT / COHORT_ANALYSIS / PATH_ANALYSIS 쿼리가 실행되면, 엔진이 자동으로 이 DDL 생성을 권장하고 예상 성능 향상을 안내한다.
 
@@ -96,7 +96,7 @@ AS
 SELECT
     <group_by_columns>,
     <aggregate_functions>
-FROM <source_cube>
+FROM <source_table>
 GROUP BY <group_by_columns>
 [REFRESH (ON INSERT | EVERY <interval> | MANUAL)];
 
@@ -118,7 +118,7 @@ REFRESH ON INSERT;
 ## 4. DML 확장: ROUTINE LOAD (Kafka 상시 수집)
 
 ```sql
-CREATE ROUTINE LOAD <job_name> ON <cube_name>
+CREATE ROUTINE LOAD <job_name> ON <table_name>
 COLUMNS TERMINATED BY ','           -- CSV 구분자 (선택)
 FORMAT AS (JSON | CSV | AVRO)
 PROPERTIES (
@@ -156,7 +156,7 @@ SELECT FUNNEL_COUNT(
         ...             -- Step N
     ]
 ) AS funnel_result
-FROM <cube_or_smv>
+FROM <table_or_smv>
 [WHERE <filter>]
 [GROUP BY <dimension>];
 
@@ -195,7 +195,7 @@ SELECT COHORT_ANALYSIS(
     cohort_period  => (DAY | WEEK | MONTH),
     periods        => <n>
 ) AS cohort_result
-FROM <cube_or_smv>
+FROM <table_or_smv>
 [WHERE <filter>];
 
 -- 반환: TABLE(cohort_date DATE, period INT, users BIGINT, retention FLOAT)
@@ -229,7 +229,7 @@ SELECT PATH_ANALYSIS(
     max_depth => <n>,      -- 최대 경로 깊이 (기본 5)
     top_n     => <n>       -- 상위 N개 경로 반환 (기본 20)
 ) AS path_result
-FROM <cube_or_smv>
+FROM <table_or_smv>
 [WHERE <filter>];
 
 -- 반환: TABLE(path ARRAY<VARCHAR>, user_count BIGINT, pct FLOAT)
@@ -255,16 +255,16 @@ OVER (
 
 ```sql
 -- Data Skipping Index 추가
-ALTER CUBE <cube_name>
+ALTER TABLE <table_name>
 ADD INDEX <index_name> (<column>)
 TYPE (MINMAX | BLOOM_FILTER | SET | NGRAMBF_V1)
 [GRANULARITY <n>];
 
 -- 예시
-ALTER CUBE page_events
+ALTER TABLE page_events
 ADD INDEX idx_event_name (event_name) TYPE BLOOM_FILTER GRANULARITY 1;
 
-ALTER CUBE page_events
+ALTER TABLE page_events
 ADD INDEX idx_url_ngram (page_url) TYPE NGRAMBF_V1 GRANULARITY 2;
 ```
 
@@ -288,10 +288,10 @@ WITH (
 );
 
 -- 통계 수동 수집
-ANALYZE TABLE <cube_name> [(<column> [, ...])];
+ANALYZE TABLE <table_name> [(<column> [, ...])];
 
 -- Tiered Storage 설정
-ALTER CUBE <cube_name>
+ALTER TABLE <table_name>
 SET TIERING POLICY (
     hot_ttl_days  = 30,
     cold_backend  = 's3',

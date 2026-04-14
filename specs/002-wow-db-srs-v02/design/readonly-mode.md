@@ -185,9 +185,9 @@ Read-Only 모드 진입 후 **즉시** 다음 작업을 거부한다:
 | Kafka 수집 | Routine Load 새 배치 | QN Ingestion Gateway |
 | Spark 수집 | Stream Load HTTP | QN Ingestion Gateway |
 | Async INSERT | QN 버퍼 → DN 플러시 | QN Async INSERT Flusher |
-| DDL — Cube 생성 | `CREATE CUBE ...` | QN SQL Parser / Cube Manager |
-| DDL — Cube 변경 | `ALTER CUBE ...` | QN SQL Parser / Cube Manager |
-| DDL — Cube 삭제 | `DROP CUBE ...` | QN SQL Parser / Cube Manager |
+| DDL — Table 생성 | `CREATE TABLE ...` | QN SQL Parser / Table Manager |
+| DDL — Table 변경 | `ALTER TABLE ...` | QN SQL Parser / Table Manager |
+| DDL — Table 삭제 | `DROP TABLE ...` | QN SQL Parser / Table Manager |
 | Compaction 파일 출력 | 새 SSTable 기록 | SN Compaction Service |
 | MemTable Flush | Immutable → L0 파일 쓰기 | SN LSM Engine |
 
@@ -210,12 +210,12 @@ cannot execute this statement. Disk usage: 97.3% on node sn-01
 | 작업 종류 | 예시 구문 |
 |---|---|
 | 쿼리 | `SELECT ...`, `EXPLAIN ...` |
-| 메타데이터 조회 | `SHOW CUBES`, `DESCRIBE <cube>` |
+| 메타데이터 조회 | `SHOW TABLES`, `DESCRIBE <table>` |
 | 세션 조회 | `SHOW PROCESSLIST` |
 | 클러스터 상태 조회 | `SHOW CLUSTER STATUS` |
 | 읽기 전용 분석 | `FUNNEL_COUNT(...)`, `COHORT_ANALYSIS(...)` |
 | Profiler 조회 | `SELECT * FROM information_schema.wowdb_query_history` |
-| 통계 조회 | `SHOW STATS FOR <cube>` |
+| 통계 조회 | `SHOW STATS FOR <table>` |
 
 ---
 

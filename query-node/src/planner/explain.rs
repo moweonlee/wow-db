@@ -1,10 +1,14 @@
 // T144: EXPLAIN 분산 실행 계획 출력
 // FR-047: EXPLAIN / EXPLAIN VERBOSE / EXPLAIN COSTS
 // FR-048: Colocate Join 표시
+// T162: Behavioral Routing section in EXPLAIN output
 
 use opensrv_mysql::ColumnType;
 
+use crate::meta::bt_registry::BtRegistry;
 use crate::mysql_protocol::handler::{ColumnMeta, QueryOutput};
+use crate::planner::behavioral_pattern::{detect_pattern, extract_scan_table, QueryPattern};
+use crate::planner::behavioral_guidance::build_guidance;
 
 // ─── EXPLAIN 모드 ─────────────────────────────────────────────────────────────
 
@@ -432,7 +436,8 @@ fn fmt_num(n: u64) -> String {
 ///
 /// `sql`: EXPLAIN 접두사를 제거한 순수 SQL 텍스트
 /// `mode`: ExplainMode::Basic | Verbose | Costs | Analyze
-pub fn explain_sql(sql: &str, mode: ExplainMode) -> QueryOutput {
+/// `bt_registry`: optional BtRegistry for Behavioral Routing section
+pub fn explain_sql(sql: &str, mode: ExplainMode, bt_registry: Option<&BtRegistry>) -> QueryOutput {
     // Analyze 모드: Costs 출력 + 실제 실행 통계 헤더 추가
     let effective_mode = if mode == ExplainMode::Analyze {
         ExplainMode::Costs
@@ -451,7 +456,89 @@ pub fn explain_sql(sql: &str, mode: ExplainMode) -> QueryOutput {
         }
     }
 
+    // T162: Behavioral Routing section
+    if let Some(reg) = bt_registry {
+        let routing_fragment = build_behavioral_routing_fragment(sql, reg, plan.fragments.len());
+        plan.fragments.push(routing_fragment);
+    }
+
     plan.into_output()
+}
+
+/// Build an ExplainFragment for the Behavioral Routing section.
+fn build_behavioral_routing_fragment(sql: &str, bt_registry: &BtRegistry, id: usize) -> ExplainFragment {
+    let mut frag = ExplainFragment { id, lines: Vec::new() };
+    frag.lines.push("== Behavioral Routing ==".to_string());
+
+    let pattern = detect_pattern(sql);
+    let scan_table = extract_scan_table(sql).unwrap_or_else(|| "<unknown>".to_string());
+
+    match &pattern {
+        QueryPattern::Event => {
+            frag.lines.push("  Pattern: Event (no behavioral routing)".to_string());
+        }
+        QueryPattern::Behavioral { .. } | QueryPattern::Hybrid => {
+            let trigger_names: Vec<&str> = if let QueryPattern::Behavioral { triggers } = &pattern {
+                triggers.iter().map(|t| match t {
+                    crate::planner::behavioral_pattern::BehavioralTrigger::FunnelFunction      => "FUNNEL_COUNT",
+                    crate::planner::behavioral_pattern::BehavioralTrigger::CohortFunction      => "COHORT_ANALYSIS",
+                    crate::planner::behavioral_pattern::BehavioralTrigger::PathFunction        => "PATH_ANALYSIS",
+                    crate::planner::behavioral_pattern::BehavioralTrigger::SessionIdColumn     => "session_id",
+                    crate::planner::behavioral_pattern::BehavioralTrigger::SessionStartColumn  => "session_start",
+                    crate::planner::behavioral_pattern::BehavioralTrigger::SessionEndColumn    => "session_end",
+                    crate::planner::behavioral_pattern::BehavioralTrigger::EventSequenceColumn => "event_sequence",
+                    crate::planner::behavioral_pattern::BehavioralTrigger::SessionTimeoutParam => "session_timeout",
+                }).collect()
+            } else {
+                vec!["(hybrid)"]
+            };
+
+            let pattern_label = match &pattern {
+                QueryPattern::Behavioral { .. } => "Behavioral",
+                QueryPattern::Hybrid => "Hybrid",
+                QueryPattern::Event => "Event",
+            };
+            frag.lines.push(format!("  Pattern: {} [triggers: {}]",
+                pattern_label, trigger_names.join(", ")));
+            frag.lines.push(format!("  Source table: {}", scan_table));
+
+            if let Some(bt) = bt_registry.get_active_bt(&scan_table) {
+                frag.lines.push(format!("  Routed to: {} (state=Active)", bt.bt_name));
+                if let Some(ts) = bt.last_refresh {
+                    let secs = ts.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+                    frag.lines.push(format!("  BT last refresh: {}s ago", secs));
+                }
+                frag.lines.push(format!("  Session timeout: {}s", bt.session_timeout_sec));
+                frag.lines.push(format!("  User key: {}", bt.user_key));
+            } else if bt_registry.has_any_bt(&scan_table) {
+                // BT exists but not active (stale/building/error)
+                let bts = bt_registry.get_bt_for_table(&scan_table);
+                let state_str = bts.first()
+                    .map(|e| format!("{:?}", e.state))
+                    .unwrap_or_else(|| "Unknown".to_string());
+                frag.lines.push(format!("  Routing: FALLBACK (BT state={})", state_str));
+                frag.lines.push("  Note: BT is not Active — query runs on event table".to_string());
+            } else {
+                // No BT at all — show guidance
+                frag.lines.push("  Routing: NO BT FOUND — fallback to event table".to_string());
+                let trigger_list = if let QueryPattern::Behavioral { triggers } = &pattern {
+                    triggers.clone()
+                } else {
+                    vec![]
+                };
+                let guidance = build_guidance(&scan_table, &trigger_list, 0, 0);
+                frag.lines.push("  Guidance:".to_string());
+                for line in guidance.suggested_ddl.lines() {
+                    frag.lines.push(format!("    {}", line));
+                }
+                if let Some(speedup) = guidance.estimated_speedup {
+                    frag.lines.push(format!("  Estimated speedup: {:.0}×", speedup));
+                }
+            }
+        }
+    }
+
+    frag
 }
 
 // ─── 단위 테스트 ──────────────────────────────────────────────────────────────
@@ -484,7 +571,7 @@ mod tests {
     // T148: 기본 EXPLAIN — Fragment 구조 검증
     #[test]
     fn test_explain_basic_fragment_structure() {
-        let output = explain_sql("SELECT * FROM page_events", ExplainMode::Basic);
+        let output = explain_sql("SELECT * FROM page_events", ExplainMode::Basic, None);
         let text = collect_plan_text(&output);
 
         // FRAGMENT 0에 QN-MERGE 포함
@@ -507,6 +594,7 @@ mod tests {
         let output = explain_sql(
             "SELECT event_name, count(*) FROM page_events WHERE event_time > '2026-01-01' GROUP BY event_name",
             ExplainMode::Costs,
+            None,
         );
         let text = collect_plan_text(&output);
 
@@ -524,6 +612,7 @@ mod tests {
         let output = explain_sql(
             "SELECT e.user_id, u.country FROM page_events e JOIN user_profiles u ON e.device_id = u.device_id",
             ExplainMode::Basic,
+            None,
         );
         let text = collect_plan_text(&output);
 
@@ -542,6 +631,7 @@ mod tests {
         let output = explain_sql(
             "SELECT FUNNEL_COUNT(user_id, event_name, event_time, WINDOW 7 DAYS, STEP 'page_view', STEP 'purchase') FROM page_events",
             ExplainMode::Basic,
+            None,
         );
         let text = collect_plan_text(&output);
 
@@ -556,6 +646,7 @@ mod tests {
         let output = explain_sql(
             "SELECT e.event_name, u.country, count(*) FROM page_events e JOIN user_profiles u ON e.device_id = u.device_id WHERE e.event_time > '2026-01-01' GROUP BY e.event_name, u.country -- colocate_group: web_analytics",
             ExplainMode::Basic,
+            None,
         );
         let text = collect_plan_text(&output);
 
@@ -573,6 +664,7 @@ mod tests {
         let output = explain_sql(
             "SELECT user_id, count(*) FROM page_events WHERE event_time > '2026-01-01' GROUP BY user_id",
             ExplainMode::Verbose,
+            None,
         );
         let text = collect_plan_text(&output);
 
@@ -587,7 +679,7 @@ mod tests {
     // columns 검증: Fragment_Id + Plan 두 컬럼
     #[test]
     fn test_explain_output_columns() {
-        let output = explain_sql("SELECT 1 FROM page_events", ExplainMode::Basic);
+        let output = explain_sql("SELECT 1 FROM page_events", ExplainMode::Basic, None);
         match &output {
             QueryOutput::Rows { columns, .. } => {
                 assert_eq!(columns.len(), 2);
@@ -607,5 +699,60 @@ mod tests {
         assert_eq!(fmt_num(50000),     "50,000");
         assert_eq!(fmt_num(200000),    "200,000");
         assert_eq!(fmt_num(5000000),   "5,000,000");
+    }
+
+    // T162: Behavioral Routing section in EXPLAIN output
+
+    #[test]
+    fn test_explain_with_bt_registry_event_query_no_routing() {
+        use crate::meta::bt_registry::BtRegistry;
+        let reg = BtRegistry::new();
+        let output = explain_sql(
+            "SELECT COUNT(*) FROM page_events",
+            ExplainMode::Basic,
+            Some(&reg),
+        );
+        let text = collect_plan_text(&output);
+        assert!(text.contains("== Behavioral Routing =="),
+            "Should include Behavioral Routing section");
+        assert!(text.contains("Pattern: Event"),
+            "Should show Event pattern: {}", text);
+    }
+
+    #[test]
+    fn test_explain_funnel_with_active_bt_shows_routing() {
+        use crate::meta::bt_registry::{BtEntry, BtRegistry, BtState};
+        let mut reg = BtRegistry::new();
+        reg.register(BtEntry {
+            bt_name: "page_sessions".to_string(),
+            event_table: "page_events".to_string(),
+            user_key: "user_id".to_string(),
+            session_timeout_sec: 1800,
+            state: BtState::Active,
+            last_refresh: None,
+        });
+
+        let output = explain_sql(
+            "SELECT FUNNEL_COUNT(user_id, event_name, event_time, WINDOW 7 DAYS) FROM page_events",
+            ExplainMode::Basic,
+            Some(&reg),
+        );
+        let text = collect_plan_text(&output);
+        assert!(text.contains("Routed to: page_sessions"),
+            "Should show routing to BT: {}", text);
+    }
+
+    #[test]
+    fn test_explain_funnel_without_bt_shows_guidance() {
+        use crate::meta::bt_registry::BtRegistry;
+        let reg = BtRegistry::new();
+        let output = explain_sql(
+            "SELECT FUNNEL_COUNT(user_id, event_name, event_time, WINDOW 7 DAYS) FROM page_events",
+            ExplainMode::Basic,
+            Some(&reg),
+        );
+        let text = collect_plan_text(&output);
+        assert!(text.contains("NO BT FOUND") || text.contains("CREATE SESSION MATERIALIZED VIEW"),
+            "Should show guidance when no BT: {}", text);
     }
 }

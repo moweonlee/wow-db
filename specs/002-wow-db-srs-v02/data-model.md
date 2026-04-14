@@ -7,11 +7,11 @@
 
 ## 1. 핵심 엔티티
 
-### 1.1 CubeSchema (Cube 메타데이터)
+### 1.1 TableSchema (Table 메타데이터)
 
 ```
-CubeSchema {
-    cube_id:         Uuid,            // 전역 고유 식별자
+TableSchema {
+    table_id:         Uuid,            // 전역 고유 식별자
     name:            String,          // 사용자 정의 이름 (예: "page_events")
     database:        String,          // 데이터베이스 이름
     columns:         Vec<ColumnDef>,  // 컬럼 정의 목록
@@ -57,7 +57,7 @@ PartitionKey {
 ```
 Partition {
     partition_id:  Uuid,
-    cube_id:       Uuid,
+    table_id:       Uuid,
     range_start:   Value,
     range_end:     Value,
     tablets:       Vec<TabletRef>,
@@ -96,7 +96,7 @@ TabletReplica {
 BehavioralTable {
     bt_id:            Uuid,          // (구 smv_id)
     name:             String,
-    source_cube_id:   Uuid,          // 원본 Event Table (Cube)
+    source_table_id:   Uuid,          // 원본 Event Table (Table)
     user_key_column:  ColumnRef,
     session_timeout:  Duration,      // 비활성 세션 타임아웃
     refresh_schedule: RefreshSchedule,
@@ -119,7 +119,7 @@ Event {
     __insert_time: Timestamp,   // WOW-DB 수집 시각
     __row_id:      u64,         // Sort Key 내 단조 증가 행 ID
 
-    // 사용자 정의 컬럼 (CubeSchema.columns 기반)
+    // 사용자 정의 컬럼 (TableSchema.columns 기반)
     // 예: user_id, event_name, properties (JSON)
 }
 ```
@@ -146,7 +146,7 @@ BehavioralRow {
 PreAggMV {
     mv_id:          Uuid,
     name:           String,
-    source_cube_id: Uuid,
+    source_table_id: Uuid,
     group_by:       Vec<ColumnRef>,
     aggregates:     Vec<AggExpr>,   // SUM, COUNT, MIN, MAX, HLL 등
     refresh_mode:   RefreshMode,    // OnInsert | Scheduled(cron)
@@ -316,7 +316,7 @@ BloomFilterConfig {
 ### 2.6 Sort Key 제약 조건
 
 ```
-// CubeSchema.sort_key 에 적용되는 검증 규칙 (DDL 파싱 시 강제):
+// TableSchema.sort_key 에 적용되는 검증 규칙 (DDL 파싱 시 강제):
 SortKeyConstraints {
     max_columns:     usize,  // 4 (초과 시 DDL 에러)
     max_bytes:       usize,  // 128 bytes (직렬화 크기 초과 시 DDL 에러)
@@ -434,7 +434,7 @@ SortKeyConstraints {
 //   - CBO 통계 최신화 → 최적 파티션 pruning
 //
 // Full Compaction 명시적 트리거:
-//   OPTIMIZE TABLE <cube_name> FORCE;  (관리 명령)
+//   OPTIMIZE TABLE <table_name> FORCE;  (관리 명령)
 //   → 파티션별 강제 full compaction (모든 레벨 → L6 단일 통합)
 //   → 주의: 매우 높은 I/O 부하, 운영 시간 외 실행 권장
 ```
@@ -448,7 +448,7 @@ SortKeyConstraints {
 ```
 LogicalPlan {
     // 노드 타입 (열거형)
-    Scan { cube_id, projections, predicates, partitions_pruned }
+    Scan { table_id, projections, predicates, partitions_pruned }
     Filter { input, predicate }
     Aggregate { input, group_by, aggregates }
     Join { left, right, join_type, condition }
@@ -493,13 +493,13 @@ PhysOp {
 
 | 키 패턴 | 값 타입 | 설명 |
 |---|---|---|
-| `/cubes/{cube_id}` | `CubeSchema` | Cube 스키마 |
-| `/partitions/{cube_id}/{partition_id}` | `Partition` | 파티션 메타데이터 |
+| `/tables/{table_id}` | `TableSchema` | Table 스키마 |
+| `/partitions/{table_id}/{partition_id}` | `Partition` | 파티션 메타데이터 |
 | `/tablets/{tablet_id}` | `Tablet` | Tablet → DN 매핑 |
 | `/bt/{bt_id}` | `BehavioralTable` | Behavioral Table (Session MV) 정의 |
 | `/mv/{mv_id}` | `PreAggMV` | 사전 집계 MV |
 | `/nodes/{node_id}` | `NodeInfo` | 노드 상태 (QN/CN/SN) |
-| `/stats/{cube_id}/{column}` | `ColumnStats` | CBO 통계 |
+| `/stats/{table_id}/{column}` | `ColumnStats` | CBO 통계 |
 | `/routine_load/{job_id}` | `RoutineLoadJob` | Kafka 수집 잡 |
 | `/sessions/{token}` | `WebSession` | Web UI 세션 토큰 |
 | `/resource_groups/{name}` | `ResourceGroup` | 리소스 정책 |

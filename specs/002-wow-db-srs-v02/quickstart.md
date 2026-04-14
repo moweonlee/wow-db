@@ -215,8 +215,8 @@ cargo tarpaulin --workspace --out Html
 ```sql
 -- MySQL 클라이언트 접속 후
 
--- 1. Cube 생성
-CREATE CUBE IF NOT EXISTS page_events (
+-- 1. Table 생성
+CREATE TABLE IF NOT EXISTS page_events (
     event_time   DATETIME     NOT NULL,
     user_id      VARCHAR(64)  NOT NULL,
     event_name   VARCHAR(128) NOT NULL,
@@ -317,7 +317,7 @@ curl http://localhost:8080/metrics
 WOW-DB는 데이터가 파티션·Shard·LSM Part 단위로 Storage Node에 어떻게 분산되어 있는지를 MySQL 클라이언트에서 직접 확인할 수 있는 계층별 SHOW 명령을 제공한다.
 
 ```
-Cube
+Table
   └─ SHOW PARTITIONS → Partition (시간/키 범위 단위)
         └─ SHOW SHARDS → Shard/Tablet (SN 배치 단위, 분산 키 기준)
               └─ SHOW PARTS → Part (LSM SSTable, 실제 물리 파일 단위)

@@ -118,14 +118,14 @@ message RuntimeFilter {
 // 하지만 애플리케이션 레벨 메타데이터 RPC는 별도 정의
 
 service MetaService {
-    // Cube DDL 처리
-    rpc CreateCube(CreateCubeRequest)   returns (DdlResponse);
-    rpc AlterCube(AlterCubeRequest)     returns (DdlResponse);
-    rpc DropCube(DropCubeRequest)       returns (DdlResponse);
+    // Table DDL 처리
+    rpc CreateTable(CreateTableRequest)   returns (DdlResponse);
+    rpc AlterTable(AlterTableRequest)     returns (DdlResponse);
+    rpc DropTable(DropTableRequest)       returns (DdlResponse);
     
-    // Cube 조회
-    rpc GetCubeSchema(GetCubeRequest)   returns (CubeSchemaResponse);
-    rpc ListCubes(ListCubesRequest)     returns (ListCubesResponse);
+    // Table 조회
+    rpc GetTableSchema(GetTableRequest)   returns (TableSchemaResponse);
+    rpc ListTables(ListTablesRequest)     returns (ListTablesResponse);
     
     // SMV 관리
     rpc CreateSmv(CreateSmvRequest)     returns (DdlResponse);

@@ -49,7 +49,7 @@
   - 25개 FR 항목이 6개 User Story의 인수 시나리오와 직접 대응됨. ✅
 - [x] 사용자 시나리오가 주요 흐름을 커버함
   - P1: 분석 쿼리(FUNNEL/COHORT/PATH) + 대용량 수집(Kafka/Spark/INSERT)  
-  - P2: Behavioral Table 생성(Web UI 마법사 + Behavioral Guidance) + Cube 스키마 정의 + MySQL 호환성  
+  - P2: Behavioral Table 생성(Web UI 마법사 + Behavioral Guidance) + Table 스키마 정의 + MySQL 호환성  
   - P3: 클러스터 모니터링 및 Query Profiling  
   - 전체 핵심 사용 흐름 커버. ✅
 - [x] 기능이 성공 기준의 측정 가능한 결과를 충족함

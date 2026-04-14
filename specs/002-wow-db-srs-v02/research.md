@@ -67,7 +67,7 @@ Write Path:
 ### 결정: `openraft` (TiKV 팀, 2025 기준 활발 유지)
 
 - **이유**: 깨끗한 async API, 강한 타입 안전성, Kubernetes 무작위 라우팅 지원
-- **저장 데이터**: Cube 스키마, Tablet 위치 맵, 컬럼 통계, 세션 토큰
+- **저장 데이터**: Table 스키마, Tablet 위치 맵, 컬럼 통계, 세션 토큰
 - **`raft-rs` 배제**: 저수준, 수동 통합 로직 과중
 
 ---
@@ -95,7 +95,7 @@ Write Path:
 ### 결정: `sqlparser-rs` (MySQL 8.0 방언) + 커스텀 확장 파서
 
 - `sqlparser-rs`: 표준 MySQL 8.0 구문 처리 (SELECT, INSERT, CREATE/ALTER)
-- **커스텀 AST 노드 추가**: `FUNNEL_COUNT`, `COHORT_ANALYSIS`, `PATH_ANALYSIS`, `CREATE CUBE`, `CREATE SESSION MATERIALIZED VIEW`
+- **커스텀 AST 노드 추가**: `FUNNEL_COUNT`, `COHORT_ANALYSIS`, `PATH_ANALYSIS`, `CREATE TABLE`, `CREATE SESSION MATERIALIZED VIEW`
 - **전면 커스텀 파서 배제**: MySQL 방언 유지보수 중복 회피
 
 ---

@@ -64,8 +64,8 @@ ERROR 1235 (42000): This version of WOW-DB doesn't yet support 'UPDATE statement
 | `REPLACE` | ❌ 미지원 | WOW-DB 설계 범위 외 |
 | `CALL` | ❌ 미지원 | 저장 프로시저 없음 |
 | `CREATE VIEW` | ❌ 미지원 | `CREATE SESSION MATERIALIZED VIEW` 사용 |
-| `CREATE INDEX` | ❌ 미지원 | `ALTER CUBE ... ADD INDEX` 사용 |
-| `CREATE TABLE` | ❌ 미지원 | `CREATE CUBE` 사용 |
+| `CREATE INDEX` | ❌ 미지원 | `ALTER TABLE ... ADD INDEX` 사용 |
+| `CREATE TABLE` | ❌ 미지원 | `CREATE TABLE` 사용 |
 | `CREATE FUNCTION` | ❌ 미지원 | UDF 미구현 |
 | `BEGIN` / `COMMIT` / `ROLLBACK` | ❌ 미지원 | 명시적 트랜잭션 미구현 (내부 2PC만 지원) |
 | `LOCK TABLES` | ❌ 미지원 | 잠금 없음 |
@@ -82,12 +82,12 @@ ERROR 1235 (42000): This version of WOW-DB doesn't yet support 'UPDATE statement
 
 | 상황 | Error Code | 메시지 |
 |------|-----------|--------|
-| 존재하지 않는 테이블/Cube 참조 | `1146` (`ER_NO_SUCH_TABLE`) | `Table '<db>.<table>' doesn't exist` |
-| 존재하지 않는 Cube에 INSERT | `1146` (`ER_NO_SUCH_TABLE`) | `Table '<name>' doesn't exist` |
-| Cube 이미 존재 | `1050` (`ER_TABLE_EXISTS_ERROR`) | `Table '<name>' already exists` |
+| 존재하지 않는 테이블/Table 참조 | `1146` (`ER_NO_SUCH_TABLE`) | `Table '<db>.<table>' doesn't exist` |
+| 존재하지 않는 Table에 INSERT | `1146` (`ER_NO_SUCH_TABLE`) | `Table '<name>' doesn't exist` |
+| Table 이미 존재 | `1050` (`ER_TABLE_EXISTS_ERROR`) | `Table '<name>' already exists` |
 | 컬럼 타입 불일치 | `1366` (`ER_TRUNCATED_WRONG_VALUE_FOR_FIELD`) | `Incorrect value for column '<col>'` |
 | 읽기 전용 모드 쓰기 시도 | `1290` (`ER_OPTION_PREVENTS_STATEMENT`) | `WOW-DB is in read-only mode` |
-| Cube 파싱 실패 | `1064` (`ER_PARSE_ERROR`) | `<파서 오류 메시지>` |
+| Table 파싱 실패 | `1064` (`ER_PARSE_ERROR`) | `<파서 오류 메시지>` |
 | 알 수 없는 데이터베이스 | `1049` (`ER_BAD_DB_ERROR`) | `Unknown database '<name>'` |
 | 데이터베이스 삭제 대상 없음 | `1008` (`ER_DB_DROP_EXISTS`) | `Unknown database '<name>'` |
 
@@ -101,7 +101,7 @@ SQL 수신 시 다음 순서로 오류를 분류한다:
 1. 읽기 전용 검사 (쓰기 문에 한함)
    → 실패 시: ER_OPTION_PREVENTS_STATEMENT (1290)
 
-2. WOW-DB 커스텀 문 인식 (CREATE CUBE, ALTER CUBE, CREATE SESSION MV 등)
+2. WOW-DB 커스텀 문 인식 (CREATE TABLE, ALTER TABLE, CREATE SESSION MV 등)
    → 파싱 실패 시: ER_PARSE_ERROR (1064)
    → 실행 실패 시: 상황별 런타임 오류
 
@@ -148,7 +148,7 @@ mysql> UPDATE page_events SET event_name = 'click' WHERE id = 1;
 ERROR 1235 (42000): This version of WOW-DB doesn't yet support 'UPDATE statement'
 
 mysql> CREATE TABLE foo (id INT);
-ERROR 1235 (42000): This version of WOW-DB doesn't yet support 'CREATE TABLE (use CREATE CUBE instead)'
+ERROR 1235 (42000): This version of WOW-DB doesn't yet support 'CREATE TABLE (use CREATE TABLE instead)'
 ```
 
 ### FR-ERR-003: Prepared Statement 오류
@@ -181,7 +181,7 @@ INSERT               -- 테이블 없는 INSERT
 
 ```sql
 UPDATE t SET a = 1   -- 유효한 MySQL 문법, WOW-DB 미지원
-CREATE TABLE foo (id INT)  -- CREATE TABLE (CREATE CUBE 사용 권고)
+CREATE TABLE foo (id INT)  -- CREATE TABLE (CREATE TABLE 사용 권고)
 BEGIN                -- 명시적 트랜잭션 미지원
 CALL my_proc()       -- 저장 프로시저 없음
 ```
@@ -189,10 +189,10 @@ CALL my_proc()       -- 저장 프로시저 없음
 ### 5.3 정상 처리되어야 하는 경우 (오류 없음)
 
 ```sql
-CREATE CUBE page_events (...)   -- WOW-DB DDL
+CREATE TABLE page_events (...)   -- WOW-DB DDL
 SELECT * FROM page_events       -- SELECT
 INSERT INTO page_events (...)   -- INSERT
-SHOW CUBES                      -- 메타데이터 조회
+SHOW TABLES                      -- 메타데이터 조회
 ```
 
 ---
@@ -203,8 +203,8 @@ SHOW CUBES                      -- 메타데이터 조회
 
 | MySQL 문 | WOW-DB 대체 | 안내 메시지 |
 |----------|------------|------------|
-| `CREATE TABLE` | `CREATE CUBE` | `use CREATE CUBE instead` |
-| `CREATE INDEX` | `ALTER CUBE ... ADD INDEX` | `use ALTER CUBE ... ADD INDEX instead` |
+| `CREATE TABLE` | `CREATE TABLE` | `use CREATE TABLE instead` |
+| `CREATE INDEX` | `ALTER TABLE ... ADD INDEX` | `use ALTER TABLE ... ADD INDEX instead` |
 | `CREATE VIEW` | `CREATE SESSION MATERIALIZED VIEW` | `use CREATE SESSION MATERIALIZED VIEW` |
 
 ---

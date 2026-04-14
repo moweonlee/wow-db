@@ -126,7 +126,7 @@ wow-db/
 │       │   ├── physical.rs     # LogicalPlan → PhysicalPlan (Fragment 할당)
 │       │   └── cbo/            # Cost-Based Optimizer (통계 기반)
 │       ├── raft/               # openraft 기반 메타데이터 클러스터
-│       ├── meta/               # Cube/Tablet/BehavioralTable 메타데이터 관리
+│       ├── meta/               # Table/Tablet/BehavioralTable 메타데이터 관리
 │       ├── ingestion/
 │       │   ├── kafka.rs        # Routine Load (rdkafka)
 │       │   └── spark.rs        # Stream Load HTTP 엔드포인트
@@ -201,7 +201,7 @@ wow-db/
 ├── integration-tests/          # Docker Compose 기반 통합 테스트
 │   ├── Cargo.toml
 │   └── tests/
-│       ├── ddl_tests.rs        # CREATE CUBE, Behavioral Table DDL
+│       ├── ddl_tests.rs        # CREATE TABLE, Behavioral Table DDL
 │       ├── ingestion_tests.rs  # Kafka, Spark, INSERT 수집
 │       ├── analytics_tests.rs  # FUNNEL, COHORT, PATH 쿼리
 │       ├── compat_tests.rs     # MySQL 클라이언트 호환성
@@ -245,7 +245,7 @@ wow-db/
 | LSM-Tree 자체 구현 | SRS 요구: "Rust로 자체 구현", 파티션 경계 내 Merge 커스텀 제어 필요 | `rocksdb` 크레이트: 파티션 경계 제어 불가, C++ 빌드 의존성 |
 | `rdkafka` C 의존성 | `rskafka`는 exactly-once semantics 미지원 (2025 기준), 100만+/초 처리 검증 필요 | `rskafka`: 프로덕션 검증 부족 |
 | `tokio-uring` (Linux 전용) | NVMe DIO 10-20% 레이턴시 개선, SRS "io_uring" 명시 요구 | `tokio::fs`: portable하지만 성능 목표 미달 가능 |
-| 커스텀 SQL 파서 확장 | FUNNEL_COUNT, CREATE CUBE 등 MySQL 비표준 문법 필수 | 전용 파서: MySQL 방언 중복 유지보수 |
+| 커스텀 SQL 파서 확장 | FUNNEL_COUNT, CREATE TABLE 등 MySQL 비표준 문법 필수 | 전용 파서: MySQL 방언 중복 유지보수 |
 
 ---
 
@@ -456,7 +456,7 @@ CMD ["query-node"]
 - [ ] CBO (컬럼 통계, 파티션 Pruning, Join 순서 최적화)
 - [ ] Physical Planner (Fragment 생성, CN 할당)
 - [ ] Raft 메타데이터 클러스터 (openraft, 포트 9010)
-- [ ] Cube / Behavioral Table(SMV) / Pre-Agg MV DDL 처리
+- [ ] Table / Behavioral Table(SMV) / Pre-Agg MV DDL 처리
 - [ ] Kafka Routine Load (rdkafka)
 - [ ] Spark Stream Load (HTTP, 포트 8040)
 - [ ] Async INSERT Buffer
