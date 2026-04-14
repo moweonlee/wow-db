@@ -15,32 +15,96 @@ mod tiering;
 
 use anyhow::Result;
 use axum::{routing::get, Router, Json};
+use serde::Deserialize;
 use tokio::net::TcpListener;
 use tracing::info;
 
+// ── TOML 설정 구조체 ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Default)]
+struct NodeCfg {
+    id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct GrpcCfg {
+    port: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct HttpCfg {
+    port: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct StorageCfg {
+    backend:  Option<String>,
+    data_dir: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct TabletCfg {
+    replica_count: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct StorageNodeConfig {
+    node:    NodeCfg,
+    grpc:    GrpcCfg,
+    http:    HttpCfg,
+    storage: StorageCfg,
+    tablet:  TabletCfg,
+}
+
+fn load_config() -> Result<StorageNodeConfig> {
+    if let Some(path) = shared::config::parse_config_path() {
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("Failed to read config file '{}': {}", path, e))?;
+        let cfg: StorageNodeConfig = toml::from_str(&raw)
+            .map_err(|e| anyhow::anyhow!("Failed to parse config file '{}': {}", path, e))?;
+        info!(path = %path, "Loaded config from file");
+        Ok(cfg)
+    } else {
+        Ok(StorageNodeConfig::default())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    // ── 로깅 초기화 (파일 + 콘솔 듀얼 싱크, 일별 로테이션) ──────────────────
+    // ── 설정 로드 (TOML 파일 → env var 오버라이드 순) ────────────────────────
+    // 로깅 초기화 전 파일 경로 결정을 위해 먼저 로드
+    let cfg = load_config()?;
+
     // SN은 DATA_DIR 하위 logs/에 저장 (스토리지와 함께 볼륨 마운트)
-    let log_dir = {
-        let data = std::env::var("DATA_DIR").unwrap_or_else(|_| "/data".to_string());
-        std::env::var("LOG_DIR").unwrap_or_else(|_| format!("{}/logs", data))
-    };
+    let data_dir = std::env::var("DATA_DIR")
+        .unwrap_or_else(|_| cfg.storage.data_dir.clone().unwrap_or_else(|| "/data".to_string()));
+
+    let log_dir = std::env::var("LOG_DIR")
+        .unwrap_or_else(|_| format!("{}/logs", data_dir));
+
     let _log_guard = shared::logging::init_logging(
         "storage-node",
         &log_dir,
         "storage_node=info,shared=info",
     );
 
-    let node_id = std::env::var("NODE_ID").unwrap_or_else(|_| "sn-1".to_string());
+    let node_id = std::env::var("NODE_ID")
+        .unwrap_or_else(|_| cfg.node.id.clone().unwrap_or_else(|| "sn-1".to_string()));
+
     let grpc_port: u16 = std::env::var("GRPC_PORT")
-        .unwrap_or_else(|_| "9060".to_string())
-        .parse().unwrap_or(9060);
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| cfg.grpc.port.unwrap_or(9060));
+
     let http_port: u16 = std::env::var("HTTP_PORT")
-        .unwrap_or_else(|_| "8040".to_string())
-        .parse().unwrap_or(8040);
-    let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/data".to_string());
-    let backend  = std::env::var("STORAGE_BACKEND").unwrap_or_else(|_| "native".to_string());
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| cfg.http.port.unwrap_or(8040));
+
+    let backend = std::env::var("STORAGE_BACKEND")
+        .unwrap_or_else(|_| cfg.storage.backend.clone().unwrap_or_else(|| "native".to_string()));
+
+    let _replica_count = std::env::var("TABLET_REPLICA_COUNT")
+        .ok().and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or_else(|| cfg.tablet.replica_count.unwrap_or(3));
 
     #[cfg(not(all(target_os = "linux", feature = "io-uring")))]
     info!("io_uring support: DISABLED (using tokio::fs fallback)");

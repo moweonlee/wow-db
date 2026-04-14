@@ -22,12 +22,69 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Result;
+use serde::Deserialize;
 use tracing::info;
 
 use crate::meta::cube::CubeManager;
 use crate::raft::RaftManager;
 use crate::session_mv::manager::SmvManager;
 use crate::web_ui::server::WebUiState;
+
+// ── TOML 설정 구조체 ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Default)]
+struct NodeCfg {
+    id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct MysqlCfg {
+    port: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct WebCfg {
+    port: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RaftCfg {
+    port: Option<u16>,
+    peers: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct GrpcCfg {
+    port: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ComputeNodesCfg {
+    addresses: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct QueryNodeConfig {
+    node:          NodeCfg,
+    mysql:         MysqlCfg,
+    web:           WebCfg,
+    raft:          RaftCfg,
+    grpc:          GrpcCfg,
+    compute_nodes: ComputeNodesCfg,
+}
+
+fn load_config() -> Result<QueryNodeConfig> {
+    if let Some(path) = shared::config::parse_config_path() {
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("Failed to read config file '{}': {}", path, e))?;
+        let cfg: QueryNodeConfig = toml::from_str(&raw)
+            .map_err(|e| anyhow::anyhow!("Failed to parse config file '{}': {}", path, e))?;
+        info!(path = %path, "Loaded config from file");
+        Ok(cfg)
+    } else {
+        Ok(QueryNodeConfig::default())
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -40,19 +97,38 @@ async fn main() -> Result<()> {
         "query_node=info,shared=info",
     );
 
-    let node_id = std::env::var("NODE_ID").unwrap_or_else(|_| "qn-1".to_string());
+    // ── 설정 로드 (TOML 파일 → env var 오버라이드 순) ────────────────────────
+    let cfg = load_config()?;
+
+    let node_id = std::env::var("NODE_ID")
+        .or_else(|_| std::env::var("QN_NODE_ID"))
+        .unwrap_or_else(|_| cfg.node.id.clone().unwrap_or_else(|| "qn-1".to_string()));
+
     let mysql_port: u16 = std::env::var("MYSQL_PORT")
-        .unwrap_or_else(|_| "9030".to_string())
-        .parse().unwrap_or(9030);
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| cfg.mysql.port.unwrap_or(9030));
+
     let web_port: u16 = std::env::var("WEB_PORT")
-        .unwrap_or_else(|_| "8080".to_string())
-        .parse().unwrap_or(8080);
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| cfg.web.port.unwrap_or(8080));
+
     let raft_port: u16 = std::env::var("RAFT_PORT")
-        .unwrap_or_else(|_| "9010".to_string())
-        .parse().unwrap_or(9010);
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| cfg.raft.port.unwrap_or(9010));
+
     let grpc_port: u16 = std::env::var("GRPC_PORT")
-        .unwrap_or_else(|_| "9011".to_string())
-        .parse().unwrap_or(9011);
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| cfg.grpc.port.unwrap_or(9011));
+
+    // QN_PEERS: Raft peers, 콤마 구분 (Kubernetes discovery용)
+    let _raft_peers: Vec<String> = std::env::var("QN_PEERS")
+        .or_else(|_| std::env::var("RAFT_PEERS"))
+        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+        .unwrap_or_else(|_| cfg.raft.peers.clone().unwrap_or_default());
+
+    let _compute_nodes: Vec<String> = std::env::var("COMPUTE_NODES")
+        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+        .unwrap_or_else(|_| cfg.compute_nodes.addresses.clone().unwrap_or_default());
 
     info!(
         node_id = %node_id,
