@@ -348,37 +348,37 @@ mod sql_query_tests {
     // §9 DML — INSERT
     // ─────────────────────────────────────────────────────────────────────────
 
-    #[test]
-    fn sql_insert_single_row() {
+    #[tokio::test]
+    async fn sql_insert_single_row() {
         let result = execute_insert(
             "INSERT INTO events (id, name, ts) VALUES (1, 'page_view', '2024-01-01')"
-        );
+        ).await;
         assert!(result.is_ok(), "단건 INSERT: {:?}", result.err());
         assert_eq!(result.unwrap().rows_affected, 1);
     }
 
-    #[test]
-    fn sql_insert_multiple_rows() {
+    #[tokio::test]
+    async fn sql_insert_multiple_rows() {
         let result = execute_insert(
             "INSERT INTO events (id, name) VALUES (2, 'click'), (3, 'scroll'), (4, 'purchase')"
-        );
+        ).await;
         assert!(result.is_ok(), "다건 INSERT: {:?}", result.err());
         assert_eq!(result.unwrap().rows_affected, 3, "3개 행 삽입");
     }
 
-    #[test]
-    fn sql_insert_without_column_list() {
+    #[tokio::test]
+    async fn sql_insert_without_column_list() {
         let result = execute_insert(
             "INSERT INTO events VALUES (5, 'view')"
-        );
+        ).await;
         assert!(result.is_ok(), "컬럼 목록 없는 INSERT");
     }
 
-    #[test]
-    fn sql_insert_with_json_value() {
+    #[tokio::test]
+    async fn sql_insert_with_json_value() {
         let result = execute_insert(
             r#"INSERT INTO events (id, props) VALUES (10, '{"page": "/home", "ref": "google"}')"#
-        );
+        ).await;
         assert!(result.is_ok(), "JSON 값 INSERT: {:?}", result.err());
     }
 
@@ -386,56 +386,56 @@ mod sql_query_tests {
     // §10 DQL — SELECT
     // ─────────────────────────────────────────────────────────────────────────
 
-    #[test]
-    fn sql_select_all_from_empty_table() {
+    #[tokio::test]
+    async fn sql_select_all_from_empty_table() {
         MEM_STORE.drop_table("empty_tbl");
-        let result = execute_select("SELECT * FROM empty_tbl");
+        let result = execute_select("SELECT * FROM empty_tbl").await;
         assert!(result.is_ok(), "빈 테이블 SELECT");
         let sel = result.unwrap();
         assert!(sel.rows.is_empty(), "빈 결과");
     }
 
-    #[test]
-    fn sql_select_after_insert() {
+    #[tokio::test]
+    async fn sql_select_after_insert() {
         MEM_STORE.drop_table("sel_test");
-        execute_insert("INSERT INTO sel_test (id, val) VALUES (1, 'hello')").unwrap();
-        execute_insert("INSERT INTO sel_test (id, val) VALUES (2, 'world')").unwrap();
+        execute_insert("INSERT INTO sel_test (id, val) VALUES (1, 'hello')").await.unwrap();
+        execute_insert("INSERT INTO sel_test (id, val) VALUES (2, 'world')").await.unwrap();
 
-        let result = execute_select("SELECT * FROM sel_test");
+        let result = execute_select("SELECT * FROM sel_test").await;
         assert!(result.is_ok(), "INSERT 후 SELECT: {:?}", result.err());
         let sel = result.unwrap();
         assert_eq!(sel.rows.len(), 2, "2개 행 조회");
     }
 
-    #[test]
-    fn sql_select_with_where_clause() {
+    #[tokio::test]
+    async fn sql_select_with_where_clause() {
         MEM_STORE.drop_table("where_test");
-        execute_insert("INSERT INTO where_test (id, name) VALUES (1, 'alice')").unwrap();
-        execute_insert("INSERT INTO where_test (id, name) VALUES (2, 'bob')").unwrap();
+        execute_insert("INSERT INTO where_test (id, name) VALUES (1, 'alice')").await.unwrap();
+        execute_insert("INSERT INTO where_test (id, name) VALUES (2, 'bob')").await.unwrap();
 
-        let result = execute_select("SELECT * FROM where_test WHERE id = 1");
+        let result = execute_select("SELECT * FROM where_test WHERE id = 1").await;
         assert!(result.is_ok(), "WHERE 절 SELECT: {:?}", result.err());
     }
 
-    #[test]
-    fn sql_select_with_limit() {
+    #[tokio::test]
+    async fn sql_select_with_limit() {
         MEM_STORE.drop_table("limit_test");
         for i in 0..10 {
-            execute_insert(&format!("INSERT INTO limit_test (id) VALUES ({})", i)).unwrap();
+            execute_insert(&format!("INSERT INTO limit_test (id) VALUES ({})", i)).await.unwrap();
         }
-        let result = execute_select("SELECT * FROM limit_test LIMIT 3");
+        let result = execute_select("SELECT * FROM limit_test LIMIT 3").await;
         assert!(result.is_ok(), "LIMIT SELECT");
         let sel = result.unwrap();
         assert!(sel.rows.len() <= 3, "LIMIT 3: {}개 이하", sel.rows.len());
     }
 
-    #[test]
-    fn sql_select_with_order_by() {
+    #[tokio::test]
+    async fn sql_select_with_order_by() {
         MEM_STORE.drop_table("order_test");
-        execute_insert("INSERT INTO order_test (val) VALUES (30)").unwrap();
-        execute_insert("INSERT INTO order_test (val) VALUES (10)").unwrap();
-        execute_insert("INSERT INTO order_test (val) VALUES (20)").unwrap();
-        let result = execute_select("SELECT * FROM order_test ORDER BY val ASC");
+        execute_insert("INSERT INTO order_test (val) VALUES (30)").await.unwrap();
+        execute_insert("INSERT INTO order_test (val) VALUES (10)").await.unwrap();
+        execute_insert("INSERT INTO order_test (val) VALUES (20)").await.unwrap();
+        let result = execute_select("SELECT * FROM order_test ORDER BY val ASC").await;
         assert!(result.is_ok(), "ORDER BY SELECT");
     }
 

@@ -929,39 +929,39 @@ mod tests {
     use super::*;
     use crate::executor::insert_exec::execute_insert;
 
-    #[test]
-    fn test_select_with_where() {
-        execute_insert("INSERT INTO sel_w_test (id, val) VALUES (1, 10), (2, 20), (3, 30)").unwrap();
-        let r = execute_select("SELECT id, val FROM sel_w_test WHERE val > 15").unwrap();
+    #[tokio::test]
+    async fn test_select_with_where() {
+        execute_insert("INSERT INTO sel_w_test (id, val) VALUES (1, 10), (2, 20), (3, 30)").await.unwrap();
+        let r = execute_select("SELECT id, val FROM sel_w_test WHERE val > 15").await.unwrap();
         assert_eq!(r.rows.len(), 2);
     }
 
-    #[test]
-    fn test_group_by_count() {
-        execute_insert("INSERT INTO grp_c_test (cat, val) VALUES ('a', 1), ('a', 2), ('b', 3)").unwrap();
-        let r = execute_select("SELECT cat, COUNT(*) FROM grp_c_test GROUP BY cat").unwrap();
+    #[tokio::test]
+    async fn test_group_by_count() {
+        execute_insert("INSERT INTO grp_c_test (cat, val) VALUES ('a', 1), ('a', 2), ('b', 3)").await.unwrap();
+        let r = execute_select("SELECT cat, COUNT(*) FROM grp_c_test GROUP BY cat").await.unwrap();
         assert_eq!(r.rows.len(), 2);
     }
 
-    #[test]
-    fn test_select_star() {
-        execute_insert("INSERT INTO star_test (a, b) VALUES (1, 2), (3, 4)").unwrap();
-        let r = execute_select("SELECT * FROM star_test").unwrap();
+    #[tokio::test]
+    async fn test_select_star() {
+        execute_insert("INSERT INTO star_test (a, b) VALUES (1, 2), (3, 4)").await.unwrap();
+        let r = execute_select("SELECT * FROM star_test").await.unwrap();
         assert_eq!(r.rows.len(), 2);
         assert_eq!(r.columns.len(), 2);
     }
 
-    #[test]
-    fn test_count_all() {
-        execute_insert("INSERT INTO cnt_test (x) VALUES (1), (2), (3), (4), (5)").unwrap();
-        let r = execute_select("SELECT COUNT(*) FROM cnt_test").unwrap();
+    #[tokio::test]
+    async fn test_count_all() {
+        execute_insert("INSERT INTO cnt_test (x) VALUES (1), (2), (3), (4), (5)").await.unwrap();
+        let r = execute_select("SELECT COUNT(*) FROM cnt_test").await.unwrap();
         assert_eq!(r.rows[0][0], serde_json::json!(5i64));
     }
 
-    #[test]
-    fn test_order_by_limit() {
-        execute_insert("INSERT INTO ord_test (n) VALUES (3), (1), (2)").unwrap();
-        let r = execute_select("SELECT n FROM ord_test ORDER BY n ASC LIMIT 2").unwrap();
+    #[tokio::test]
+    async fn test_order_by_limit() {
+        execute_insert("INSERT INTO ord_test (n) VALUES (3), (1), (2)").await.unwrap();
+        let r = execute_select("SELECT n FROM ord_test ORDER BY n ASC LIMIT 2").await.unwrap();
         assert_eq!(r.rows.len(), 2);
         assert_eq!(r.rows[0][0], serde_json::json!(1));
     }

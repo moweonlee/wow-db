@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn test_select_count_star() {
         setup();
-        let r = execute_select(&format!("SELECT COUNT(*) FROM {TABLE}")).unwrap();
+        let r = execute_select(&format!("SELECT COUNT(*) FROM {TABLE}".await)).unwrap();
         assert_eq!(r.rows.len(), 1);
         let count = match &r.rows[0][0] {
             Value::Number(n) => n.as_u64().unwrap_or(0),
@@ -147,7 +147,7 @@ mod tests {
              FROM {TABLE} \
              GROUP BY event_name \
              ORDER BY cnt DESC"
-        )).unwrap();
+        .await)).unwrap();
 
         // 최소 5가지 이벤트 타입 존재
         assert!(r.rows.len() >= 5, "이벤트 종류 >= 5, actual={}", r.rows.len());
@@ -178,7 +178,7 @@ mod tests {
         setup();
         let r = execute_select(&format!(
             "SELECT COUNT(*) FROM {TABLE} WHERE event_name = 'signup'"
-        )).unwrap();
+        .await)).unwrap();
         let count = match &r.rows[0][0] {
             Value::Number(n) => n.as_u64().unwrap_or(0),
             _ => panic!("COUNT must return number"),
@@ -191,7 +191,7 @@ mod tests {
         setup();
         let r = execute_select(&format!(
             "SELECT COUNT(*) FROM {TABLE} WHERE event_name = 'purchase'"
-        )).unwrap();
+        .await)).unwrap();
         let count = match &r.rows[0][0] {
             Value::Number(n) => n.as_u64().unwrap_or(0),
             _ => panic!("COUNT must return number"),
@@ -209,7 +209,7 @@ mod tests {
             "SELECT user_id, COUNT(*) as cnt \
              FROM {TABLE} \
              GROUP BY user_id"
-        )).unwrap();
+        .await)).unwrap();
         assert_eq!(r.rows.len(), USER_COUNT, "고유 사용자 수 = 1,000");
     }
 
@@ -222,7 +222,7 @@ mod tests {
              GROUP BY user_id \
              ORDER BY user_id ASC \
              LIMIT 10"
-        )).unwrap();
+        .await)).unwrap();
         assert_eq!(r.rows.len(), 10, "LIMIT 10 결과");
         for row in &r.rows {
             let cnt = match &row[1] {
@@ -242,7 +242,7 @@ mod tests {
              GROUP BY user_id \
              ORDER BY cnt DESC \
              LIMIT 5"
-        )).unwrap();
+        .await)).unwrap();
         assert_eq!(r.rows.len(), 5, "TOP 5 사용자");
         for row in &r.rows {
             let cnt = match &row[1] {
@@ -267,7 +267,7 @@ mod tests {
             "SELECT COUNT(*) FROM {TABLE} \
              WHERE event_time >= '2026-03-01T00:00:00Z' \
              AND event_time < '2026-04-01T00:00:00Z'"
-        )).unwrap();
+        .await)).unwrap();
         let count = match &r.rows[0][0] {
             Value::Number(n) => n.as_u64().unwrap_or(0),
             _ => 0,
@@ -285,7 +285,7 @@ mod tests {
              FROM {TABLE} \
              GROUP BY referrer \
              ORDER BY cnt DESC"
-        )).unwrap();
+        .await)).unwrap();
         // 5가지 레퍼러 (google, facebook, direct, email, organic)
         assert_eq!(r.rows.len(), 5, "레퍼러 종류 = 5");
         // 모든 레퍼러가 균등하게 분배 (각 20,000건)
@@ -498,7 +498,7 @@ mod tests {
             "SELECT event_name, COUNT(*) FROM {TABLE} \
              WHERE user_id = 'user_0000' \
              GROUP BY event_name"
-        )).unwrap();
+        .await)).unwrap();
         // user_0000은 signup, search, add_to_cart, checkout, purchase + page_view 보유
         let total: u64 = r.rows.iter()
             .filter_map(|row| row[1].as_u64())
@@ -517,7 +517,7 @@ mod tests {
              GROUP BY user_id \
              ORDER BY user_id ASC \
              LIMIT 5"
-        )).unwrap();
+        .await)).unwrap();
         assert_eq!(r.rows.len(), 5, "purchase 사용자 TOP 5");
         // 모두 user_0000 ~ user_0004 (u < 200)
         let first = match &r.rows[0][0] {
@@ -535,7 +535,7 @@ mod tests {
         setup();
         let r = execute_select(&format!(
             "SELECT user_id, event_name FROM {TABLE} LIMIT 100"
-        )).unwrap();
+        )).await.unwrap();
         assert_eq!(r.rows.len(), 100, "LIMIT 100 결과");
     }
 
@@ -550,7 +550,7 @@ mod tests {
              FROM {TABLE} \
              GROUP BY user_id \
              HAVING cnt = 100"
-        )).unwrap();
+        .await)).unwrap();
         assert_eq!(r.rows.len(), USER_COUNT, "모든 사용자가 정확히 100건 이벤트 보유");
     }
 
@@ -571,7 +571,7 @@ mod tests {
         setup();
         let r = execute_select(&format!(
             "SELECT * FROM {TABLE} WHERE user_id = 'user_9999'"
-        )).unwrap();
+        )).await.unwrap();
         assert_eq!(r.rows.len(), 0, "존재하지 않는 사용자 → 빈 결과");
     }
 
@@ -601,7 +601,7 @@ mod tests {
         let t0 = Instant::now();
         let _ = execute_select(&format!(
             "SELECT event_name, COUNT(*) FROM {TABLE} GROUP BY event_name"
-        )).unwrap();
+        .await)).unwrap();
         let group_by_ms = t0.elapsed().as_millis();
 
         // FUNNEL 분석 성능
@@ -628,7 +628,7 @@ mod tests {
                 event_col => 'event_name', \
                 time_col => 'event_time' \
             ) FROM {TABLE}"
-        )).unwrap();
+        .await)).unwrap();
         let cohort_ms = t2.elapsed().as_millis();
 
         // PATH 분석 성능
@@ -640,7 +640,7 @@ mod tests {
                 time_col => 'event_time', \
                 path_length => 3 \
             ) FROM {TABLE}"
-        )).unwrap();
+        .await)).unwrap();
         let path_ms = t3.elapsed().as_millis();
 
         // 성능 기준: 100k 행 대상으로 각 쿼리 < 5,000ms (단일 스레드 메모리 스캔 기준)
