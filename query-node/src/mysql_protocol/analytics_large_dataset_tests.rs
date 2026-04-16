@@ -125,10 +125,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_select_count_star() {
+    #[tokio::test]
+    async fn test_select_count_star() {
         setup();
-        let r = execute_select(&format!("SELECT COUNT(*) FROM {TABLE}".await)).unwrap();
+        let r = execute_select(&format!("SELECT COUNT(*) FROM {TABLE}")).await.unwrap();
         assert_eq!(r.rows.len(), 1);
         let count = match &r.rows[0][0] {
             Value::Number(n) => n.as_u64().unwrap_or(0),
@@ -139,15 +139,15 @@ mod tests {
 
     // ── §2 이벤트 분포 검증 ──────────────────────────────────────────────────
 
-    #[test]
-    fn test_event_distribution_by_group_by() {
+    #[tokio::test]
+    async fn test_event_distribution_by_group_by() {
         setup();
         let r = execute_select(&format!(
             "SELECT event_name, COUNT(*) as cnt \
              FROM {TABLE} \
              GROUP BY event_name \
              ORDER BY cnt DESC"
-        .await)).unwrap();
+        )).await.unwrap();
 
         // 최소 5가지 이벤트 타입 존재
         assert!(r.rows.len() >= 5, "이벤트 종류 >= 5, actual={}", r.rows.len());
@@ -173,12 +173,12 @@ mod tests {
         assert_eq!(page_view_count, 97_700, "page_view 이벤트 수 = 97,700");
     }
 
-    #[test]
-    fn test_signup_event_count() {
+    #[tokio::test]
+    async fn test_signup_event_count() {
         setup();
         let r = execute_select(&format!(
             "SELECT COUNT(*) FROM {TABLE} WHERE event_name = 'signup'"
-        .await)).unwrap();
+        )).await.unwrap();
         let count = match &r.rows[0][0] {
             Value::Number(n) => n.as_u64().unwrap_or(0),
             _ => panic!("COUNT must return number"),
@@ -186,12 +186,12 @@ mod tests {
         assert_eq!(count, 300, "signup 이벤트 수 = 300 (user 0..299)");
     }
 
-    #[test]
-    fn test_purchase_event_count() {
+    #[tokio::test]
+    async fn test_purchase_event_count() {
         setup();
         let r = execute_select(&format!(
             "SELECT COUNT(*) FROM {TABLE} WHERE event_name = 'purchase'"
-        .await)).unwrap();
+        )).await.unwrap();
         let count = match &r.rows[0][0] {
             Value::Number(n) => n.as_u64().unwrap_or(0),
             _ => panic!("COUNT must return number"),
@@ -201,20 +201,20 @@ mod tests {
 
     // ── §3 사용자별 집계 ─────────────────────────────────────────────────────
 
-    #[test]
-    fn test_distinct_user_count() {
+    #[tokio::test]
+    async fn test_distinct_user_count() {
         setup();
         // GROUP BY user_id → 고유 사용자 수 = 1,000개 행 반환
         let r = execute_select(&format!(
             "SELECT user_id, COUNT(*) as cnt \
              FROM {TABLE} \
              GROUP BY user_id"
-        .await)).unwrap();
+        )).await.unwrap();
         assert_eq!(r.rows.len(), USER_COUNT, "고유 사용자 수 = 1,000");
     }
 
-    #[test]
-    fn test_events_per_user_exactly_100() {
+    #[tokio::test]
+    async fn test_events_per_user_exactly_100() {
         setup();
         let r = execute_select(&format!(
             "SELECT user_id, COUNT(*) as cnt \
@@ -222,7 +222,7 @@ mod tests {
              GROUP BY user_id \
              ORDER BY user_id ASC \
              LIMIT 10"
-        .await)).unwrap();
+        )).await.unwrap();
         assert_eq!(r.rows.len(), 10, "LIMIT 10 결과");
         for row in &r.rows {
             let cnt = match &row[1] {
@@ -233,8 +233,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_top_users_by_event_count() {
+    #[tokio::test]
+    async fn test_top_users_by_event_count() {
         setup();
         let r = execute_select(&format!(
             "SELECT user_id, COUNT(*) as cnt \
@@ -242,7 +242,7 @@ mod tests {
              GROUP BY user_id \
              ORDER BY cnt DESC \
              LIMIT 5"
-        .await)).unwrap();
+        )).await.unwrap();
         assert_eq!(r.rows.len(), 5, "TOP 5 사용자");
         for row in &r.rows {
             let cnt = match &row[1] {
@@ -255,8 +255,8 @@ mod tests {
 
     // ── §4 시간대 분석 ────────────────────────────────────────────────────────
 
-    #[test]
-    fn test_events_in_march() {
+    #[tokio::test]
+    async fn test_events_in_march() {
         setup();
         // 2026-03-01 ~ 2026-03-31 범위 필터
         // 계산: user u의 event e가 3월에 속하는 조건:
@@ -267,7 +267,7 @@ mod tests {
             "SELECT COUNT(*) FROM {TABLE} \
              WHERE event_time >= '2026-03-01T00:00:00Z' \
              AND event_time < '2026-04-01T00:00:00Z'"
-        .await)).unwrap();
+        )).await.unwrap();
         let count = match &r.rows[0][0] {
             Value::Number(n) => n.as_u64().unwrap_or(0),
             _ => 0,
@@ -277,15 +277,15 @@ mod tests {
             "3월 이벤트 수 ≈ 74,360, actual = {count}");
     }
 
-    #[test]
-    fn test_referrer_distribution() {
+    #[tokio::test]
+    async fn test_referrer_distribution() {
         setup();
         let r = execute_select(&format!(
             "SELECT referrer, COUNT(*) as cnt \
              FROM {TABLE} \
              GROUP BY referrer \
              ORDER BY cnt DESC"
-        .await)).unwrap();
+        )).await.unwrap();
         // 5가지 레퍼러 (google, facebook, direct, email, organic)
         assert_eq!(r.rows.len(), 5, "레퍼러 종류 = 5");
         // 모든 레퍼러가 균등하게 분배 (각 20,000건)
@@ -491,14 +491,14 @@ mod tests {
 
     // ── §8 WHERE 필터 조합 쿼리 ─────────────────────────────────────────────
 
-    #[test]
-    fn test_filter_by_user_id() {
+    #[tokio::test]
+    async fn test_filter_by_user_id() {
         setup();
         let r = execute_select(&format!(
             "SELECT event_name, COUNT(*) FROM {TABLE} \
              WHERE user_id = 'user_0000' \
              GROUP BY event_name"
-        .await)).unwrap();
+        )).await.unwrap();
         // user_0000은 signup, search, add_to_cart, checkout, purchase + page_view 보유
         let total: u64 = r.rows.iter()
             .filter_map(|row| row[1].as_u64())
@@ -506,8 +506,8 @@ mod tests {
         assert_eq!(total, 100, "user_0000의 이벤트 수 = 100");
     }
 
-    #[test]
-    fn test_filter_purchase_users_only() {
+    #[tokio::test]
+    async fn test_filter_purchase_users_only() {
         setup();
         // purchase 이벤트를 가진 사용자만 필터
         let r = execute_select(&format!(
@@ -517,7 +517,7 @@ mod tests {
              GROUP BY user_id \
              ORDER BY user_id ASC \
              LIMIT 5"
-        .await)).unwrap();
+        )).await.unwrap();
         assert_eq!(r.rows.len(), 5, "purchase 사용자 TOP 5");
         // 모두 user_0000 ~ user_0004 (u < 200)
         let first = match &r.rows[0][0] {
@@ -530,8 +530,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_limit_offset() {
+    #[tokio::test]
+    async fn test_limit_offset() {
         setup();
         let r = execute_select(&format!(
             "SELECT user_id, event_name FROM {TABLE} LIMIT 100"
@@ -541,8 +541,8 @@ mod tests {
 
     // ── §9 HAVING 절 ─────────────────────────────────────────────────────────
 
-    #[test]
-    fn test_having_high_activity_users() {
+    #[tokio::test]
+    async fn test_having_high_activity_users() {
         setup();
         // 이벤트 수가 정확히 100인 사용자만 (모든 사용자가 해당)
         let r = execute_select(&format!(
@@ -550,7 +550,7 @@ mod tests {
              FROM {TABLE} \
              GROUP BY user_id \
              HAVING cnt = 100"
-        .await)).unwrap();
+        )).await.unwrap();
         assert_eq!(r.rows.len(), USER_COUNT, "모든 사용자가 정확히 100건 이벤트 보유");
     }
 
@@ -566,8 +566,8 @@ mod tests {
 
     // ── §11 빈 결과 처리 ─────────────────────────────────────────────────────
 
-    #[test]
-    fn test_empty_result_for_nonexistent_user() {
+    #[tokio::test]
+    async fn test_empty_result_for_nonexistent_user() {
         setup();
         let r = execute_select(&format!(
             "SELECT * FROM {TABLE} WHERE user_id = 'user_9999'"
@@ -592,8 +592,8 @@ mod tests {
 
     // ── §12 전체 성능 지표 ────────────────────────────────────────────────────
 
-    #[test]
-    fn test_bulk_analytics_performance() {
+    #[tokio::test]
+    async fn test_bulk_analytics_performance() {
         setup();
         use std::time::Instant;
 
@@ -601,7 +601,7 @@ mod tests {
         let t0 = Instant::now();
         let _ = execute_select(&format!(
             "SELECT event_name, COUNT(*) FROM {TABLE} GROUP BY event_name"
-        .await)).unwrap();
+        )).await.unwrap();
         let group_by_ms = t0.elapsed().as_millis();
 
         // FUNNEL 분석 성능
@@ -628,7 +628,7 @@ mod tests {
                 event_col => 'event_name', \
                 time_col => 'event_time' \
             ) FROM {TABLE}"
-        .await)).unwrap();
+        )).unwrap();
         let cohort_ms = t2.elapsed().as_millis();
 
         // PATH 분석 성능
@@ -640,7 +640,7 @@ mod tests {
                 time_col => 'event_time', \
                 path_length => 3 \
             ) FROM {TABLE}"
-        .await)).unwrap();
+        )).unwrap();
         let path_ms = t3.elapsed().as_millis();
 
         // 성능 기준: 100k 행 대상으로 각 쿼리 < 5,000ms (단일 스레드 메모리 스캔 기준)
