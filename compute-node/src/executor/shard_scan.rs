@@ -44,24 +44,63 @@ pub trait ShardTransport: Send + Sync + 'static {
     async fn scan(&self, spec: &ShardSpec) -> Result<Vec<Vec<u8>>>;
 }
 
-/// gRPC ShardTransport — scan_shard RPC 사용 (proto 재생성 후 구현)
+/// gRPC ShardTransport — SN StorageService::ScanTablet 호출
 ///
-/// TODO: `cargo build` 후 아래 TODO 블록을 실제 gRPC 호출로 교체
+/// spec.sn_endpoint 에 gRPC 연결 후 scan_tablet RPC 로 JSON 행을 받아온다.
 pub struct GrpcShardTransport;
 
 #[async_trait]
 impl ShardTransport for GrpcShardTransport {
     async fn scan(&self, spec: &ShardSpec) -> Result<Vec<Vec<u8>>> {
-        // TODO: tonic StorageServiceClient::scan_shard() 호출
-        // storage.proto 업데이트 후 cargo build 시 자동 생성되는
-        // StorageServiceClient::scan_shard(ShardScanRequest) → Stream<ShardScanResponse>
-        // 현재는 빈 결과 반환 (stub)
-        warn!(
-            shard_id  = %spec.shard_id,
-            endpoint  = %spec.sn_endpoint,
-            "GrpcShardTransport::scan — proto 재생성 필요 (stub 반환)"
+        use crate::gen::wowdb::storage::storage_service_client::StorageServiceClient;
+        use crate::gen::wowdb::storage::ScanRequest;
+        use tokio_stream::StreamExt;
+
+        let addr = format!("http://{}", spec.sn_endpoint);
+        let mut client = StorageServiceClient::connect(addr.clone()).await
+            .map_err(|e| anyhow::anyhow!("SN connect failed {}: {}", addr, e))?;
+
+        // tablet_id = shard_id (단순화: 테이블명을 shard_dir 에서 추출)
+        let tablet_id = spec.shard_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| spec.shard_id.to_string());
+
+        let req = ScanRequest {
+            tablet_id: tablet_id.clone(),
+            columns:   spec.columns.clone(),
+            predicate: vec![],
+            ..Default::default()
+        };
+
+        let mut stream = client.scan_tablet(req).await
+            .map_err(|e| anyhow::anyhow!("scan_tablet RPC error: {}", e))?
+            .into_inner();
+
+        let mut batches: Vec<Vec<u8>> = Vec::new();
+        loop {
+            match stream.next().await {
+                Some(Ok(batch)) => {
+                    if !batch.batch.is_empty() {
+                        batches.push(batch.batch);
+                    }
+                    if batch.is_last { break; }
+                }
+                Some(Err(e)) => {
+                    warn!(shard_id = %spec.shard_id, err = %e, "SN scan_tablet stream error");
+                    break;
+                }
+                None => break,
+            }
+        }
+
+        debug!(
+            shard_id = %spec.shard_id,
+            endpoint = %spec.sn_endpoint,
+            batches  = batches.len(),
+            "GrpcShardTransport::scan OK"
         );
-        Ok(Vec::new())
+        Ok(batches)
     }
 }
 

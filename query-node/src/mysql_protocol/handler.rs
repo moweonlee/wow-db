@@ -222,19 +222,20 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
             return write_output(results, output).await;
         }
 
-        // MySQL 시스템 변수 쿼리
-        if lower.contains("@@version") {
-            let cols = vec![build_columns("@@version", ColumnType::MYSQL_TYPE_VAR_STRING)];
-            let mut rw = results.start(&cols).await?;
-            rw.write_row(std::iter::once(Some("8.0.0-wowdb-1.0"))).await?;
-            return rw.finish().await.map_err(Into::into);
-        }
-
         if lower.trim_end_matches(';') == "select 1" {
             let cols = vec![build_columns("1", ColumnType::MYSQL_TYPE_LONGLONG)];
             let mut rw = results.start(&cols).await?;
             rw.write_row(std::iter::once(Some("1"))).await?;
             return rw.finish().await.map_err(Into::into);
+        }
+
+        // ── MySQL 시스템 변수 쿼리 (mysql_async 연결 초기화 쿼리 포함) ────────────
+        // mysql_async v0.33 연결 직후 SELECT @@max_allowed_packet,@@wait_timeout 전송.
+        // @@variable 만으로 구성된 FROM 없는 SELECT → 시스템 변수 값 반환.
+        if lower.starts_with("select ") && lower.contains("@@") && !lower.contains(" from ") {
+            debug!(sql = %sql, "system variable query — serving hardcoded values");
+            let output = build_system_var_output(sql, &lower);
+            return write_output(results, output).await;
         }
 
         // CREATE SESSION MATERIALIZED VIEW
@@ -392,7 +393,7 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
 
         // ── INSERT ────────────────────────────────────────────────────────────
         if lower.starts_with("insert ") {
-            match execute_insert(sql) {
+            match execute_insert(sql).await {
                 Ok(r) => return results.completed(OkResponse {
                     affected_rows: r.rows_affected,
                     ..Default::default()
@@ -489,7 +490,7 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
         // ── SELECT ────────────────────────────────────────────────────────────
         if lower_exec.starts_with("select ") {
             let warnings_count = self.pending_warnings.lock().unwrap().len() as u16;
-            match execute_select(sql_to_exec) {
+            match execute_select(sql_to_exec).await {
                 Ok(sel) => {
                     let col_defs: Vec<_> = sel.columns.iter()
                         .map(|c| build_columns(c, ColumnType::MYSQL_TYPE_VAR_STRING))
@@ -663,6 +664,59 @@ async fn write_output<W: tokio::io::AsyncWrite + Send + Unpin>(
                 .map_err(Into::into)
         }
     }
+}
+
+// ─── 시스템 변수 쿼리 빌더 ───────────────────────────────────────────────────
+
+/// MySQL 시스템 변수 SELECT 쿼리를 QueryOutput으로 변환.
+///
+/// `SELECT @@max_allowed_packet,@@wait_timeout` → QueryOutput::Rows
+/// write_output() 을 통해 기존 코드 경로 그대로 전송.
+fn build_system_var_output(sql: &str, lower: &str) -> QueryOutput {
+    const SYS_VARS: &[(&str, &str, bool)] = &[
+        ("@@max_allowed_packet",        "67108864",   true),
+        ("@@global.max_allowed_packet", "67108864",   true),
+        ("@@session.max_allowed_packet","67108864",   true),
+        ("@@wait_timeout",              "28800",      true),
+        ("@@interactive_timeout",       "28800",      true),
+        ("@@net_write_timeout",         "60",         true),
+        ("@@net_read_timeout",          "60",         true),
+        ("@@lower_case_table_names",    "0",          true),
+        ("@@auto_increment_increment",  "1",          true),
+        ("@@character_set_client",      "utf8mb4",    false),
+        ("@@character_set_connection",  "utf8mb4",    false),
+        ("@@character_set_results",     "utf8mb4",    false),
+        ("@@collation_connection",      "utf8mb4_general_ci", false),
+        ("@@version",                   "8.0.0-wowdb-1.0", false),
+        ("@@version_comment",           "WOW-DB 1.0",      false),
+        ("@@transaction_isolation",     "REPEATABLE-READ", false),
+        ("@@tx_isolation",              "REPEATABLE-READ", false),
+        ("@@sql_mode",                  "STRICT_TRANS_TABLES", false),
+    ];
+
+    let body = lower.trim_start_matches("select ").trim_end_matches(';');
+
+    let mut columns: Vec<ColumnMeta> = Vec::new();
+    let mut row:     Vec<Option<String>> = Vec::new();
+
+    for raw_item in body.split(',') {
+        let item     = raw_item.trim();
+        let var_part = item.split_whitespace().next().unwrap_or(item);
+        let var_lower = var_part.to_lowercase();
+
+        let col_name = var_part.to_string();
+
+        let (val, col_type) = if let Some((_, v, is_num)) = SYS_VARS.iter().find(|(k, _, _)| *k == var_lower) {
+            (Some(v.to_string()), if *is_num { ColumnType::MYSQL_TYPE_LONGLONG } else { ColumnType::MYSQL_TYPE_VAR_STRING })
+        } else {
+            (None, ColumnType::MYSQL_TYPE_VAR_STRING)
+        };
+
+        columns.push(ColumnMeta { name: col_name, col_type });
+        row.push(val);
+    }
+
+    QueryOutput::Rows { columns, rows: vec![row] }
 }
 
 // ─── DB 이름 추출 헬퍼 ───────────────────────────────────────────────────────

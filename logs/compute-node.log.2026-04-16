@@ -1,0 +1,70 @@
+2026-04-16T13:53:46.257609Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T13:53:46.260135Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T13:53:46.265826Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T13:54:03.615192Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T13:54:03.617643Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T13:54:03.625737Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T13:54:08.081543Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T13:54:08.083809Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T13:54:08.089926Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T13:54:12.397454Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T13:54:12.400529Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T13:54:12.407512Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T13:58:12.220937Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:/projects/wow-db/dev/configs/compute-node-local.toml
+2026-04-16T13:58:12.221229Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T13:58:12.228602Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T14:11:23.525246Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:/projects/wow-db/dev/configs/compute-node-local.toml
+2026-04-16T14:11:23.525841Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T14:11:23.531664Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T14:17:48.956225Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:/projects/wow-db/dev/configs/compute-node-local.toml
+2026-04-16T14:17:48.956389Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T14:55:51.360577Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:/projects/wow-db/dev/configs/compute-node-local.toml
+2026-04-16T14:55:51.360746Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T14:59:14.900686Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:/projects/wow-db/dev/configs/compute-node-local.toml
+2026-04-16T14:59:14.900805Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:07:27.057127Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:/projects/wow-db/dev/configs/compute-node-local.toml
+2026-04-16T15:07:27.057265Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:22:36.165286Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T15:22:36.166846Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:23:24.030478Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T15:23:24.031376Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:23:24.036664Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T15:24:02.032461Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T15:24:02.033156Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:24:02.038183Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T15:24:31.507054Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T15:24:31.507733Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:24:31.513232Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T15:25:07.126350Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T15:25:07.127257Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:25:07.132788Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T15:25:30.955655Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T15:25:30.956418Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:25:30.961903Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T15:25:42.689748Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T15:25:42.690682Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:25:42.698383Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T15:25:53.069222Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T15:25:53.070045Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:25:53.075153Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T15:26:15.351311Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T15:26:15.352325Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:26:15.356858Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T15:26:26.896273Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T15:26:26.896925Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:26:26.901876Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T15:26:37.361656Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:\projects\wow-db\dev\configs\compute-node-local.toml
+2026-04-16T15:26:37.362419Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:26:37.366438Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T15:28:58.254300Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:/projects/wow-db/dev/configs/compute-node-local.toml
+2026-04-16T15:28:58.254553Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:28:58.261869Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T15:56:05.152283Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:/projects/wow-db/dev/configs/compute-node-local.toml
+2026-04-16T15:56:05.152492Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T15:56:05.158472Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T16:24:40.426357Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:/projects/wow-db/dev/configs/compute-node-local.toml
+2026-04-16T16:24:40.426512Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T16:24:40.431702Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040
+2026-04-16T16:42:55.838986Z  INFO ThreadId(01) compute_node: Loaded config from file path=D:/projects/wow-db/dev/configs/compute-node-local.toml
+2026-04-16T16:42:55.839243Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-16T16:42:55.844302Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040

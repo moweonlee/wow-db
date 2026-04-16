@@ -18,6 +18,8 @@ mod resource_group;
 mod executor;
 mod disk_monitor;
 mod rpc;
+pub mod storage_client;
+pub mod cn_client;
 
 use std::net::SocketAddr;
 use std::sync::Arc;

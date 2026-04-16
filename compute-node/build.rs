@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_client(true)
         .out_dir("src/gen")
         .compile(
-            &["../proto/compute.proto", "../proto/health.proto"],
+            &["../proto/compute.proto", "../proto/health.proto", "../proto/storage.proto"],
             &["../proto"],
         )?;
     Ok(())

@@ -1,6 +1,7 @@
 // T107: LevelState — L0~L6 레벨 구조, CompactionConfig, compaction_score, L1+ 비중첩 불변 조건
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -41,10 +42,18 @@ impl SstRef {
 // ─── 레벨별 상태 ──────────────────────────────────────────────────────────────
 
 /// 한 파티션의 전체 레벨 상태
+///
+/// ## SSTable 참조 카운팅 (Compaction 안전성)
+///
+/// 내부적으로 `Arc<SstRef>` 를 사용한다.
+/// - 읽기 경로: `read_snapshot()` 으로 Arc 클론 → 컴팩션 중에도 파일 메타 안전
+/// - 쓰기 경로: `remove()` 로 레벨 목록에서만 제거 → Arc 레퍼런스 카운트가 0 이 될 때
+///   비로소 GC (파일 삭제는 Arc<SstRef> Drop impl 에서 처리 가능)
 #[derive(Debug, Default)]
 pub struct PartitionLevels {
-    /// levels[0] = L0, levels[1] = L1, …, levels[6] = L6
-    pub levels: Vec<Vec<SstRef>>,
+    /// levels[0] = L0, levels[1] = L1, …, levels[6] = L6.
+    /// Arc<SstRef> 로 저장하여 reader 가 보유한 Arc 가 있는 한 파일 삭제 방지.
+    pub levels: Vec<Vec<Arc<SstRef>>>,
     config: CompactionConfig,
 }
 
@@ -58,17 +67,29 @@ impl PartitionLevels {
 
     pub fn add(&mut self, sst: SstRef) {
         let lvl = sst.level as usize;
-        self.levels[lvl].push(sst);
+        self.levels[lvl].push(Arc::new(sst));
         // L1+ 정렬 유지 (min_sort_key 기준)
         if lvl > 0 {
             self.levels[lvl].sort_by(|a, b| a.min_sort_key.cmp(&b.min_sort_key));
         }
     }
 
+    /// 레벨 목록에서 SSTable 제거.
+    ///
+    /// **중요**: 이 메서드는 레벨 목록에서만 Arc 를 제거한다.
+    /// Reader 가 `read_snapshot()` 으로 가져간 Arc 가 있다면 파일은 살아있다.
+    /// 모든 Arc 가 drop 되면 실제 파일 삭제 처리가 가능해진다.
     pub fn remove(&mut self, id: Uuid) {
         for level in self.levels.iter_mut() {
             level.retain(|s| s.id != id);
         }
+    }
+
+    /// 현재 레벨 상태의 스냅샷을 반환 (Arc 클론 → reader 안전).
+    ///
+    /// 이 스냅샷을 보유하는 동안 해당 SSTable 파일은 삭제되지 않는다.
+    pub fn read_snapshot(&self) -> Vec<Arc<SstRef>> {
+        self.levels.iter().flat_map(|lvl| lvl.iter().cloned()).collect()
     }
 
     // ─── 통계 ─────────────────────────────────────────────────────────────
@@ -125,6 +146,15 @@ impl PartitionLevels {
             }
         }
         Ok(())
+    }
+
+    /// Arc<SstRef> 에서 SstRef 를 가져와 레벨에 추가 (compaction 출력용)
+    pub fn add_arc(&mut self, sst: Arc<SstRef>) {
+        let lvl = sst.level as usize;
+        self.levels[lvl].push(sst);
+        if lvl > 0 {
+            self.levels[lvl].sort_by(|a, b| a.min_sort_key.cmp(&b.min_sort_key));
+        }
     }
 
     /// L0 쓰기 제어 상태 반환
@@ -268,7 +298,7 @@ mod tests {
         for i in 0..4 {
             let mut s = sst(Uuid::new_v4(), i, b"a", b"z");
             s.level = 0;
-            levels.levels[0].push(s);
+            levels.levels[0].push(Arc::new(s));
         }
         assert!((levels.compaction_score(0) - 1.0).abs() < f64::EPSILON);
     }
@@ -290,15 +320,43 @@ mod tests {
         for i in 0..8 {
             let mut s = sst(Uuid::new_v4(), i as u64, b"a", b"z");
             s.level = 0;
-            levels.levels[0].push(s);
+            levels.levels[0].push(Arc::new(s));
         }
         assert_eq!(levels.write_control(), WriteControl::Slowdown);
 
         for i in 8..12 {
             let mut s = sst(Uuid::new_v4(), i as u64, b"a", b"z");
             s.level = 0;
-            levels.levels[0].push(s);
+            levels.levels[0].push(Arc::new(s));
         }
         assert_eq!(levels.write_control(), WriteControl::Stop);
+    }
+
+    /// 핵심: read_snapshot() 이 Arc 를 보유하는 동안 compaction 이 remove() 해도
+    /// SSTable 참조가 유효하게 남아있는지 검증.
+    #[test]
+    fn test_read_snapshot_survives_compaction_remove() {
+        let mut levels = PartitionLevels::new(CompactionConfig::default());
+        let id = Uuid::new_v4();
+        levels.add(sst(id, 1, b"a", b"z"));
+
+        // 읽기 스냅샷 획득 (Arc 클론)
+        let snapshot = levels.read_snapshot();
+        assert_eq!(snapshot.len(), 1);
+
+        // 컴팩션: 레벨에서 제거
+        levels.remove(id);
+        assert_eq!(levels.l0_count() + levels.levels[1].len(), 0, "레벨에서 제거됨");
+
+        // 스냅샷은 여전히 유효 (Arc 보유 중)
+        assert_eq!(snapshot.len(), 1, "reader 의 Arc 는 살아있어야 함");
+        assert_eq!(snapshot[0].id, id, "SSTable 메타데이터 접근 가능");
+
+        // Arc 참조 카운트 확인: snapshot 이 마지막 참조
+        let arc_ref = snapshot[0].clone();
+        drop(snapshot);
+        // arc_ref 만 남은 상태: strong_count == 1
+        assert_eq!(Arc::strong_count(&arc_ref), 1,
+            "reader 스냅샷 drop 후 ref count = 1 (arc_ref 만 보유)");
     }
 }

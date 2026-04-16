@@ -1,0 +1,6 @@
+2026-04-14T23:37:00.865715Z  INFO ThreadId(01) query_node: Loaded config from file path=dev/configs/query-node-local.toml
+2026-04-14T23:37:00.885048Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-14T23:37:00.885291Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-14T23:37:00.885355Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-14T23:37:00.889908Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-14T23:37:00.889926Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080

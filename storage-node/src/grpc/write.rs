@@ -131,7 +131,57 @@ impl TabletWriter {
         let wal = Arc::new(Wal::open(&wal_dir).await?);
         let memtable = Arc::new(Mutex::new(MemTable::new(DEFAULT_MEMTABLE_THRESHOLD)));
 
-        Ok(Self { tablet_id, wal, memtable, data_dir })
+        let writer = Self { tablet_id: tablet_id.clone(), wal, memtable, data_dir };
+
+        // WAL replay: 크래시/재시작 후 MemTable 복구
+        writer.replay_wal().await?;
+
+        Ok(writer)
+    }
+
+    /// WAL 에 기록된 모든 row 배치를 순서대로 MemTable 에 재삽입.
+    /// PREPARE/COMMIT/ROLLBACK 마커는 무시 (현재 단순화).
+    async fn replay_wal(&self) -> Result<()> {
+        let entries = self.wal.replay()?;
+        if entries.is_empty() { return Ok(()); }
+
+        let mut replayed = 0usize;
+        let mut mem = self.memtable.lock().await;
+
+        for entry in entries {
+            // 마커 엔트리 (PREPARE:/COMMIT:/ROLLBACK:) 은 건너뜀
+            let prefix = String::from_utf8_lossy(&entry.payload);
+            if prefix.starts_with("PREPARE:") || prefix.starts_with("COMMIT:") || prefix.starts_with("ROLLBACK:") {
+                continue;
+            }
+
+            match deserialize_write_batch(&entry.payload) {
+                Ok(rows) => {
+                    for row in rows {
+                        let sort_key = row.to_sort_key();
+                        let cols: Vec<(String, Bytes)> = row.columns.into_iter().collect();
+                        mem.insert(sort_key, cols, row.tx_id);
+                        replayed += 1;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        tablet_id = %self.tablet_id,
+                        err = %e,
+                        "WAL replay: 역직렬화 실패 — 엔트리 스킵"
+                    );
+                }
+            }
+        }
+
+        if replayed > 0 {
+            info!(
+                tablet_id = %self.tablet_id,
+                rows = replayed,
+                "WAL replay 완료 — MemTable 복구"
+            );
+        }
+        Ok(())
     }
 
     /// 행 배치 쓰기: WAL append → MemTable insert
@@ -204,6 +254,21 @@ impl TabletWriter {
 
         warn!(tablet_id = %self.tablet_id, tx_id, "Rollback recorded in WAL");
         Ok(())
+    }
+
+    /// MemTable 전체 스캔 → (sort_key_bytes, columns) 목록 반환
+    ///
+    /// SELECT 경로에서 query-node 가 gRPC ScanTablet 을 호출할 때 사용.
+    /// 삭제 마커(tombstone) 행은 제외한다.
+    pub async fn scan_memtable_rows(&self) -> Vec<(Vec<u8>, HashMap<String, Bytes>)> {
+        let mem = self.memtable.lock().await;
+        mem.iter_rows()
+            .into_iter()
+            .map(|(key_bytes, cols)| {
+                let col_map: HashMap<String, Bytes> = cols.into_iter().collect();
+                (key_bytes, col_map)
+            })
+            .collect()
     }
 
     pub fn tablet_id(&self) -> &str {

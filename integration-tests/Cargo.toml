@@ -15,11 +15,8 @@ chrono.workspace  = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-# MySQL client for compat tests
-mysql_async = "0.33"
-
 # HTTP client for Stream Load / Web UI tests
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 
 # Kafka producer for ingestion tests (requires cmake on PATH)
 rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }

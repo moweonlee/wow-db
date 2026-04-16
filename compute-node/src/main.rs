@@ -41,11 +41,18 @@ struct ExecutionCfg {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct HttpCfg {
+    port: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct ComputeNodeConfig {
-    node:          NodeCfg,
-    grpc:          GrpcCfg,
-    storage_nodes: StorageNodesCfg,
-    execution:     ExecutionCfg,
+    node:                    NodeCfg,
+    grpc:                    GrpcCfg,
+    #[serde(default)]
+    http:                    HttpCfg,
+    storage_nodes:           StorageNodesCfg,
+    execution:               ExecutionCfg,
 }
 
 fn load_config() -> Result<ComputeNodeConfig> {
@@ -82,6 +89,11 @@ async fn main() -> Result<()> {
         .ok().and_then(|v| v.parse().ok())
         .unwrap_or_else(|| cfg.grpc.port.unwrap_or(9040));
 
+    // HTTP health check 포트 (gRPC 포트 + 1000, 기본 10040)
+    let http_port: u16 = std::env::var("HTTP_PORT")
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| cfg.http.port.unwrap_or(grpc_port + 1000));
+
     let sn_addrs = std::env::var("STORAGE_NODES")
         .unwrap_or_else(|_| {
             cfg.storage_nodes.addresses
@@ -111,6 +123,17 @@ async fn main() -> Result<()> {
     #[cfg(not(target_arch = "x86_64"))]
     info!(node_id = %node_id, grpc_port, storage_nodes = %sn_addrs, "Compute Node starting");
 
+    // ── gRPC ComputeService 기동 (QN 의 ExecuteFragment 요청 수신) ──────────
+    let grpc_addr_str = format!("0.0.0.0:{}", grpc_port);
+    let grpc_node     = node_id.clone();
+    tokio::spawn(async move {
+        let addr: std::net::SocketAddr = grpc_addr_str.parse().expect("invalid grpc addr");
+        if let Err(e) = grpc::server::serve(addr, grpc_node).await {
+            tracing::error!(err = %e, "Compute gRPC server error");
+        }
+    });
+    info!(port = grpc_port, "Compute Node gRPC server started (ExecuteFragment)");
+
     // ── HTTP 서버 기동 (헬스체크) ────────────────────────────────────────────
     let nid = node_id.clone();
     let router = Router::new()
@@ -121,11 +144,9 @@ async fn main() -> Result<()> {
             async move { Json(serde_json::json!({ "node_id": id, "role": "compute" })) }
         }));
 
-    let addr     = format!("0.0.0.0:{}", grpc_port);
-    let listener = TcpListener::bind(&addr).await?;
-    info!(port = grpc_port, "Compute Node HTTP server listening");
-
-    // TODO (Phase C): gRPC ComputeService 서버 기동 (tonic)
+    let http_addr = format!("0.0.0.0:{}", http_port);
+    let listener  = TcpListener::bind(&http_addr).await?;
+    info!(grpc_port, http_port, "Compute Node HTTP server listening");
 
     tokio::select! {
         result = axum::serve(listener, router) => {

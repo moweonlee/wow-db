@@ -32,7 +32,8 @@ pub struct CompactionJob {
     pub id:           Uuid,
     pub input_level:  u32,
     pub output_level: u32,
-    pub inputs:       Vec<SstRef>,
+    /// Arc<SstRef> 로 보관 — 컴팩션 진행 중 reader 가 같은 파일을 보유해도 안전
+    pub inputs:       Vec<Arc<SstRef>>,
 }
 
 // ─── 파티션 단위 Compaction 실행기 ───────────────────────────────────────────
@@ -223,9 +224,8 @@ impl PartitionCompactor {
             .as_secs();
 
         // TTL 필터링: 만료된 SSTable은 완전 제거 (모든 행이 만료된 경우)
-        let valid_inputs: Vec<&SstRef> = if let Some(ttl) = &self.ttl {
+        let valid_inputs: Vec<&Arc<SstRef>> = if let Some(ttl) = &self.ttl {
             job.inputs.iter().filter(|sst| {
-                // min_sort_key를 timestamp로 해석하여 TTL 확인 (간소화)
                 if sst.min_sort_key.len() >= 8 {
                     let ts = u64::from_be_bytes(sst.min_sort_key[..8].try_into().unwrap_or([0u8; 8]));
                     ts + ttl.ttl_seconds > now_secs
@@ -309,16 +309,27 @@ pub struct CompactionResult {
 }
 
 // ─── 백그라운드 Compaction 워커 ───────────────────────────────────────────────
+//
+// ## 개선: 파티션별 독립 Mutex
+//
+// 기존: `Arc<Mutex<Vec<PartitionCompactor>>>` — 전체 파티션을 단일 락으로 직렬화.
+//   - 파티션 A compaction 중 파티션 B 의 compaction 이 블로킹됨.
+//   - 새 파티션 추가도 컴팩션 완료까지 대기해야 했음.
+//
+// 개선: `Vec<Arc<Mutex<PartitionCompactor>>>` — 파티션별 독립 락.
+//   - 각 파티션이 독립적으로 compaction 실행 가능 (병렬화).
+//   - 파티션 목록 자체는 `RwLock` 으로 보호 (추가 = write, 조회 = read).
 
 pub struct CompactionWorker {
-    compactors: Arc<Mutex<Vec<PartitionCompactor>>>,
+    /// 파티션별 독립 락 — 파티션 간 병렬 compaction 지원
+    compactors: std::sync::Arc<tokio::sync::RwLock<Vec<Arc<Mutex<PartitionCompactor>>>>>,
     config:     CompactionConfig,
 }
 
 impl CompactionWorker {
     pub fn new(config: CompactionConfig) -> Self {
         Self {
-            compactors: Arc::new(Mutex::new(Vec::new())),
+            compactors: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
             config,
         }
     }
@@ -329,28 +340,48 @@ impl CompactionWorker {
         ttl: Option<TtlConfig>,
     ) -> Result<()> {
         let compactor = PartitionCompactor::new(partition_dir, self.config.clone(), ttl)?;
-        self.compactors.lock().await.push(compactor);
+        self.compactors.write().await.push(Arc::new(Mutex::new(compactor)));
         Ok(())
     }
 
-    /// 백그라운드 compaction 루프 기동
+    /// 백그라운드 compaction 루프 기동.
+    ///
+    /// 파티션별로 독립 태스크를 spawn → 서로 블로킹하지 않음.
     pub async fn run(self) {
         let interval = Duration::from_millis(self.config.check_interval_ms);
         loop {
             sleep(interval).await;
-            let mut compactors = self.compactors.lock().await;
-            for compactor in compactors.iter_mut() {
-                if let Some(job) = compactor.pick_compaction() {
-                    if let Err(e) = compactor.run_compaction(&job).await {
-                        warn!(
-                            partition = %compactor.partition_dir.display(),
-                            err = %e,
-                            "백그라운드 Compaction 오류"
-                        );
+
+            // 파티션 목록을 read lock 으로 가져옴 (새 파티션 추가는 블로킹 안 함)
+            let compactors: Vec<Arc<Mutex<PartitionCompactor>>> = {
+                self.compactors.read().await.clone()
+            };
+
+            let n = compactors.len();
+            // 각 파티션을 독립 tokio 태스크로 실행 (병렬)
+            let handles: Vec<_> = compactors.into_iter().map(|compactor_arc| {
+                tokio::spawn(async move {
+                    let mut compactor = compactor_arc.lock().await;
+                    if let Some(job) = compactor.pick_compaction() {
+                        if let Err(e) = compactor.run_compaction(&job).await {
+                            warn!(
+                                partition = %compactor.partition_dir.display(),
+                                err = %e,
+                                "백그라운드 Compaction 오류"
+                            );
+                        }
                     }
+                })
+            }).collect();
+
+            // 모든 파티션 compaction 완료 대기
+            for h in handles {
+                if let Err(e) = h.await {
+                    warn!(err = ?e, "Compaction task join error");
                 }
             }
-            debug!("Compaction 체크 완료 (파티션 수: {})", compactors.len());
+
+            debug!("Compaction 체크 완료 (파티션 수: {})", n);
         }
     }
 }
@@ -464,5 +495,88 @@ mod tests {
         let result = compactor.run_compaction(&job).await.unwrap();
         // 모든 입력이 TTL 만료되어 출력 없음
         assert_eq!(result.output_ids.len(), 0);
+    }
+
+    /// 핵심: read_snapshot() 으로 Arc<SstRef> 를 보유한 상태에서
+    /// 컴팩션이 해당 SSTable 을 levels 에서 제거해도 reader 는 안전하게 접근 가능.
+    #[tokio::test]
+    async fn test_read_safe_during_compaction() {
+        let tmp = TempDir::new().unwrap();
+        let config = CompactionConfig { l0_file_compaction_trigger: 2, ..Default::default() };
+        let mut compactor = PartitionCompactor::new(tmp.path(), config, None).unwrap();
+
+        for i in 0..2 {
+            compactor.register_flush(make_sst(i, 0, b"a", b"z")).unwrap();
+        }
+
+        // 1. 읽기 스냅샷 획득 (Arc<SstRef> 클론 보유)
+        let snapshot = compactor.levels.read_snapshot();
+        assert_eq!(snapshot.len(), 2);
+        let first_id = snapshot[0].id;
+
+        // 2. 컴팩션 실행 → 입력 SSTable 들을 levels 에서 제거
+        let job = compactor.pick_compaction().unwrap();
+        let result = compactor.run_compaction(&job).await.unwrap();
+        assert_eq!(result.removed_ids.len(), 2);
+
+        // 3. levels 에서는 제거됨
+        assert_eq!(compactor.levels.l0_count(), 0);
+
+        // 4. 하지만 reader 의 Arc 는 여전히 유효 → 메타데이터 접근 안전
+        assert_eq!(snapshot.len(), 2, "reader Arc 는 여전히 유효");
+        assert_eq!(snapshot[0].id, first_id, "SSTable 메타데이터 접근 가능");
+        assert!(snapshot[0].size_bytes > 0, "파일 크기 정보 유효");
+
+        // 5. reader/job Arc 모두 drop 하면 arc_clone 만 남아야 함
+        let arc_clone = snapshot[0].clone();
+        drop(snapshot); // reader 스냅샷 해제
+        drop(job);      // CompactionJob 의 inputs(Arc<SstRef>) 도 해제
+        // arc_clone 만 남아있음 — 실제 구현에서는 이 시점에 파일 삭제 가능
+        assert_eq!(Arc::strong_count(&arc_clone), 1,
+            "reader 스냅샷 + job drop 후 arc_clone 이 마지막 참조");
+    }
+
+    /// CompactionWorker 파티션별 병렬 처리: 두 파티션이 독립적으로 compaction 가능
+    #[tokio::test]
+    async fn test_worker_parallel_partitions() {
+        let tmp1 = TempDir::new().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        let config = CompactionConfig { l0_file_compaction_trigger: 2, check_interval_ms: 50, ..Default::default() };
+
+        let worker = CompactionWorker::new(config);
+        worker.add_partition(tmp1.path(), None).await.unwrap();
+        worker.add_partition(tmp2.path(), None).await.unwrap();
+
+        // 두 파티션 모두에 flush 등록
+        {
+            let compactors = worker.compactors.read().await;
+            for arc in compactors.iter() {
+                let mut c = arc.lock().await;
+                for i in 0..2 {
+                    c.register_flush(make_sst(i, 0, b"a", b"z")).unwrap();
+                }
+            }
+        }
+
+        // worker 한 번 실행 (run 대신 직접 검증)
+        {
+            let compactors: Vec<_> = worker.compactors.read().await.clone();
+            let handles: Vec<_> = compactors.into_iter().map(|arc| {
+                tokio::spawn(async move {
+                    let mut c = arc.lock().await;
+                    if let Some(job) = c.pick_compaction() {
+                        c.run_compaction(&job).await.unwrap();
+                    }
+                })
+            }).collect();
+            for h in handles { h.await.unwrap(); }
+        }
+
+        // 두 파티션 모두 compaction 완료 → L0 비어있음
+        let compactors = worker.compactors.read().await;
+        for arc in compactors.iter() {
+            let c = arc.lock().await;
+            assert_eq!(c.levels.l0_count(), 0, "파티션 L0 compaction 완료");
+        }
     }
 }

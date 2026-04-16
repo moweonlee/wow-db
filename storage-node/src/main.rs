@@ -12,11 +12,18 @@ mod transaction;
 mod partition;
 mod ttl;
 mod tiering;
+mod disk_monitor;
+mod stats_reporter;
+mod startup;
+
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
 use axum::{routing::get, Router, Json};
 use serde::Deserialize;
 use tokio::net::TcpListener;
+use tokio::time::{Duration, sleep};
 use tracing::info;
 
 // ── TOML 설정 구조체 ──────────────────────────────────────────────────────────
@@ -118,6 +125,62 @@ async fn main() -> Result<()> {
         "Storage Node starting"
     );
 
+    // ── 클러스터 자가 등록 ─────────────────────────────────────────────────
+    let grpc_addr = format!("{}:{}", node_id, grpc_port);
+    let http_addr_str = format!("0.0.0.0:{}", http_port);
+    startup::register_with_cluster(&node_id, &grpc_addr, &http_addr_str).await?;
+
+    // ── DiskMonitor 시작 (FR-036: 디스크 용량 감시) ───────────────────────
+    let qn_endpoint = std::env::var("QN_GRPC_ENDPOINT")
+        .unwrap_or_else(|_| "127.0.0.1:9011".to_string());
+    let watch_paths = vec![PathBuf::from(&data_dir)];
+    let disk_mon = Arc::new(disk_monitor::create_disk_monitor(
+        node_id.clone(),
+        watch_paths,
+        qn_endpoint.clone(),
+    ));
+    tokio::spawn({
+        let mon = Arc::clone(&disk_mon);
+        async move { mon.run().await }
+    });
+    info!("DiskMonitor 시작 (data_dir={})", data_dir);
+
+    // ── TieringManager 시작 (FR-015: Tiered Storage) ──────────────────────
+    let tiering_policy = tiering::TieringPolicy::default();
+    let tiering_mgr = Arc::new(tiering::TieringManager::new(tiering_policy));
+    tokio::spawn({
+        let mgr = Arc::clone(&tiering_mgr);
+        async move {
+            let interval = Duration::from_secs(300); // 5분마다 확인
+            loop {
+                sleep(interval).await;
+                let (moved, errors) = mgr.run_once().await;
+                if moved > 0 || errors > 0 {
+                    info!(moved, errors, "TieringManager run_once 완료");
+                }
+            }
+        }
+    });
+    info!("TieringManager 시작 (hot_to_cold=30일)");
+
+    // ── StatsReporter 시작 (FR-040: Shard 통계 보고) ─────────────────────
+    let grpc_reporter = stats_reporter::GrpcQnReporter { qn_endpoint };
+    let (_stats_tx, stats_reporter) = stats_reporter::create_stats_reporter(grpc_reporter);
+    tokio::spawn(async move { stats_reporter.run().await });
+    info!("StatsReporter 시작");
+
+    // ── gRPC StorageService 기동 (WAL + MemTable 영속 쓰기/읽기) ─────────────
+    let grpc_bind = format!("0.0.0.0:{}", grpc_port);
+    let grpc_node = node_id.clone();
+    let grpc_data = data_dir.clone();
+    tokio::spawn(async move {
+        let addr: std::net::SocketAddr = grpc_bind.parse().expect("invalid grpc addr");
+        if let Err(e) = grpc::server::serve(addr, grpc_node, grpc_data).await {
+            tracing::error!(err = %e, "gRPC StorageService error");
+        }
+    });
+    info!(port = grpc_port, "Storage Node gRPC server started (WAL+MemTable)");
+
     // ── HTTP 서버 기동 (헬스체크 + Stream Load) ────────────────────────────
     let nid = node_id.clone();
     let router = Router::new()
@@ -131,9 +194,6 @@ async fn main() -> Result<()> {
     let addr = format!("0.0.0.0:{}", http_port);
     let listener = TcpListener::bind(&addr).await?;
     info!(port = http_port, "Storage Node HTTP server listening");
-
-    // TODO (Phase B): gRPC StorageService 서버 추가 (tonic, grpc_port)
-    // TODO (Phase B): LSM-Tree 엔진 초기화 및 WAL 복구
 
     tokio::select! {
         result = axum::serve(listener, router) => {

@@ -80,6 +80,7 @@ impl GranuleSetIndex {
 pub struct SetIndex {
     granules:     Vec<GranuleSetIndex>,
     granule_size: usize, // 기본 8,192
+    max_values:   usize, // Granule당 최대 유니크 값 수
 }
 
 impl SetIndex {
@@ -87,8 +88,22 @@ impl SetIndex {
         Self {
             granules:     Vec::new(),
             granule_size,
+            max_values:   max_values_per_granule,
         }
     }
+
+    /// 값 슬라이스로부터 Granule 하나를 추가
+    ///
+    /// Compaction 파이프라인에서 청크 단위로 호출하는 용도
+    pub fn push_granule(&mut self, values: &[&str]) {
+        let mut g = GranuleSetIndex::new(self.max_values);
+        for v in values {
+            g.insert(v);
+        }
+        self.granules.push(g);
+    }
+
+    pub fn max_values(&self) -> usize { self.max_values }
 
     /// 컬럼 값 배열로부터 SET 인덱스 구축
     pub fn build(values: &[&str], granule_size: usize, max_values: usize) -> Self {

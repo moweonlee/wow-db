@@ -31,6 +31,7 @@ use crate::gen::wowdb::{
 };
 
 use crate::grpc::scan::{ShardScanner, ShardScanItem};
+use crate::grpc::write::TabletWriterRegistry;
 
 // ─── 서비스 구현체 ────────────────────────────────────────────────────────────
 
@@ -38,13 +39,25 @@ use crate::grpc::scan::{ShardScanner, ShardScanItem};
 pub struct StorageServiceImpl {
     node_id:  Arc<String>,
     data_dir: Arc<String>,
+    /// TabletWriterRegistry: WAL + MemTable 에 실제 데이터를 쓰고 읽는 핵심 컴포넌트
+    registry: Arc<TabletWriterRegistry>,
 }
 
 impl StorageServiceImpl {
     pub fn new(node_id: String, data_dir: String) -> Self {
+        let registry = Arc::new(TabletWriterRegistry::new(PathBuf::from(&data_dir)));
         Self {
             node_id:  Arc::new(node_id),
             data_dir: Arc::new(data_dir),
+            registry,
+        }
+    }
+
+    pub fn new_with_registry(node_id: String, data_dir: String, registry: Arc<TabletWriterRegistry>) -> Self {
+        Self {
+            node_id:  Arc::new(node_id),
+            data_dir: Arc::new(data_dir),
+            registry,
         }
     }
 }
@@ -70,17 +83,100 @@ impl StorageService for StorageServiceImpl {
 
     async fn write_rows(&self, req: Request<WriteRequest>) -> Result<Response<WriteResponse>, Status> {
         let r = req.into_inner();
-        info!(tablet_id = %r.tablet_id, tx_id = %r.tx_id, "WriteRows");
-        // TODO (Phase B): WAL append + MemTable insert
-        Ok(Response::new(WriteResponse { success: true, lsn: 0, error: String::new() }))
+        let tablet_id = r.tablet_id.clone();
+        info!(tablet_id = %tablet_id, "WriteRows — WAL + MemTable");
+
+        // batch 필드에 JSON 직렬화된 행 목록이 들어있음
+        // 형식: Vec<HashMap<String, serde_json::Value>>
+        let rows_json: Vec<serde_json::Map<String, serde_json::Value>> =
+            serde_json::from_slice(&r.batch)
+                .map_err(|e| Status::invalid_argument(format!("batch JSON parse error: {e}")))?;
+
+        // JSON → WriteRow 변환
+        use crate::grpc::write::WriteRow;
+        use std::collections::HashMap;
+        use bytes::Bytes;
+
+        let write_rows: Vec<WriteRow> = rows_json
+            .iter()
+            .enumerate()
+            .map(|(i, map)| {
+                let sort_key_bytes = i.to_be_bytes().to_vec();
+                let columns: HashMap<String, Bytes> = map
+                    .iter()
+                    .map(|(k, v)| {
+                        let bytes = match v {
+                            serde_json::Value::String(s) => Bytes::from(s.clone()),
+                            other => Bytes::from(other.to_string()),
+                        };
+                        (k.clone(), bytes)
+                    })
+                    .collect();
+                WriteRow { sort_key_bytes, columns, tx_id: 0 }
+            })
+            .collect();
+
+        let count = write_rows.len() as u64;
+        let writer = self.registry.get_or_create(&tablet_id).await
+            .map_err(|e| Status::internal(format!("TabletWriter error: {e}")))?;
+
+        writer.write_rows(write_rows).await
+            .map_err(|e| Status::internal(format!("write_rows error: {e}")))?;
+
+        info!(tablet_id = %tablet_id, rows = count, "WriteRows OK — WAL + MemTable");
+        Ok(Response::new(WriteResponse { success: true, lsn: count, error: String::new() }))
     }
 
     async fn scan_tablet(&self, req: Request<ScanRequest>) -> Result<Response<ScanStream>, Status> {
         let r = req.into_inner();
-        info!(tablet_id = %r.tablet_id, "ScanTablet");
-        // TODO (Phase B): SSTable 컬럼 읽기 + 필터 적용
-        let (tx, rx) = tokio::sync::mpsc::channel(16);
-        drop(tx);
+        let tablet_id = r.tablet_id.clone();
+        info!(tablet_id = %tablet_id, "ScanTablet — MemTable scan");
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<ScanBatch, Status>>(16);
+
+        let registry = self.registry.clone();
+        tokio::spawn(async move {
+            let writer = match registry.get_or_create(&tablet_id).await {
+                Ok(w)  => w,
+                Err(e) => {
+                    let _ = tx.send(Err(Status::internal(format!("TabletWriter error: {e}")))).await;
+                    return;
+                }
+            };
+
+            let rows = writer.scan_memtable_rows().await;
+            let row_count = rows.len() as u64;
+
+            // rows → JSON → ScanBatch.batch
+            let json_rows: Vec<serde_json::Map<String, serde_json::Value>> = rows
+                .into_iter()
+                .map(|(_key, cols)| {
+                    let mut map = serde_json::Map::new();
+                    for (col_name, col_bytes) in cols {
+                        let val = String::from_utf8(col_bytes.to_vec())
+                            .map(serde_json::Value::String)
+                            .unwrap_or_else(|_| serde_json::Value::Null);
+                        map.insert(col_name, val);
+                    }
+                    map
+                })
+                .collect();
+
+            let batch_bytes = serde_json::to_vec(&json_rows).unwrap_or_default();
+
+            let batch = ScanBatch {
+                tablet_id:        tablet_id.clone(),
+                batch:            batch_bytes,
+                is_last:          true,
+                rows_read:        row_count,
+                granules_scanned: 0,
+                granules_skipped: 0,
+            };
+
+            let _ = tx.send(Ok(batch)).await;
+            info!(tablet_id = %tablet_id, rows = row_count, "ScanTablet OK");
+        });
+
         Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
     }
 

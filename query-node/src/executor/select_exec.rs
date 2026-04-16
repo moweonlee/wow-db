@@ -16,7 +16,81 @@ pub struct SelectResult {
 
 // ── 공개 진입점 ─────────────────────────────────────────────────────────────
 
-pub fn execute_select(sql: &str) -> Result<SelectResult, String> {
+/// SQL SELECT 실행 (async — QN→CN→SN 또는 직접 SN, 또는 MEM_STORE 폴백)
+///
+/// 우선순위:
+///   1. CN 노드 설정 시 → QN→CN→SN 전체 파이프라인
+///   2. SN 직접 연결 시 → QN→SN (CN 없을 때)
+///   3. MEM_STORE 폴백
+pub async fn execute_select(sql: &str) -> Result<SelectResult, String> {
+    let table_name = quick_extract_table(sql);
+
+    // ── 우선순위 1: CN 경유 (QN→CN→SN) ──────────────────────────────────────
+    // CN 은 raw rows 를 반환한다. QN 은 이를 MEM_STORE 에 넣고
+    // execute_select_sync 로 SQL 연산(COUNT, WHERE, GROUP BY 등)을 적용한다.
+    if let Some(ref table) = table_name {
+        let cn_has_compute = crate::cn_client::CN.lock().await.has_compute();
+        if cn_has_compute {
+            let sn_endpoint = std::env::var("STORAGE_NODES")
+                .unwrap_or_default()
+                .split(',')
+                .next()
+                .unwrap_or("127.0.0.1:9060")
+                .trim()
+                .to_string();
+
+            let cn_rows = {
+                let mut cn = crate::cn_client::CN.lock().await;
+                cn.execute_select(sql, table, &sn_endpoint).await
+            };
+
+            if let Some(result) = cn_rows {
+                // CN raw rows → MEM_STORE 교체 → SQL 연산 재적용
+                MEM_STORE.drop_table(table);
+                for row in &result.rows {
+                    let map: std::collections::HashMap<String, serde_json::Value> =
+                        result.columns.iter().zip(row.iter())
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
+                    MEM_STORE.insert(table, map);
+                }
+                return execute_select_sync(sql);
+            }
+            // CN 실패 → SN 직접 폴백
+        }
+    }
+
+    // ── 우선순위 2: SN 직접 스캔 (QN→SN) ────────────────────────────────────
+    if let Some(ref table) = table_name {
+        let mut pool = crate::storage_client::STORAGE.lock().await;
+        if pool.has_storage() {
+            if let Some(sn_rows) = pool.scan_rows(table).await {
+                MEM_STORE.drop_table(table);
+                for row in &sn_rows {
+                    MEM_STORE.insert(table, row.clone());
+                }
+            }
+        }
+    }
+
+    // ── 우선순위 3: MEM_STORE 폴백 ───────────────────────────────────────────
+    execute_select_sync(sql)
+}
+
+/// SELECT 테이블명 빠른 추출 (SN scan 전 사용)
+fn quick_extract_table(sql: &str) -> Option<String> {
+    let lower = sql.to_lowercase();
+    let from_pos = lower.find(" from ")?;
+    let after_from = lower[from_pos + 6..].trim();
+    let name: String = after_from
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    if name.is_empty() { None } else { Some(name) }
+}
+
+/// 동기 SELECT 실행 (MEM_STORE 기반)
+fn execute_select_sync(sql: &str) -> Result<SelectResult, String> {
     use sqlparser::dialect::MySqlDialect;
     use sqlparser::parser::Parser;
     use sqlparser::ast::{Statement, SetExpr, TableFactor};

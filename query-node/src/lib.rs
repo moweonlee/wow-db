@@ -16,4 +16,6 @@ pub mod resource_group;
 pub mod executor;
 pub mod disk_monitor;
 pub mod rpc;
+pub mod storage_client;
+pub mod cn_client;
 mod gen;

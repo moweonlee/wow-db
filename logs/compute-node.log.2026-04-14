@@ -1,0 +1,3 @@
+2026-04-14T23:35:44.463640Z  INFO ThreadId(01) compute_node: Loaded config from file path=dev/configs/compute-node-local.toml
+2026-04-14T23:35:44.463819Z  INFO ThreadId(01) compute_node: Compute Node starting node_id=cn-local-1 grpc_port=9040 has_avx2=true has_avx512f=true storage_nodes=127.0.0.1:9060
+2026-04-14T23:35:44.467823Z  INFO ThreadId(01) compute_node: Compute Node HTTP server listening port=9040

@@ -62,8 +62,8 @@ fn test_l1_overlap_detected_as_violation() {
 fn test_l0_overlap_is_allowed() {
     // L0은 key range 중첩 허용 — verify 대상 외
     let mut levels = PartitionLevels::new(CompactionConfig::default());
-    levels.levels[0].push(make_sst_ref(1, 0, b"a", b"z"));
-    levels.levels[0].push(make_sst_ref(2, 0, b"a", b"z")); // 완전 중첩
+    levels.levels[0].push(std::sync::Arc::new(make_sst_ref(1, 0, b"a", b"z")));
+    levels.levels[0].push(std::sync::Arc::new(make_sst_ref(2, 0, b"a", b"z"))); // 완전 중첩
     assert!(
         levels.verify_non_overlapping().is_ok(),
         "L0 중첩은 허용되어야 함"
@@ -266,14 +266,14 @@ fn test_compaction_score_triggers_at_threshold() {
 
     // 3개 → score < 1.0 → compaction 불필요
     for i in 0..3 {
-        let mut sst = make_sst_ref(i, 0, b"a", b"z");
-        levels.levels[0].push(sst);
+        let sst = make_sst_ref(i, 0, b"a", b"z");
+        levels.levels[0].push(std::sync::Arc::new(sst));
     }
     assert!(levels.compaction_score(0) < 1.0);
     assert!(levels.highest_priority_level().is_none());
 
     // 4개 → score = 1.0 → compaction 필요
-    levels.levels[0].push(make_sst_ref(3, 0, b"a", b"z"));
+    levels.levels[0].push(std::sync::Arc::new(make_sst_ref(3, 0, b"a", b"z")));
     assert!((levels.compaction_score(0) - 1.0).abs() < f64::EPSILON);
     assert!(levels.highest_priority_level().is_some());
 }

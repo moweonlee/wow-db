@@ -1,0 +1,764 @@
+2026-04-16T13:53:47.668244Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T13:53:47.669085Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T13:53:47.669297Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T13:53:47.669489Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T13:53:47.674382Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T13:53:47.674487Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T13:53:48.001852Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:64156
+2026-04-16T13:53:48.002446Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:64156 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T13:54:04.100849Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T13:54:04.101674Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T13:54:04.102005Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T13:54:04.102235Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T13:54:04.107074Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T13:54:04.107121Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T13:54:04.567733Z  INFO ThreadId(04) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:64181
+2026-04-16T13:54:04.569158Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:64181 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T13:54:08.612664Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T13:54:08.613396Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T13:54:08.613672Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T13:54:08.613897Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T13:54:08.618113Z  INFO ThreadId(13) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T13:54:08.618233Z  INFO ThreadId(16) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T13:54:09.092088Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:64188
+2026-04-16T13:54:09.093078Z  WARN ThreadId(02) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:64188 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T13:54:12.958383Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T13:54:12.959313Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T13:54:12.959760Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T13:54:12.960204Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T13:54:12.966003Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T13:54:12.966148Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T13:54:13.422720Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:64203
+2026-04-16T13:54:13.423648Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:64203 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T13:58:12.222914Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T13:58:12.223159Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T13:58:12.223280Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T13:58:12.223358Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T13:58:12.230753Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T13:58:12.230801Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T13:58:12.586332Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:51243
+2026-04-16T13:58:12.591601Z  WARN ThreadId(02) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:51243 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:00:21.188292Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:53502
+2026-04-16T14:00:21.188480Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:53505
+2026-04-16T14:00:21.188580Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:53506
+2026-04-16T14:00:21.188692Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:53504
+2026-04-16T14:00:21.188795Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:53507
+2026-04-16T14:00:21.188887Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:53508
+2026-04-16T14:00:21.193215Z  INFO ThreadId(15) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:00:21.193217Z  INFO ThreadId(02) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:00:21.193218Z  INFO ThreadId(16) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:00:21.193218Z  INFO ThreadId(14) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:00:21.193267Z  INFO ThreadId(13) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:00:21.193303Z  INFO ThreadId(12) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:00:21.195597Z  WARN ThreadId(16) query_node::mysql_protocol::handler: Behavioral query has no Active BT — falling back to event table warning=No Behavioral Table found for 'smoke_page_events'. Query used triggers: [FUNNEL_COUNT] but no Active Session Materialized View is registered. Estimated speedup: 2×. Run the following DDL to create one:
+CREATE SESSION MATERIALIZED VIEW smoke_page_events_sessions
+  ON smoke_page_events
+  USER KEY user_id
+  SESSION TIMEOUT 30 MINUTES
+  REFRESH INCREMENTAL;
+2026-04-16T14:00:21.196147Z  INFO ThreadId(15) query_node::meta::cube: Cube created cube_id=798b6730-5b2a-4f08-85e3-4e5eefabbbf0 name=smoke_page_events
+2026-04-16T14:00:21.196291Z  INFO ThreadId(15) query_node::mysql_protocol::handler: Cube created via DDL cube=smoke_page_events
+2026-04-16T14:11:23.530233Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T14:11:23.530444Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T14:11:23.530527Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T14:11:23.530569Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T14:11:23.536814Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T14:11:23.536863Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T14:11:23.649681Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:63170
+2026-04-16T14:11:23.654858Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:63170 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:11:42.927058Z  INFO ThreadId(13) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:55590
+2026-04-16T14:11:42.929053Z  INFO ThreadId(16) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:11:56.114498Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:55590 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:13:31.513681Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T14:13:31.513849Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T14:13:31.513919Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T14:13:31.513976Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T14:13:31.520043Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T14:13:31.520040Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T14:13:31.629874Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:63682
+2026-04-16T14:13:31.635069Z  WARN ThreadId(02) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:63682 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:13:45.705390Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:63708
+2026-04-16T14:13:45.707498Z  INFO ThreadId(15) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:13:45.707739Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT @@max_allowed_packet,@@wait_timeout
+2026-04-16T14:13:51.558349Z  WARN ThreadId(15) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:63708 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:17:49.550889Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T14:17:49.551133Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T14:17:49.551262Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T14:17:49.551315Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T14:17:49.556532Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T14:17:49.556731Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T14:17:49.643746Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:61260
+2026-04-16T14:17:49.647673Z  WARN ThreadId(02) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:61260 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:40:09.773558Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:64716
+2026-04-16T14:40:09.846063Z  INFO ThreadId(02) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:40:36.762722Z  WARN ThreadId(02) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:64716 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:41:39.531022Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:56887
+2026-04-16T14:41:39.533650Z  INFO ThreadId(16) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:43:44.818700Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T14:43:44.818878Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T14:43:44.818952Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T14:43:44.818999Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T14:43:44.826100Z ERROR ThreadId(16) query_node: MySQL protocol server error err=각 소켓 주소(프로토콜/네트워크 주소/포트)는 하나만 사용할 수 있습니다. (os error 10048)
+2026-04-16T14:43:44.833582Z ERROR ThreadId(17) query_node: Web UI server error err=각 소켓 주소(프로토콜/네트워크 주소/포트)는 하나만 사용할 수 있습니다. (os error 10048)
+2026-04-16T14:43:44.906280Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:56986
+2026-04-16T14:43:44.913433Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:56986 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:43:59.192993Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:57002
+2026-04-16T14:43:59.195466Z  INFO ThreadId(15) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:44:07.460433Z  WARN ThreadId(15) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:57002 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:47:05.529526Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:54894
+2026-04-16T14:47:05.534284Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:54894 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:48:23.002478Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T14:48:23.002563Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T14:48:23.002603Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T14:48:23.002623Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T14:48:23.006984Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T14:48:23.006984Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T14:48:23.107557Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:54947
+2026-04-16T14:48:23.111807Z  WARN ThreadId(17) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:54947 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:48:35.502869Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:54957
+2026-04-16T14:48:35.505058Z  INFO ThreadId(02) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:48:35.505275Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT @@max_allowed_packet,@@wait_timeout
+2026-04-16T14:48:43.685313Z  WARN ThreadId(02) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:54957 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:55:52.144403Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T14:55:52.144876Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T14:55:52.145165Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T14:55:52.145297Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T14:55:52.153604Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T14:55:52.153592Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T14:55:52.435619Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:50428
+2026-04-16T14:55:52.440539Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:50428 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:56:05.181688Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:50437
+2026-04-16T14:56:05.184012Z  INFO ThreadId(02) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:56:05.184288Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT @@max_allowed_packet,@@wait_timeout
+2026-04-16T14:56:05.184447Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=SELECT @@max_allowed_packet,@@wait_timeout
+2026-04-16T14:56:10.408660Z  WARN ThreadId(02) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:50437 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:59:15.397305Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T14:59:15.397621Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T14:59:15.397768Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T14:59:15.397827Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T14:59:15.402537Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T14:59:15.402591Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T14:59:15.565548Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:51256
+2026-04-16T14:59:15.571951Z  WARN ThreadId(03) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:51256 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T14:59:26.311003Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:51262
+2026-04-16T14:59:26.313851Z  INFO ThreadId(14) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T14:59:26.314164Z DEBUG ThreadId(14) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT @@max_allowed_packet,@@wait_timeout
+2026-04-16T14:59:26.314335Z DEBUG ThreadId(14) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=SELECT @@max_allowed_packet,@@wait_timeout
+2026-04-16T14:59:26.314439Z DEBUG ThreadId(14) query_node::mysql_protocol::handler: write_system_var_query: calling results.start col_count=2
+2026-04-16T14:59:26.314627Z DEBUG ThreadId(14) query_node::mysql_protocol::handler: write_system_var_query: results.start done, writing row
+2026-04-16T14:59:26.314705Z DEBUG ThreadId(14) query_node::mysql_protocol::handler: write_system_var_query: write_row done, finishing
+2026-04-16T14:59:31.534821Z  WARN ThreadId(14) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:51262 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T15:07:27.696896Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T15:07:27.697288Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:07:27.697527Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:07:27.697630Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:07:27.703356Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T15:07:27.703353Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T15:07:27.773717Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:62226
+2026-04-16T15:07:27.780322Z  WARN ThreadId(02) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:62226 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T15:08:09.509095Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60289
+2026-04-16T15:08:09.512476Z  INFO ThreadId(15) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T15:08:09.512969Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT @@max_allowed_packet,@@wait_timeout
+2026-04-16T15:08:09.513141Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=SELECT @@max_allowed_packet,@@wait_timeout
+2026-04-16T15:08:14.653130Z  WARN ThreadId(15) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:60289 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T15:10:12.614822Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:50351
+2026-04-16T15:10:12.620368Z  WARN ThreadId(02) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:50351 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T15:11:03.991462Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:50413
+2026-04-16T15:11:03.994492Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:11:03.994617Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:11:03.996764Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:11:16.939567Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:57657
+2026-04-16T15:11:16.942197Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:11:16.942286Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:11:16.944538Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:11:16.946414Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SHOW TABLES
+2026-04-16T15:11:16.947936Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SHOW DATABASES
+2026-04-16T15:11:16.949612Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT @@version
+2026-04-16T15:11:16.949714Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=SELECT @@version
+2026-04-16T15:11:24.653362Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:57669
+2026-04-16T15:11:24.656562Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:11:24.656639Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:11:24.657593Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=CREATE TABLE IF NOT EXISTS test_events (
+  event_time DATETIME NOT NULL,
+  user_id    VARCHAR(64) NOT NULL,
+  event_name VARCHAR(128) NOT NULL
+)
+PARTITION BY RANGE(event_time) ()
+AUTO PARTITION BY DAY
+ORDER BY (event_time, user_id)
+DISTRIBUTED BY HASH(user_id) BUCKETS 4
+2026-04-16T15:11:24.658388Z  WARN ThreadId(15) query_node::mysql_protocol::handler: SQL parse error (unrecognized) sql=CREATE TABLE IF NOT EXISTS test_events (
+  event_time DATETI
+2026-04-16T15:11:31.965561Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:57675
+2026-04-16T15:11:31.968175Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:11:31.968280Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:11:31.969279Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=CREATE TABLE IF NOT EXISTS te (event_time DATETIME NOT NULL, user_id VARCHAR(64) NOT NULL, event_name VARCHAR(128) NOT NULL) PARTITION BY RANGE(event_time) () AUTO PARTITION BY DAY ORDER BY (event_time, user_id) DISTRIBUTED BY HASH(user_id) BUCKETS 4
+2026-04-16T15:11:31.969463Z  WARN ThreadId(15) query_node::mysql_protocol::handler: SQL parse error (unrecognized) sql=CREATE TABLE IF NOT EXISTS te (event_time DATETIME NOT NULL,
+2026-04-16T15:11:33.547134Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:57677
+2026-04-16T15:11:33.553415Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:11:33.553501Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:11:33.554437Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=INSERT INTO te VALUES (NOW(),'u-001','page_view'),(NOW(),'u-002','purchase')
+2026-04-16T15:11:35.221735Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:57679
+2026-04-16T15:11:35.224215Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:11:35.224384Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:11:35.225280Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT COUNT(*) FROM te
+2026-04-16T15:11:36.989187Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:57682
+2026-04-16T15:11:36.991562Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:11:36.991712Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:11:36.992866Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=DROP TABLE IF EXISTS te
+2026-04-16T15:13:02.416703Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:62069
+2026-04-16T15:13:02.417316Z  WARN ThreadId(02) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:62069 err=peer terminated connection
+2026-04-16T15:14:00.579235Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:62140
+2026-04-16T15:14:00.583115Z  INFO ThreadId(16) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T15:14:00.583652Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT @@max_allowed_packet,@@wait_timeout
+2026-04-16T15:14:00.583751Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=SELECT @@max_allowed_packet,@@wait_timeout
+2026-04-16T15:14:05.809702Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:62140 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T15:15:31.521228Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:64296
+2026-04-16T15:15:31.525254Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:15:31.525375Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:15:31.526960Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:15:31.528497Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=SHOW TABLES
+2026-04-16T15:15:31.530502Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=SHOW DATABASES
+2026-04-16T15:15:31.531904Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT @@version
+2026-04-16T15:15:31.531986Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=SELECT @@version
+2026-04-16T15:15:31.533395Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT @@max_allowed_packet,@@wait_timeout
+2026-04-16T15:15:31.533562Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=SELECT @@max_allowed_packet,@@wait_timeout
+2026-04-16T15:15:39.069525Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:64305
+2026-04-16T15:15:39.073088Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:15:39.073174Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:15:39.074512Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=CREATE CUBE IF NOT EXISTS smoke_test_events (
+    event_time DATETIME NOT NULL,
+    user_id    VARCHAR(36) NOT NULL,
+    event_name VARCHAR(64) NOT NULL
+  )
+  PARTITION BY RANGE(event_time) (PARTITION AUTO GRANULARITY DAY)
+  DISTRIBUTED BY HASH(user_id) BUCKETS 8
+  ORDER BY (user_id, event_time)
+2026-04-16T15:15:39.074946Z  INFO ThreadId(15) query_node::meta::cube: Cube created cube_id=f0d0ed50-789a-4bfc-a488-240cedc61ac3 name=smoke_test_events
+2026-04-16T15:15:39.074988Z  INFO ThreadId(15) query_node::mysql_protocol::handler: Cube created via DDL cube=smoke_test_events
+2026-04-16T15:15:57.484733Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:64322
+2026-04-16T15:15:57.488394Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:15:57.488501Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:15:57.489674Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=INSERT INTO smoke_test_events VALUES
+    ('2024-06-01 10:00:00','user-001','page_view'),
+    ('2024-06-01 10:01:00','user-001','click'),
+    ('2024-06-01 10:02:00','user-001','purchase'),
+    ('2024-06-01 11:00:00','user-002','page_view'),
+    ('2024-06-01 11:05:00','user-002','click'),
+    ('2024-06-01 12:00:00','user-003','page_view')
+2026-04-16T15:15:59.253028Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:64323
+2026-04-16T15:15:59.261267Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:15:59.261358Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:15:59.262611Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT COUNT(*) FROM smoke_test_events
+2026-04-16T15:16:00.993823Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:64327
+2026-04-16T15:16:00.997476Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:16:00.997612Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:16:00.998540Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SHOW TABLES
+2026-04-16T15:16:08.980221Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59419
+2026-04-16T15:16:08.983444Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:16:08.983537Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:16:08.984665Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT FUNNEL_COUNT(
+    user_id, event_time, '7d',
+    'event_name = ''page_view''',
+    'event_name = ''click''',
+    'event_name = ''purchase'''
+  ) FROM smoke_test_events
+  WHERE event_time >= '2024-06-01' AND event_time < '2024-06-02'
+2026-04-16T15:16:08.984892Z  WARN ThreadId(02) query_node::mysql_protocol::handler: Behavioral query has no Active BT — falling back to event table warning=No Behavioral Table found for 'smoke_test_events'. Query used triggers: [FUNNEL_COUNT] but no Active Session Materialized View is registered. Estimated speedup: 2×. Run the following DDL to create one:
+CREATE SESSION MATERIALIZED VIEW smoke_test_events_sessions
+  ON smoke_test_events
+  USER KEY user_id
+  SESSION TIMEOUT 30 MINUTES
+  REFRESH INCREMENTAL;
+2026-04-16T15:16:20.458282Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:50552
+2026-04-16T15:16:20.461132Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:16:20.461220Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:16:20.462225Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=DROP CUBE IF EXISTS smoke_test_events
+2026-04-16T15:16:20.462407Z  INFO ThreadId(16) query_node::meta::cube: Cube dropped cube_id=f0d0ed50-789a-4bfc-a488-240cedc61ac3
+2026-04-16T15:21:27.817843Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59577
+2026-04-16T15:21:27.823589Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:59577 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T15:21:51.257379Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59604
+2026-04-16T15:21:51.260080Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:21:51.260179Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:21:51.261386Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:21:52.416236Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59605
+2026-04-16T15:21:52.424952Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:21:52.425040Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:21:52.427247Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=DROP CUBE IF EXISTS smoke_page_events
+2026-04-16T15:21:53.954534Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59606
+2026-04-16T15:21:53.966197Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:21:53.966371Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:21:53.968884Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=CREATE CUBE IF NOT EXISTS smoke_page_events (event_time DATETIME NOT NULL, user_id VARCHAR(36) NOT NULL, event_name VARCHAR(64) NOT NULL, properties JSON) PARTITION BY RANGE(event_time) (PARTITION AUTO GRANULARITY DAY) DISTRIBUTED BY HASH(user_id) BUCKETS 8 ORDER BY (user_id, event_time)
+2026-04-16T15:21:53.969197Z  INFO ThreadId(16) query_node::meta::cube: Cube created cube_id=64897b9a-d5fc-46f3-9fb9-6910ed8465c5 name=smoke_page_events
+2026-04-16T15:21:53.969247Z  INFO ThreadId(16) query_node::mysql_protocol::handler: Cube created via DDL cube=smoke_page_events
+2026-04-16T15:21:55.313798Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59608
+2026-04-16T15:21:55.317177Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:21:55.317296Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:21:55.319217Z DEBUG ThreadId(16) query_node::mysql_protocol::handler: COM_QUERY sql=INSERT INTO smoke_page_events VALUES ('2024-06-01 10:00:00','user-001','page_view','{}'),('2024-06-01 10:01:00','user-001','click','{}'),('2024-06-01 10:02:00','user-001','purchase','{}'),('2024-06-01 11:00:00','user-002','page_view','{}'),('2024-06-01 11:05:00','user-002','click','{}'),('2024-06-01 12:00:00','user-003','page_view','{}')
+2026-04-16T15:21:56.794156Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59609
+2026-04-16T15:21:56.798591Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:21:56.798687Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:21:56.801076Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT COUNT(*) FROM smoke_page_events
+2026-04-16T15:21:58.218315Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59611
+2026-04-16T15:21:58.223129Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:21:58.223216Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:21:58.224797Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=SHOW TABLES
+2026-04-16T15:21:59.407839Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59612
+2026-04-16T15:21:59.411101Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:21:59.411198Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:21:59.412437Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT FUNNEL_COUNT(user_id,event_time,'7d','event_name = ''page_view''','event_name = ''click''','event_name = ''purchase''')FROM smoke_page_eventsWHERE event_time >= '2024-06-01' AND event_time < '2024-06-02'
+2026-04-16T15:22:00.768628Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59616
+2026-04-16T15:22:00.776324Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:22:00.776431Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:22:00.778024Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=DROP CUBE IF EXISTS smoke_page_events
+2026-04-16T15:22:00.778282Z  INFO ThreadId(15) query_node::meta::cube: Cube dropped cube_id=64897b9a-d5fc-46f3-9fb9-6910ed8465c5
+2026-04-16T15:22:35.360779Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59642
+2026-04-16T15:22:35.361144Z  WARN ThreadId(15) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:59642 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T15:22:36.174110Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59648
+2026-04-16T15:22:36.174500Z  WARN ThreadId(15) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:59648 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T15:22:36.248289Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T15:22:36.250184Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:22:36.250999Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:22:36.251472Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:22:36.263685Z ERROR ThreadId(17) query_node: Web UI server error err=각 소켓 주소(프로토콜/네트워크 주소/포트)는 하나만 사용할 수 있습니다. (os error 10048)
+2026-04-16T15:22:36.263800Z ERROR ThreadId(16) query_node: MySQL protocol server error err=각 소켓 주소(프로토콜/네트워크 주소/포트)는 하나만 사용할 수 있습니다. (os error 10048)
+2026-04-16T15:22:37.762064Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59653
+2026-04-16T15:22:37.768634Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:22:37.768773Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:22:37.770561Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:23:24.614424Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T15:23:24.616736Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:23:24.617103Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:23:24.617346Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:23:24.622487Z  INFO ThreadId(09) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T15:23:24.622498Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T15:23:25.042130Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:56406
+2026-04-16T15:23:25.043865Z  WARN ThreadId(03) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:56406 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T15:23:26.665817Z  INFO ThreadId(09) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:56411
+2026-04-16T15:23:26.668966Z DEBUG ThreadId(10) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:23:26.669555Z DEBUG ThreadId(10) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:23:26.671135Z DEBUG ThreadId(10) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:24:02.576135Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T15:24:02.576707Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:24:02.576953Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:24:02.577207Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:24:02.581673Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T15:24:02.581673Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T15:24:03.051338Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52556
+2026-04-16T15:24:03.052112Z  WARN ThreadId(17) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:52556 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T15:24:04.107444Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52560
+2026-04-16T15:24:04.112194Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:24:04.112673Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:24:04.114206Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:24:32.042638Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T15:24:32.043333Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:24:32.043595Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:24:32.043829Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:24:32.049421Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T15:24:32.049421Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T15:24:32.514785Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52581
+2026-04-16T15:24:32.517003Z  WARN ThreadId(17) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:52581 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T15:24:33.584715Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52586
+2026-04-16T15:24:33.589311Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:24:33.589780Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:24:33.591240Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:25:07.674391Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T15:25:07.675340Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:25:07.675703Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:25:07.676020Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:25:07.680919Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T15:25:07.681051Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T15:25:08.155686Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52611
+2026-04-16T15:25:08.157735Z  WARN ThreadId(17) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:52611 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T15:25:09.211078Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52615
+2026-04-16T15:25:09.216300Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:09.216815Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:09.218361Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:25:10.261156Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52617
+2026-04-16T15:25:10.266335Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:10.266830Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:10.268411Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SHOW TABLES
+2026-04-16T15:25:11.570024Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52618
+2026-04-16T15:25:11.580051Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:11.580513Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:11.582894Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=CREATE CUBE IF NOT EXISTS _smoke_events (event_time DATETIME NOT NULL, user_id VARCHAR(64) NOT NULL, event_name VARCHAR(128) NOT NULL) PARTITION BY RANGE(event_time) (PARTITION AUTO GRANULARITY DAY) DISTRIBUTED BY HASH(user_id) BUCKETS 4 ORDER BY (user_id, event_time)
+2026-04-16T15:25:11.583865Z DEBUG ThreadId(17) query_node::raft: Raft write (stub — no consensus yet) cmd=UpsertCube { cube_id: "960d1bb2-ad0a-449b-b206-46f406c11ae0", schema_json: "{\"cube_id\":\"960d1bb2-ad0a-449b-b206-46f406c11ae0\",\"name\":\"_smoke_events\",\"database\":\"default\",\"columns\":[{\"name\":\"event_time\",\"data_type\":\"DateTime\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"user_id\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"event_name\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null}],\"partition_key\":{\"variant\":{\"Range\":{\"column\":\"event_time\",\"granularity\":null}},\"auto_partition\":true},\"sort_key\":[{\"table\":null,\"column\":\"user_id\"},{\"table\":null,\"column\":\"event_time\"}],\"distribution\":{\"column\":\"user_id\",\"bucket_count\":4},\"colocate_group\":null,\"storage_backend\":\"Native\",\"ttl_policy\":null,\"tiering_policy\":null,\"created_at\":\"2026-04-16T15:25:11.583714800Z\",\"version\":1}" }
+2026-04-16T15:25:11.584542Z  INFO ThreadId(17) query_node::meta::cube: Cube created cube_id=960d1bb2-ad0a-449b-b206-46f406c11ae0 name=_smoke_events
+2026-04-16T15:25:11.584847Z  INFO ThreadId(17) query_node::mysql_protocol::handler: Cube created via DDL cube=_smoke_events
+2026-04-16T15:25:12.719514Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52621
+2026-04-16T15:25:12.722362Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:12.722783Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:12.724311Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=INSERT INTO _smoke_events VALUES (NOW(), 'u-001', 'page_view'), (NOW(), 'u-002', 'purchase')
+2026-04-16T15:25:13.971672Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52625
+2026-04-16T15:25:13.974558Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:13.974962Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:13.976294Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT COUNT(*) FROM _smoke_events
+2026-04-16T15:25:15.062017Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52626
+2026-04-16T15:25:15.065163Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:15.065596Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:15.067428Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=DROP CUBE IF EXISTS _smoke_events
+2026-04-16T15:25:15.068200Z DEBUG ThreadId(02) query_node::raft: Raft write (stub — no consensus yet) cmd=DropCube { cube_id: "960d1bb2-ad0a-449b-b206-46f406c11ae0" }
+2026-04-16T15:25:15.068559Z  INFO ThreadId(02) query_node::meta::cube: Cube dropped cube_id=960d1bb2-ad0a-449b-b206-46f406c11ae0
+2026-04-16T15:25:31.505499Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T15:25:31.506635Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:25:31.506953Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:25:31.507150Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:25:31.512834Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T15:25:31.512886Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T15:25:31.976588Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52643
+2026-04-16T15:25:31.977831Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:52643 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T15:25:33.321313Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52647
+2026-04-16T15:25:33.326433Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:33.327030Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:33.329003Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:25:34.541653Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52649
+2026-04-16T15:25:34.545548Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:34.546320Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:34.549246Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SHOW TABLES
+2026-04-16T15:25:35.764137Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52650
+2026-04-16T15:25:35.772786Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:35.774200Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:35.776801Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=CREATE CUBE IF NOT EXISTS _smoke_events (event_time DATETIME NOT NULL, user_id VARCHAR(64) NOT NULL, event_name VARCHAR(128) NOT NULL) PARTITION BY RANGE(event_time) (PARTITION AUTO GRANULARITY DAY) DISTRIBUTED BY HASH(user_id) BUCKETS 4 ORDER BY (user_id, event_time)
+2026-04-16T15:25:35.777526Z DEBUG ThreadId(02) query_node::raft: Raft write (stub — no consensus yet) cmd=UpsertCube { cube_id: "82e29ec7-499c-4db3-9dc9-31760e5664cf", schema_json: "{\"cube_id\":\"82e29ec7-499c-4db3-9dc9-31760e5664cf\",\"name\":\"_smoke_events\",\"database\":\"default\",\"columns\":[{\"name\":\"event_time\",\"data_type\":\"DateTime\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"user_id\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"event_name\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null}],\"partition_key\":{\"variant\":{\"Range\":{\"column\":\"event_time\",\"granularity\":null}},\"auto_partition\":true},\"sort_key\":[{\"table\":null,\"column\":\"user_id\"},{\"table\":null,\"column\":\"event_time\"}],\"distribution\":{\"column\":\"user_id\",\"bucket_count\":4},\"colocate_group\":null,\"storage_backend\":\"Native\",\"ttl_policy\":null,\"tiering_policy\":null,\"created_at\":\"2026-04-16T15:25:35.777408200Z\",\"version\":1}" }
+2026-04-16T15:25:35.778063Z  INFO ThreadId(02) query_node::meta::cube: Cube created cube_id=82e29ec7-499c-4db3-9dc9-31760e5664cf name=_smoke_events
+2026-04-16T15:25:35.778316Z  INFO ThreadId(02) query_node::mysql_protocol::handler: Cube created via DDL cube=_smoke_events
+2026-04-16T15:25:37.092232Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52652
+2026-04-16T15:25:37.095723Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:37.096216Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:37.097726Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=INSERT INTO _smoke_events VALUES (NOW(), 'u-001', 'page_view'), (NOW(), 'u-002', 'purchase')
+2026-04-16T15:25:38.275965Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52653
+2026-04-16T15:25:38.279317Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:38.279857Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:38.281372Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT COUNT(*) FROM _smoke_events
+2026-04-16T15:25:39.387986Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52655
+2026-04-16T15:25:39.392597Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:39.393148Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:39.395129Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=DROP CUBE IF EXISTS _smoke_events
+2026-04-16T15:25:39.395843Z DEBUG ThreadId(02) query_node::raft: Raft write (stub — no consensus yet) cmd=DropCube { cube_id: "82e29ec7-499c-4db3-9dc9-31760e5664cf" }
+2026-04-16T15:25:39.396295Z  INFO ThreadId(02) query_node::meta::cube: Cube dropped cube_id=82e29ec7-499c-4db3-9dc9-31760e5664cf
+2026-04-16T15:25:43.238886Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T15:25:43.239926Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:25:43.240643Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:25:43.241829Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:25:43.253669Z  INFO ThreadId(14) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T15:25:43.253722Z  INFO ThreadId(13) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T15:25:43.711568Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52660
+2026-04-16T15:25:43.714018Z  WARN ThreadId(14) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:52660 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T15:25:44.637235Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52664
+2026-04-16T15:25:44.639846Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:44.640279Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:44.641742Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:25:45.724369Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52665
+2026-04-16T15:25:45.727641Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:45.728154Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:45.730640Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SHOW TABLES
+2026-04-16T15:25:46.804712Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52667
+2026-04-16T15:25:46.808166Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:46.808689Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:46.810325Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=CREATE CUBE IF NOT EXISTS _smoke_events (event_time DATETIME NOT NULL, user_id VARCHAR(64) NOT NULL, event_name VARCHAR(128) NOT NULL) PARTITION BY RANGE(event_time) (PARTITION AUTO GRANULARITY DAY) DISTRIBUTED BY HASH(user_id) BUCKETS 4 ORDER BY (user_id, event_time)
+2026-04-16T15:25:46.811117Z DEBUG ThreadId(02) query_node::raft: Raft write (stub — no consensus yet) cmd=UpsertCube { cube_id: "9c4854d2-7a24-45b2-be66-32777f19355d", schema_json: "{\"cube_id\":\"9c4854d2-7a24-45b2-be66-32777f19355d\",\"name\":\"_smoke_events\",\"database\":\"default\",\"columns\":[{\"name\":\"event_time\",\"data_type\":\"DateTime\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"user_id\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"event_name\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null}],\"partition_key\":{\"variant\":{\"Range\":{\"column\":\"event_time\",\"granularity\":null}},\"auto_partition\":true},\"sort_key\":[{\"table\":null,\"column\":\"user_id\"},{\"table\":null,\"column\":\"event_time\"}],\"distribution\":{\"column\":\"user_id\",\"bucket_count\":4},\"colocate_group\":null,\"storage_backend\":\"Native\",\"ttl_policy\":null,\"tiering_policy\":null,\"created_at\":\"2026-04-16T15:25:46.810995400Z\",\"version\":1}" }
+2026-04-16T15:25:46.812086Z  INFO ThreadId(02) query_node::meta::cube: Cube created cube_id=9c4854d2-7a24-45b2-be66-32777f19355d name=_smoke_events
+2026-04-16T15:25:46.812451Z  INFO ThreadId(02) query_node::mysql_protocol::handler: Cube created via DDL cube=_smoke_events
+2026-04-16T15:25:47.801230Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52668
+2026-04-16T15:25:47.805025Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:47.805379Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:47.806679Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=INSERT INTO _smoke_events VALUES (NOW(), 'u-001', 'page_view'), (NOW(), 'u-002', 'purchase')
+2026-04-16T15:25:48.841204Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52669
+2026-04-16T15:25:48.844104Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:48.844557Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:48.846710Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT COUNT(*) FROM _smoke_events
+2026-04-16T15:25:49.961630Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52672
+2026-04-16T15:25:49.965681Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:49.966299Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:49.967993Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=DROP CUBE IF EXISTS _smoke_events
+2026-04-16T15:25:49.968548Z DEBUG ThreadId(17) query_node::raft: Raft write (stub — no consensus yet) cmd=DropCube { cube_id: "9c4854d2-7a24-45b2-be66-32777f19355d" }
+2026-04-16T15:25:49.968833Z  INFO ThreadId(17) query_node::meta::cube: Cube dropped cube_id=9c4854d2-7a24-45b2-be66-32777f19355d
+2026-04-16T15:25:53.603865Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T15:25:53.604442Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:25:53.604819Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:25:53.605098Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:25:53.610667Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T15:25:53.610754Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T15:25:54.073619Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52678
+2026-04-16T15:25:54.074568Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:52678 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T15:25:55.004893Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52682
+2026-04-16T15:25:55.008239Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:55.008730Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:55.010354Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:25:56.119634Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52684
+2026-04-16T15:25:56.125573Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:56.126183Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:56.129517Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=SHOW TABLES
+2026-04-16T15:25:57.231199Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52685
+2026-04-16T15:25:57.234439Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:57.234901Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:57.236751Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=CREATE CUBE IF NOT EXISTS _smoke_events (event_time DATETIME NOT NULL, user_id VARCHAR(64) NOT NULL, event_name VARCHAR(128) NOT NULL) PARTITION BY RANGE(event_time) (PARTITION AUTO GRANULARITY DAY) DISTRIBUTED BY HASH(user_id) BUCKETS 4 ORDER BY (user_id, event_time)
+2026-04-16T15:25:57.237801Z DEBUG ThreadId(15) query_node::raft: Raft write (stub — no consensus yet) cmd=UpsertCube { cube_id: "8d263fb5-7f04-4ad3-9d1d-1d46c8b13e02", schema_json: "{\"cube_id\":\"8d263fb5-7f04-4ad3-9d1d-1d46c8b13e02\",\"name\":\"_smoke_events\",\"database\":\"default\",\"columns\":[{\"name\":\"event_time\",\"data_type\":\"DateTime\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"user_id\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"event_name\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null}],\"partition_key\":{\"variant\":{\"Range\":{\"column\":\"event_time\",\"granularity\":null}},\"auto_partition\":true},\"sort_key\":[{\"table\":null,\"column\":\"user_id\"},{\"table\":null,\"column\":\"event_time\"}],\"distribution\":{\"column\":\"user_id\",\"bucket_count\":4},\"colocate_group\":null,\"storage_backend\":\"Native\",\"ttl_policy\":null,\"tiering_policy\":null,\"created_at\":\"2026-04-16T15:25:57.237680500Z\",\"version\":1}" }
+2026-04-16T15:25:57.238503Z  INFO ThreadId(15) query_node::meta::cube: Cube created cube_id=8d263fb5-7f04-4ad3-9d1d-1d46c8b13e02 name=_smoke_events
+2026-04-16T15:25:57.238960Z  INFO ThreadId(15) query_node::mysql_protocol::handler: Cube created via DDL cube=_smoke_events
+2026-04-16T15:25:58.229253Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52687
+2026-04-16T15:25:58.231800Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:58.232135Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:58.234074Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=INSERT INTO _smoke_events VALUES (NOW(), 'u-001', 'page_view'), (NOW(), 'u-002', 'purchase')
+2026-04-16T15:25:59.279900Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52688
+2026-04-16T15:25:59.283291Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:25:59.283639Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:25:59.285108Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT COUNT(*) FROM _smoke_events
+2026-04-16T15:26:00.343112Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52689
+2026-04-16T15:26:00.346750Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:00.347169Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:00.348713Z DEBUG ThreadId(02) query_node::mysql_protocol::handler: COM_QUERY sql=DROP CUBE IF EXISTS _smoke_events
+2026-04-16T15:26:00.349267Z DEBUG ThreadId(02) query_node::raft: Raft write (stub — no consensus yet) cmd=DropCube { cube_id: "8d263fb5-7f04-4ad3-9d1d-1d46c8b13e02" }
+2026-04-16T15:26:00.349562Z  INFO ThreadId(02) query_node::meta::cube: Cube dropped cube_id=8d263fb5-7f04-4ad3-9d1d-1d46c8b13e02
+2026-04-16T15:26:15.900602Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T15:26:15.902885Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:26:15.903421Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:26:15.903791Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:26:15.910296Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T15:26:15.910299Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T15:26:16.367589Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:50685
+2026-04-16T15:26:16.368497Z  WARN ThreadId(17) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:50685 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T15:26:17.919730Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60032
+2026-04-16T15:26:17.926698Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:17.927223Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:17.928922Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:26:19.148890Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60033
+2026-04-16T15:26:19.152016Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:19.152494Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:19.154456Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=SHOW TABLES
+2026-04-16T15:26:20.287789Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60035
+2026-04-16T15:26:20.291255Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:20.291698Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:20.293134Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=CREATE CUBE IF NOT EXISTS _smoke_events (event_time DATETIME NOT NULL, user_id VARCHAR(64) NOT NULL, event_name VARCHAR(128) NOT NULL) PARTITION BY RANGE(event_time) (PARTITION AUTO GRANULARITY DAY) DISTRIBUTED BY HASH(user_id) BUCKETS 4 ORDER BY (user_id, event_time)
+2026-04-16T15:26:20.293804Z DEBUG ThreadId(15) query_node::raft: Raft write (stub — no consensus yet) cmd=UpsertCube { cube_id: "52c09c6b-578c-4a4f-9224-b2bb69ee9d2e", schema_json: "{\"cube_id\":\"52c09c6b-578c-4a4f-9224-b2bb69ee9d2e\",\"name\":\"_smoke_events\",\"database\":\"default\",\"columns\":[{\"name\":\"event_time\",\"data_type\":\"DateTime\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"user_id\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"event_name\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null}],\"partition_key\":{\"variant\":{\"Range\":{\"column\":\"event_time\",\"granularity\":null}},\"auto_partition\":true},\"sort_key\":[{\"table\":null,\"column\":\"user_id\"},{\"table\":null,\"column\":\"event_time\"}],\"distribution\":{\"column\":\"user_id\",\"bucket_count\":4},\"colocate_group\":null,\"storage_backend\":\"Native\",\"ttl_policy\":null,\"tiering_policy\":null,\"created_at\":\"2026-04-16T15:26:20.293690700Z\",\"version\":1}" }
+2026-04-16T15:26:20.294625Z  INFO ThreadId(15) query_node::meta::cube: Cube created cube_id=52c09c6b-578c-4a4f-9224-b2bb69ee9d2e name=_smoke_events
+2026-04-16T15:26:20.294959Z  INFO ThreadId(15) query_node::mysql_protocol::handler: Cube created via DDL cube=_smoke_events
+2026-04-16T15:26:21.338009Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60036
+2026-04-16T15:26:21.342029Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:21.342550Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:21.344091Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=INSERT INTO _smoke_events VALUES (NOW(), 'u-001', 'page_view'), (NOW(), 'u-002', 'purchase')
+2026-04-16T15:26:22.644267Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60038
+2026-04-16T15:26:22.647570Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:22.647988Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:22.649281Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT COUNT(*) FROM _smoke_events
+2026-04-16T15:26:23.723544Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60039
+2026-04-16T15:26:23.728455Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:23.728897Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:23.730270Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=DROP CUBE IF EXISTS _smoke_events
+2026-04-16T15:26:23.730792Z DEBUG ThreadId(15) query_node::raft: Raft write (stub — no consensus yet) cmd=DropCube { cube_id: "52c09c6b-578c-4a4f-9224-b2bb69ee9d2e" }
+2026-04-16T15:26:23.731071Z  INFO ThreadId(15) query_node::meta::cube: Cube dropped cube_id=52c09c6b-578c-4a4f-9224-b2bb69ee9d2e
+2026-04-16T15:26:27.426865Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T15:26:27.427441Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:26:27.427703Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:26:27.427915Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:26:27.432859Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T15:26:27.432923Z  INFO ThreadId(16) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T15:26:27.913963Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60043
+2026-04-16T15:26:27.914867Z  WARN ThreadId(17) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:60043 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T15:26:28.777521Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60048
+2026-04-16T15:26:28.783052Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:28.783650Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:28.785250Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:26:29.854356Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60049
+2026-04-16T15:26:29.857144Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:29.857512Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:29.858625Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=SHOW TABLES
+2026-04-16T15:26:30.925330Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60050
+2026-04-16T15:26:30.929708Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:30.930097Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:30.931896Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=CREATE CUBE IF NOT EXISTS _smoke_events (event_time DATETIME NOT NULL, user_id VARCHAR(64) NOT NULL, event_name VARCHAR(128) NOT NULL) PARTITION BY RANGE(event_time) (PARTITION AUTO GRANULARITY DAY) DISTRIBUTED BY HASH(user_id) BUCKETS 4 ORDER BY (user_id, event_time)
+2026-04-16T15:26:30.932766Z DEBUG ThreadId(17) query_node::raft: Raft write (stub — no consensus yet) cmd=UpsertCube { cube_id: "c6c9e46b-cd69-4dde-8a4e-e390b8e6c780", schema_json: "{\"cube_id\":\"c6c9e46b-cd69-4dde-8a4e-e390b8e6c780\",\"name\":\"_smoke_events\",\"database\":\"default\",\"columns\":[{\"name\":\"event_time\",\"data_type\":\"DateTime\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"user_id\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"event_name\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null}],\"partition_key\":{\"variant\":{\"Range\":{\"column\":\"event_time\",\"granularity\":null}},\"auto_partition\":true},\"sort_key\":[{\"table\":null,\"column\":\"user_id\"},{\"table\":null,\"column\":\"event_time\"}],\"distribution\":{\"column\":\"user_id\",\"bucket_count\":4},\"colocate_group\":null,\"storage_backend\":\"Native\",\"ttl_policy\":null,\"tiering_policy\":null,\"created_at\":\"2026-04-16T15:26:30.932641500Z\",\"version\":1}" }
+2026-04-16T15:26:30.933371Z  INFO ThreadId(17) query_node::meta::cube: Cube created cube_id=c6c9e46b-cd69-4dde-8a4e-e390b8e6c780 name=_smoke_events
+2026-04-16T15:26:30.933691Z  INFO ThreadId(17) query_node::mysql_protocol::handler: Cube created via DDL cube=_smoke_events
+2026-04-16T15:26:32.040746Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60055
+2026-04-16T15:26:32.044437Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:32.044825Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:32.046139Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=INSERT INTO _smoke_events VALUES (NOW(), 'u-001', 'page_view'), (NOW(), 'u-002', 'purchase')
+2026-04-16T15:26:33.099831Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60057
+2026-04-16T15:26:33.105257Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:33.105672Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:33.107201Z DEBUG ThreadId(17) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT COUNT(*) FROM _smoke_events
+2026-04-16T15:26:34.177099Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60058
+2026-04-16T15:26:34.180036Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:34.180453Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:34.182195Z DEBUG ThreadId(15) query_node::mysql_protocol::handler: COM_QUERY sql=DROP CUBE IF EXISTS _smoke_events
+2026-04-16T15:26:34.182776Z DEBUG ThreadId(15) query_node::raft: Raft write (stub — no consensus yet) cmd=DropCube { cube_id: "c6c9e46b-cd69-4dde-8a4e-e390b8e6c780" }
+2026-04-16T15:26:34.183100Z  INFO ThreadId(15) query_node::meta::cube: Cube dropped cube_id=c6c9e46b-cd69-4dde-8a4e-e390b8e6c780
+2026-04-16T15:26:37.886146Z  INFO ThreadId(01) query_node: Loaded config from file path=D:\projects\wow-db\dev\configs\query-node-local.toml
+2026-04-16T15:26:37.887058Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:26:37.887357Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:26:37.887536Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:26:37.891680Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T15:26:37.891795Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T15:26:38.365776Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60063
+2026-04-16T15:26:38.367841Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:60063 err=현재 연결은 사용자의 호스트 시스템의 소프트웨어의 의해 중단되었습니다. (os error 10053)
+2026-04-16T15:26:39.335479Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60068
+2026-04-16T15:26:39.339824Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:39.340439Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:39.341850Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT 1
+2026-04-16T15:26:40.449523Z  INFO ThreadId(12) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60069
+2026-04-16T15:26:40.452484Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:40.452890Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:40.454337Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: COM_QUERY sql=SHOW TABLES
+2026-04-16T15:26:41.484154Z  INFO ThreadId(12) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60071
+2026-04-16T15:26:41.487479Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:41.487933Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:41.489803Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: COM_QUERY sql=CREATE CUBE IF NOT EXISTS _smoke_events (event_time DATETIME NOT NULL, user_id VARCHAR(64) NOT NULL, event_name VARCHAR(128) NOT NULL) PARTITION BY RANGE(event_time) (PARTITION AUTO GRANULARITY DAY) DISTRIBUTED BY HASH(user_id) BUCKETS 4 ORDER BY (user_id, event_time)
+2026-04-16T15:26:41.490761Z DEBUG ThreadId(12) query_node::raft: Raft write (stub — no consensus yet) cmd=UpsertCube { cube_id: "179d6ead-9812-4a14-a54c-3cbb35e9a6f2", schema_json: "{\"cube_id\":\"179d6ead-9812-4a14-a54c-3cbb35e9a6f2\",\"name\":\"_smoke_events\",\"database\":\"default\",\"columns\":[{\"name\":\"event_time\",\"data_type\":\"DateTime\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"user_id\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null},{\"name\":\"event_name\",\"data_type\":\"String\",\"nullable\":false,\"encoding\":\"Plain\",\"compression\":\"None\",\"skipping_index\":null,\"flat_json\":null,\"default_value\":null}],\"partition_key\":{\"variant\":{\"Range\":{\"column\":\"event_time\",\"granularity\":null}},\"auto_partition\":true},\"sort_key\":[{\"table\":null,\"column\":\"user_id\"},{\"table\":null,\"column\":\"event_time\"}],\"distribution\":{\"column\":\"user_id\",\"bucket_count\":4},\"colocate_group\":null,\"storage_backend\":\"Native\",\"ttl_policy\":null,\"tiering_policy\":null,\"created_at\":\"2026-04-16T15:26:41.490612400Z\",\"version\":1}" }
+2026-04-16T15:26:41.491477Z  INFO ThreadId(12) query_node::meta::cube: Cube created cube_id=179d6ead-9812-4a14-a54c-3cbb35e9a6f2 name=_smoke_events
+2026-04-16T15:26:41.491763Z  INFO ThreadId(12) query_node::mysql_protocol::handler: Cube created via DDL cube=_smoke_events
+2026-04-16T15:26:42.595196Z  INFO ThreadId(12) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60072
+2026-04-16T15:26:42.598190Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:42.598577Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:42.600138Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: COM_QUERY sql=INSERT INTO _smoke_events VALUES (NOW(), 'u-001', 'page_view'), (NOW(), 'u-002', 'purchase')
+2026-04-16T15:26:43.663140Z  INFO ThreadId(12) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60073
+2026-04-16T15:26:43.666453Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:43.666885Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:43.668702Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: COM_QUERY sql=SELECT COUNT(*) FROM _smoke_events
+2026-04-16T15:26:44.683610Z  INFO ThreadId(12) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60075
+2026-04-16T15:26:44.686212Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: COM_QUERY sql=select @@version_comment limit 1
+2026-04-16T15:26:44.686638Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: system variable query — serving hardcoded values sql=select @@version_comment limit 1
+2026-04-16T15:26:44.688032Z DEBUG ThreadId(12) query_node::mysql_protocol::handler: COM_QUERY sql=DROP CUBE IF EXISTS _smoke_events
+2026-04-16T15:26:44.688502Z DEBUG ThreadId(12) query_node::raft: Raft write (stub — no consensus yet) cmd=DropCube { cube_id: "179d6ead-9812-4a14-a54c-3cbb35e9a6f2" }
+2026-04-16T15:26:44.688754Z  INFO ThreadId(12) query_node::meta::cube: Cube dropped cube_id=179d6ead-9812-4a14-a54c-3cbb35e9a6f2
+2026-04-16T15:28:58.330796Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T15:28:58.331122Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:28:58.331255Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:28:58.331311Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:28:58.336393Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T15:28:58.336475Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T15:28:58.585509Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:53884
+2026-04-16T15:28:58.593037Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:53884 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T15:29:21.904655Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:53901
+2026-04-16T15:29:21.906822Z  INFO ThreadId(15) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=\
+2026-04-16T15:29:30.603508Z  INFO ThreadId(15) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T15:56:05.764805Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T15:56:05.765090Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T15:56:05.765241Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T15:56:05.765300Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T15:56:05.771412Z  INFO ThreadId(13) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T15:56:05.771420Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T15:56:06.072462Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:63885
+2026-04-16T15:56:06.078484Z  WARN ThreadId(02) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:63885 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T15:56:38.641148Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:57212
+2026-04-16T15:56:38.642617Z  INFO ThreadId(02) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T15:56:43.942980Z  INFO ThreadId(02) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T16:24:40.873803Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T16:24:40.876392Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T16:24:40.876493Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T16:24:40.876539Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T16:24:40.880612Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T16:24:40.881253Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T16:24:41.016575Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:60734
+2026-04-16T16:24:41.020104Z  WARN ThreadId(03) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:60734 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T16:25:02.599893Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:63263
+2026-04-16T16:25:02.606898Z  INFO ThreadId(03) query_node::storage_client: StorageServiceClient connected addr=http://127.0.0.1:9060
+2026-04-16T16:25:04.212462Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52202
+2026-04-16T16:25:42.988201Z  INFO ThreadId(13) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:51316
+2026-04-16T16:26:12.638790Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T16:26:12.638971Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T16:26:12.639051Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T16:26:12.639082Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T16:26:12.644247Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T16:26:12.644258Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T16:26:12.738548Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:51752
+2026-04-16T16:26:12.741515Z  WARN ThreadId(02) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:51752 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T16:26:18.690680Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59675
+2026-04-16T16:26:18.697560Z  INFO ThreadId(02) query_node::storage_client: StorageServiceClient connected addr=http://127.0.0.1:9060
+2026-04-16T16:29:27.737180Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T16:29:27.737364Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T16:29:27.737467Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T16:29:27.737521Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T16:29:27.742157Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T16:29:27.742185Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T16:29:28.297837Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59347
+2026-04-16T16:29:28.302282Z  WARN ThreadId(16) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:59347 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T16:29:38.746898Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:59356
+2026-04-16T16:29:38.752402Z  INFO ThreadId(03) query_node::storage_client: StorageServiceClient connected addr=http://127.0.0.1:9060
+2026-04-16T16:29:52.537402Z  INFO ThreadId(13) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:62678
+2026-04-16T16:29:54.020680Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:62680
+2026-04-16T16:29:57.502201Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T16:29:57.502359Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T16:29:57.502435Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T16:29:57.502466Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T16:29:57.506464Z  INFO ThreadId(13) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T16:29:57.506496Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T16:29:57.594123Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:65407
+2026-04-16T16:29:57.597559Z  WARN ThreadId(13) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:65407 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T16:29:59.854094Z  INFO ThreadId(13) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:65412
+2026-04-16T16:29:59.859231Z  INFO ThreadId(16) query_node::storage_client: StorageServiceClient connected addr=http://127.0.0.1:9060
+2026-04-16T16:32:09.501670Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T16:32:09.501891Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T16:32:09.501993Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T16:32:09.502030Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T16:32:09.506262Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T16:32:09.515681Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T16:32:09.662776Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:55997
+2026-04-16T16:32:09.666077Z  WARN ThreadId(03) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:55997 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T16:32:44.989004Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:56017
+2026-04-16T16:32:44.994128Z  INFO ThreadId(03) query_node::storage_client: StorageServiceClient connected addr=http://127.0.0.1:9060
+2026-04-16T16:32:46.625421Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:56019
+2026-04-16T16:32:48.201716Z  INFO ThreadId(12) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:56021
+2026-04-16T16:32:51.864669Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T16:32:51.864829Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T16:32:51.864902Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T16:32:51.864927Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T16:32:51.869582Z  INFO ThreadId(10) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T16:32:51.869628Z  INFO ThreadId(16) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T16:32:51.955364Z  INFO ThreadId(04) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:56028
+2026-04-16T16:32:51.958918Z  WARN ThreadId(10) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:56028 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T16:32:53.994862Z  INFO ThreadId(10) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:56031
+2026-04-16T16:32:54.001226Z  INFO ThreadId(10) query_node::storage_client: StorageServiceClient connected addr=http://127.0.0.1:9060
+2026-04-16T16:38:23.890306Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:58595
+2026-04-16T16:38:24.138280Z  INFO ThreadId(10) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T16:38:28.382059Z  INFO ThreadId(10) query_node::mysql_protocol::handler: Database selected (COM_INIT_DB) database=default
+2026-04-16T16:42:55.778399Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T16:42:55.778670Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T16:42:55.778805Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T16:42:55.778853Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T16:42:55.783852Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T16:42:55.783889Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T16:42:56.090718Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:56996
+2026-04-16T16:42:56.096361Z  WARN ThreadId(03) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:56996 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T16:43:03.607639Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52219
+2026-04-16T16:43:03.614742Z  INFO ThreadId(03) query_node::storage_client: StorageServiceClient connected addr=http://127.0.0.1:9060
+2026-04-16T16:43:05.166769Z  INFO ThreadId(12) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:52221
+2026-04-16T16:43:05.172810Z  INFO ThreadId(14) query_node::cn_client: ComputeServiceClient connected addr=http://127.0.0.1:9040
+2026-04-16T16:43:05.174309Z  WARN ThreadId(03) query_node::cn_client: CN stream error err=status: Unimplemented, message: "grpc-status header missing, mapped from HTTP status code 404", details: [], metadata: MetadataMap { headers: {} }
+2026-04-16T16:46:56.802690Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T16:46:56.802890Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T16:46:56.802996Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T16:46:56.803029Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T16:46:56.807988Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T16:46:56.808020Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T16:48:03.778318Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T16:48:03.778418Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T16:48:03.778461Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T16:48:03.778487Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T16:48:03.783055Z ERROR ThreadId(16) query_node: MySQL protocol server error err=각 소켓 주소(프로토콜/네트워크 주소/포트)는 하나만 사용할 수 있습니다. (os error 10048)
+2026-04-16T16:48:03.783195Z ERROR ThreadId(17) query_node: Web UI server error err=각 소켓 주소(프로토콜/네트워크 주소/포트)는 하나만 사용할 수 있습니다. (os error 10048)
+2026-04-16T16:51:14.425463Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T16:51:14.425679Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T16:51:14.425818Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T16:51:14.425873Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T16:51:14.430449Z  INFO ThreadId(17) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T16:51:14.430449Z  INFO ThreadId(14) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T16:51:15.128638Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:54785
+2026-04-16T16:51:15.131612Z  WARN ThreadId(02) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:54785 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T16:51:27.942143Z  INFO ThreadId(02) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:53497
+2026-04-16T16:51:27.948183Z  INFO ThreadId(02) query_node::storage_client: StorageServiceClient connected addr=http://127.0.0.1:9060
+2026-04-16T16:51:30.659569Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:53503
+2026-04-16T16:51:30.662603Z  INFO ThreadId(16) query_node::cn_client: ComputeServiceClient connected addr=http://127.0.0.1:9040
+2026-04-16T16:56:33.348144Z  INFO ThreadId(01) query_node: Loaded config from file path=D:/projects/wow-db/dev/configs/query-node-local.toml
+2026-04-16T16:56:33.348431Z  INFO ThreadId(01) query_node: Query Node starting node_id=qn-local-1 mysql_port=9030 web_port=8080 raft_port=9010 grpc_port=9011
+2026-04-16T16:56:33.348545Z  INFO ThreadId(01) query_node: Web UI server started port=8080
+2026-04-16T16:56:33.348598Z  INFO ThreadId(01) query_node: MySQL protocol server started port=9030
+2026-04-16T16:56:33.359519Z  INFO ThreadId(14) query_node::web_ui::server: Web UI HTTP server listening port=8080
+2026-04-16T16:56:33.359530Z  INFO ThreadId(16) query_node::mysql_protocol::server: MySQL Protocol 서버 시작 (WowDbMysqlHandler) addr=0.0.0.0:9030
+2026-04-16T16:56:33.785623Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:53875
+2026-04-16T16:56:33.789046Z  WARN ThreadId(03) query_node::mysql_protocol::server: MySQL 세션 오류 peer=127.0.0.1:53875 err=현재 연결은 원격 호스트에 의해 강제로 끊겼습니다. (os error 10054)
+2026-04-16T16:56:46.219244Z  INFO ThreadId(03) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:53884
+2026-04-16T16:56:46.226626Z  INFO ThreadId(03) query_node::storage_client: StorageServiceClient connected addr=http://127.0.0.1:9060
+2026-04-16T16:56:48.924975Z  INFO ThreadId(15) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:55291
+2026-04-16T16:56:48.931226Z  INFO ThreadId(15) query_node::cn_client: ComputeServiceClient connected addr=http://127.0.0.1:9040
+2026-04-16T16:57:03.512650Z  INFO ThreadId(17) query_node::mysql_protocol::server: MySQL 클라이언트 연결 peer=127.0.0.1:56666

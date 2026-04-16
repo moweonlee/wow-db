@@ -12,8 +12,8 @@ pub struct InsertResult {
     pub rows_affected: u64,
 }
 
-/// SQL 문자열로부터 INSERT 실행
-pub fn execute_insert(sql: &str) -> Result<InsertResult, String> {
+/// SQL 문자열로부터 INSERT 실행 (async — gRPC storage-node 또는 MEM_STORE)
+pub async fn execute_insert(sql: &str) -> Result<InsertResult, String> {
     let sql = sql.trim().trim_end_matches(';');
     let upper = sql.to_uppercase();
 
@@ -27,7 +27,6 @@ pub fn execute_insert(sql: &str) -> Result<InsertResult, String> {
 
     // 컬럼 목록 (선택 사항)
     let (columns, values_str) = if rest.starts_with('(') && !rest.to_uppercase().starts_with("(SELECT") {
-        // VALUES 키워드 앞까지가 컬럼 목록
         let upper_rest = rest.to_uppercase();
         let values_pos = upper_rest.find("VALUES").ok_or("INSERT: VALUES keyword not found")?;
         let col_part = &rest[..values_pos];
@@ -35,7 +34,6 @@ pub fn execute_insert(sql: &str) -> Result<InsertResult, String> {
         let cols = parse_identifier_list(col_part)?;
         (Some(cols), val_part.trim())
     } else {
-        // VALUES 바로 시작
         let upper_rest = rest.to_uppercase();
         let values_pos = upper_rest.find("VALUES").ok_or("INSERT: VALUES keyword not found")?;
         (None, rest[values_pos + 6..].trim())
@@ -44,7 +42,7 @@ pub fn execute_insert(sql: &str) -> Result<InsertResult, String> {
     // VALUES (...), (...) 파싱
     let value_tuples = parse_value_tuples(values_str)?;
 
-    let mut count = 0u64;
+    let mut parsed_rows: Vec<Row> = Vec::new();
     for tuple in value_tuples {
         let row = if let Some(ref cols) = columns {
             if cols.len() != tuple.len() {
@@ -57,7 +55,6 @@ pub fn execute_insert(sql: &str) -> Result<InsertResult, String> {
                 .map(|(col, val)| (col.clone(), val.clone()))
                 .collect::<Row>()
         } else if tuple.len() == 1 {
-            // 단일 값 → JSON 파싱 시도, 아니면 _value 키로 저장
             match &tuple[0] {
                 Value::Object(map) => map.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
                 other => {
@@ -67,15 +64,30 @@ pub fn execute_insert(sql: &str) -> Result<InsertResult, String> {
                 }
             }
         } else {
-            // 컬럼 목록 없이 다중 값: col_0, col_1, ... 위치 기반 키 사용
             tuple.iter().enumerate()
                 .map(|(i, v)| (format!("col_{}", i), v.clone()))
                 .collect::<Row>()
         };
-        MEM_STORE.insert(&table_name, row);
-        count += 1;
+        parsed_rows.push(row);
     }
 
+    let count = parsed_rows.len() as u64;
+
+    // storage-node gRPC 경로 시도 → 실패 또는 미설정이면 MEM_STORE 폴백
+    {
+        let mut pool = crate::storage_client::STORAGE.lock().await;
+        if pool.has_storage() {
+            match pool.write_rows(&table_name, &parsed_rows).await {
+                Some(n) => return Ok(InsertResult { rows_affected: n }),
+                None    => {} // 연결 실패 → MEM_STORE 폴백
+            }
+        }
+    }
+
+    // MEM_STORE 폴백
+    for row in parsed_rows {
+        MEM_STORE.insert(&table_name, row);
+    }
     Ok(InsertResult { rows_affected: count })
 }
 
