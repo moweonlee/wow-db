@@ -1,0 +1,90 @@
+{{- $fullName := include "wowdb.fullname" . -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullName }}-query-node
+  labels:
+    {{- include "wowdb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: query-node
+spec:
+  replicas: {{ .Values.queryNode.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "wowdb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: query-node
+  serviceName: {{ $fullName }}-query-node-headless
+  template:
+    metadata:
+      labels:
+        {{- include "wowdb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: query-node
+    spec:
+      containers:
+        - name: query-node
+          image: "{{ .Values.queryNode.image.repository }}:{{ .Values.queryNode.image.tag }}"
+          imagePullPolicy: {{ .Values.queryNode.image.pullPolicy }}
+          ports:
+            - name: mysql
+              containerPort: {{ .Values.queryNode.service.mysql.port }}
+            - name: grpc
+              containerPort: {{ .Values.queryNode.service.grpc.port }}
+            - name: raft
+              containerPort: {{ .Values.queryNode.service.raft.port }}
+            - name: web
+              containerPort: {{ .Values.queryNode.service.web.port }}
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # QN_PEERS: all QN pods discovered via headless service DNS
+            - name: QN_PEERS
+              value: >-
+                {{- range $i := until (int .Values.queryNode.replicaCount) -}}
+                {{- if $i }},{{ end -}}
+                {{ $fullName }}-query-node-{{ $i }}.{{ $fullName }}-query-node-headless:{{ $.Values.queryNode.service.grpc.port }}
+                {{- end }}
+            - name: MYSQL_PORT
+              value: "{{ .Values.queryNode.service.mysql.port }}"
+            - name: GRPC_PORT
+              value: "{{ .Values.queryNode.service.grpc.port }}"
+            - name: RAFT_PORT
+              value: "{{ .Values.queryNode.service.raft.port }}"
+            - name: WEB_PORT
+              value: "{{ .Values.queryNode.service.web.port }}"
+            {{- range $k, $v := .Values.queryNode.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: web
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: web
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.queryNode.resources | nindent 12 }}
+          {{- if .Values.queryNode.persistence.enabled }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/wowdb
+          {{- end }}
+  {{- if .Values.queryNode.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.queryNode.persistence.storageClass }}
+        storageClassName: {{ .Values.queryNode.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.queryNode.persistence.size }}
+  {{- end }}

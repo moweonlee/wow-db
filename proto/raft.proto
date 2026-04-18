@@ -1,0 +1,186 @@
+syntax = "proto3";
+package wowdb.raft;
+
+import "compute.proto";
+
+// QN 내부: 메타데이터 관리 서비스 (포트 9011)
+service MetaService {
+    // Cube DDL
+    rpc CreateCube(CreateCubeRequest) returns (DdlResponse);
+    rpc AlterCube(AlterCubeRequest)   returns (DdlResponse);
+    rpc DropCube(DropCubeRequest)     returns (DdlResponse);
+
+    // Cube 조회
+    rpc GetCube(GetCubeRequest)       returns (CubeResponse);
+    rpc ListCubes(ListCubesRequest)   returns (ListCubesResponse);
+
+    // Session MV
+    rpc CreateSmv(CreateSmvRequest)   returns (DdlResponse);
+    rpc DropSmv(DropSmvRequest)       returns (DdlResponse);
+    rpc GetSmv(GetSmvRequest)         returns (SmvResponse);
+
+    // Pre-aggregation MV
+    rpc CreateMv(CreateMvRequest)     returns (DdlResponse);
+
+    // CBO 통계
+    rpc UpdateStats(UpdateStatsRequest) returns (StatsResponse);
+    rpc GetStats(GetStatsRequest)       returns (StatsResponse);
+
+    // Tablet 할당/조회
+    rpc AllocateTablets(AllocateTabletsRequest) returns (AllocateTabletsResponse);
+    rpc GetTabletMap(GetTabletMapRequest)        returns (GetTabletMapResponse);
+
+    // 노드 등록
+    rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+
+    // 헬스체크
+    rpc Health(wowdb.compute.HealthRequest) returns (wowdb.compute.HealthResponse);
+}
+
+// ──── Cube ────────────────────────────────────────────────
+
+message CreateCubeRequest {
+    string cube_name  = 1;
+    string database   = 2;
+    bytes  schema_def = 3;   // 직렬화된 CubeSchema (JSON)
+}
+
+message AlterCubeRequest {
+    string cube_id   = 1;
+    string operation = 2;   // "add_column" | "drop_column" | "set_property"
+    bytes  payload   = 3;
+}
+
+message DropCubeRequest {
+    string cube_id = 1;
+    bool   cascade = 2;
+}
+
+message GetCubeRequest {
+    string cube_id   = 1;
+    string cube_name = 2;   // cube_id 또는 cube_name 중 하나 필수
+    string database  = 3;
+}
+
+message CubeResponse {
+    string cube_id   = 1;
+    string cube_name = 2;
+    bytes  schema    = 3;   // 직렬화된 CubeSchema (JSON)
+    uint64 version   = 4;
+}
+
+message ListCubesRequest {
+    string database = 1;   // 빈 문자열 = 전체 데이터베이스
+}
+
+message ListCubesResponse {
+    repeated CubeResponse cubes = 1;
+}
+
+message DdlResponse {
+    bool   success    = 1;
+    string error      = 2;
+    uint64 version    = 3;   // 새 메타데이터 버전
+}
+
+// ──── SMV ────────────────────────────────────────────────
+
+message CreateSmvRequest {
+    string smv_name          = 1;
+    string source_cube_id    = 2;
+    string user_key_column   = 3;
+    uint64 session_timeout_s = 4;
+    string refresh_mode      = 5;   // "on_insert" | "scheduled" | "manual"
+    uint64 refresh_interval_s = 6;
+}
+
+message DropSmvRequest {
+    string smv_id = 1;
+}
+
+message GetSmvRequest {
+    string smv_id   = 1;
+    string smv_name = 2;
+}
+
+message SmvResponse {
+    string smv_id            = 1;
+    string smv_name          = 2;
+    string source_cube_id    = 3;
+    string user_key_column   = 4;
+    uint64 session_timeout_s = 5;
+    string state             = 6;   // "building" | "ready" | "refreshing" | "error"
+    uint64 version           = 7;
+}
+
+// ──── Pre-aggregation MV ──────────────────────────────────
+
+message CreateMvRequest {
+    string mv_name        = 1;
+    string source_cube_id = 2;
+    string select_sql     = 3;   // GROUP BY SELECT 쿼리 텍스트
+    string refresh_mode   = 4;
+}
+
+// ──── CBO Statistics ──────────────────────────────────────
+
+message UpdateStatsRequest {
+    string cube_id    = 1;
+    string column     = 2;
+    bytes  stats_json = 3;   // {"row_count":N,"min":...,"max":...,"ndv":N,...}
+}
+
+message GetStatsRequest {
+    string cube_id = 1;
+    string column  = 2;   // 빈 문자열 = 전체 컬럼
+}
+
+message StatsResponse {
+    bytes stats_json = 1;
+}
+
+// ──── Tablet ──────────────────────────────────────────────
+
+message AllocateTabletsRequest {
+    string cube_id      = 1;
+    string partition_id = 2;
+    uint32 bucket_count = 3;
+    uint32 replica_count = 4;   // 기본 3
+}
+
+message AllocateTabletsResponse {
+    // tablet_id → node_id (leader)
+    map<string, string> tablet_leaders = 1;
+}
+
+message GetTabletMapRequest {
+    string cube_id      = 1;
+    string partition_id = 2;   // 빈 문자열 = 전체 파티션
+}
+
+message GetTabletMapResponse {
+    // tablet_id → TabletInfo
+    map<string, TabletInfo> tablets = 1;
+}
+
+message TabletInfo {
+    string tablet_id    = 1;
+    string partition_id = 2;
+    uint32 bucket_id    = 3;
+    string leader_node  = 4;
+    repeated string follower_nodes = 5;
+}
+
+// ──── Node Registration ────────────────────────────────────
+
+message RegisterNodeRequest {
+    string node_id   = 1;
+    string node_type = 2;   // "query" | "compute" | "storage"
+    string address   = 3;   // "host:port"
+    uint32 port_grpc = 4;
+}
+
+message RegisterNodeResponse {
+    bool   success = 1;
+    string cluster_id = 2;
+}

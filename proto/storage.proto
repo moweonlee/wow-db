@@ -1,0 +1,237 @@
+syntax = "proto3";
+package wowdb.storage;
+
+import "compute.proto";
+
+// CN → SN: Tablet 읽기/쓰기 (포트 9060)
+service StorageService {
+    // 컬럼 청크 읽기 (Tablet 스캔 — 레거시)
+    rpc ScanTablet(ScanRequest) returns (stream ScanBatch);
+
+    // Shard 스캔 (논리-물리 매핑 기반, FR-041/042)
+    // 응답 스트림: PartListResponse → RecordBatchChunk* → ScanStatsResponse
+    rpc ScanShard(ShardScanRequest) returns (stream ShardScanResponse);
+
+    // SN → QN 통계 보고 (FR-040)
+    rpc ReportShardStats(ShardStatsReport) returns (ShardStatsAck);
+
+    // 데이터 쓰기 (WAL + MemTable)
+    rpc WriteRows(WriteRequest) returns (WriteResponse);
+
+    // 2PC Prepare
+    rpc Prepare(PrepareRequest) returns (PrepareResponse);
+
+    // 2PC Commit
+    rpc Commit(CommitRequest) returns (CommitResponse);
+
+    // 2PC Rollback
+    rpc Rollback(RollbackRequest) returns (RollbackResponse);
+
+    // Tablet 메타데이터 조회
+    rpc GetTabletMeta(TabletMetaRequest) returns (TabletMetaResponse);
+
+    // 헬스체크
+    rpc Health(wowdb.compute.HealthRequest) returns (wowdb.compute.HealthResponse);
+
+    // QN → SN: Shard 내 Part(SSTable) 목록 조회 (FR-045)
+    rpc GetPartList(GetPartListRequest) returns (stream PartInfo);
+
+    // QN → SN: Shard 요약 통계 조회 (row_count, size_bytes, part_count, lsn)
+    rpc GetShardInfo(GetShardInfoRequest) returns (ShardInfoResponse);
+}
+
+message ScanRequest {
+    string tablet_id              = 1;
+    repeated string columns       = 2;   // 빈 배열 = 전체 컬럼 투영
+    bytes  predicate              = 3;   // 직렬화된 predicate (optional)
+    wowdb.compute.RuntimeFilter runtime_filter = 4;
+    uint32 batch_size             = 5;   // 기본 4096행
+    // Data Skipping: 이 파티션의 min/max 통계
+    bytes  partition_stats        = 6;
+}
+
+message ScanBatch {
+    string tablet_id        = 1;
+    bytes  batch            = 2;   // Arrow IPC 포맷
+    bool   is_last          = 3;
+    uint64 rows_read        = 4;
+    uint64 granules_scanned = 5;
+    uint64 granules_skipped = 6;
+}
+
+message WriteRequest {
+    string tx_id     = 1;
+    string tablet_id = 2;
+    bytes  batch     = 3;   // Arrow IPC 포맷 행 배치
+}
+
+message WriteResponse {
+    bool   success  = 1;
+    uint64 lsn      = 2;   // 적용된 LSN
+    string error    = 3;
+}
+
+message PrepareRequest {
+    string tx_id     = 1;
+    string tablet_id = 2;
+}
+
+message PrepareResponse {
+    bool   success = 1;
+    string error   = 2;
+}
+
+message CommitRequest {
+    string tx_id     = 1;
+    string tablet_id = 2;
+}
+
+message CommitResponse {
+    bool   success = 1;
+    string error   = 2;
+}
+
+message RollbackRequest {
+    string tx_id     = 1;
+    string tablet_id = 2;
+}
+
+message RollbackResponse {
+    bool   success = 1;
+}
+
+message TabletMetaRequest {
+    string tablet_id = 1;
+}
+
+message TabletMetaResponse {
+    string tablet_id    = 1;
+    string partition_id = 2;
+    uint32 bucket_id    = 3;
+    uint64 row_count    = 4;
+    uint64 size_bytes   = 5;
+    string state        = 6;   // "normal" | "compacting" | "offline"
+    uint64 lsn          = 7;
+}
+
+// ─── Shard 스캔 프로토콜 (FR-041, FR-042) ────────────────────────────────────
+
+// CN → SN: Shard 스캔 요청
+message ShardScanRequest {
+    bytes  shard_id               = 1;   // UUID bytes (16B)
+    string shard_dir              = 2;   // SN 로컬 물리 경로
+    repeated string columns       = 3;   // Column Projection (빈 배열=전체)
+    repeated ShardPredicate predicates = 4;
+    LsmScanRange scan_range       = 5;
+    repeated bytes bloom_probe_keys = 6; // Point Lookup Bloom 검사용
+}
+
+message LsmScanRange {
+    uint32 min_level = 1;   // 기본 0
+    uint32 max_level = 2;   // 기본 6
+}
+
+message ShardPredicate {
+    string column = 1;
+    string op     = 2;   // "eq"|"ne"|"lt"|"le"|"gt"|"ge"|"is_null"|"is_not_null"
+    bytes  value  = 3;   // 직렬화된 Value (optional)
+}
+
+// SN → CN: Shard 스캔 응답 스트림
+// 스트림 순서: PartListResponse → RecordBatchChunk* → ScanStatsResponse
+message ShardScanResponse {
+    oneof payload {
+        PartListResponse  part_list  = 1;   // 첫 번째: 활성 Part 목록
+        RecordBatchChunk  batch      = 2;   // 데이터 청크들
+        ScanStatsResponse stats      = 3;   // 마지막: 스캔 통계
+    }
+}
+
+message PartListResponse {
+    repeated PartMeta parts = 1;
+}
+
+message PartMeta {
+    bytes  part_id            = 1;   // UUID bytes
+    uint32 level              = 2;
+    uint64 sequence_num       = 3;
+    uint64 row_count          = 4;
+    bytes  min_sort_key       = 5;
+    bytes  max_sort_key       = 6;
+    uint64 size_bytes         = 7;
+    uint64 bloom_size_bytes   = 8;   // Bloom Filter 파일 크기
+    int64  created_at_ms      = 9;   // 생성 시각 (Unix epoch ms)
+}
+
+// ─── Part 목록 조회 (FR-045) ──────────────────────────────────────────────────
+
+/// QN → SN: Shard 내 Part 목록 요청
+message GetPartListRequest {
+    bytes  shard_id = 1;   // UUID bytes (16B)
+}
+
+/// SN → QN: 단일 Part 메타데이터 (스트림)
+message PartInfo {
+    string part_id            = 1;   // UUID 문자열
+    uint32 level              = 2;
+    uint64 sequence_num       = 3;
+    uint64 row_count          = 4;
+    uint64 size_bytes         = 5;
+    string min_sort_key       = 6;   // 사람이 읽을 수 있는 정렬 키 (최솟값)
+    string max_sort_key       = 7;   // 사람이 읽을 수 있는 정렬 키 (최댓값)
+    uint64 bloom_size_bytes   = 8;
+    int64  created_at_ms      = 9;   // Unix epoch ms
+}
+
+/// QN → SN: Shard 요약 통계 요청
+message GetShardInfoRequest {
+    bytes  shard_id = 1;   // UUID bytes (16B)
+}
+
+/// SN → QN: Shard 요약 통계
+message ShardInfoResponse {
+    uint64 row_count  = 1;
+    uint64 size_bytes = 2;
+    uint32 part_count = 3;
+    uint64 lsn        = 4;
+}
+
+message RecordBatchChunk {
+    bytes  ipc_batch   = 1;   // Arrow IPC 포맷 RecordBatch
+    uint64 rows        = 2;
+    bool   is_last     = 3;
+}
+
+message ScanStatsResponse {
+    uint32 parts_scanned    = 1;
+    uint32 parts_skipped    = 2;
+    uint64 granules_read    = 3;
+    uint64 granules_skipped = 4;
+    uint64 rows_returned    = 5;
+    uint64 bytes_read       = 6;
+}
+
+// ─── SN → QN 통계 보고 (FR-040) ──────────────────────────────────────────────
+
+message ShardStatsReport {
+    bytes  shard_id      = 1;   // UUID bytes
+    bytes  table_id      = 2;
+    bytes  partition_id  = 3;
+    uint64 row_count     = 4;
+    uint64 size_bytes    = 5;
+    repeated ColumnStatEntry column_stats = 6;
+    bool   is_incremental = 7;  // true=증분, false=전체 재계산
+}
+
+message ColumnStatEntry {
+    string column     = 1;
+    bytes  min_val    = 2;   // 직렬화된 Value
+    bytes  max_val    = 3;
+    uint64 ndv        = 4;   // Number of Distinct Values (HLL 추정)
+    uint64 null_count = 5;
+}
+
+message ShardStatsAck {
+    bool   success = 1;
+    string error   = 2;
+}

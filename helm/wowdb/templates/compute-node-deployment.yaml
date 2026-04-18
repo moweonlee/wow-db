@@ -1,0 +1,56 @@
+{{- $fullName := include "wowdb.fullname" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-compute-node
+  labels:
+    {{- include "wowdb.labels" . | nindent 4 }}
+    app.kubernetes.io/component: compute-node
+spec:
+  replicas: {{ .Values.computeNode.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "wowdb.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: compute-node
+  template:
+    metadata:
+      labels:
+        {{- include "wowdb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: compute-node
+    spec:
+      containers:
+        - name: compute-node
+          image: "{{ .Values.computeNode.image.repository }}:{{ .Values.computeNode.image.tag }}"
+          imagePullPolicy: {{ .Values.computeNode.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.computeNode.service.grpc.port }}
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: GRPC_PORT
+              value: "{{ .Values.computeNode.service.grpc.port }}"
+            # QN_PEERS for self-registration
+            - name: QN_PEERS
+              value: >-
+                {{- range $i := until (int .Values.queryNode.replicaCount) -}}
+                {{- if $i }},{{ end -}}
+                {{ $fullName }}-query-node-{{ $i }}.{{ $fullName }}-query-node-headless:{{ $.Values.queryNode.service.grpc.port }}
+                {{- end }}
+            # Storage Node addresses
+            - name: STORAGE_NODES
+              value: {{ $fullName }}-storage-node-headless:{{ .Values.storageNode.service.grpc.port }}
+            {{- range $k, $v := .Values.computeNode.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: grpc
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.computeNode.resources | nindent 12 }}

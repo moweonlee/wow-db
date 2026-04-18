@@ -1,0 +1,125 @@
+name: wowdb-dev
+
+# 개발용 단일 노드 구성 (빠른 로컬 테스트)
+# 사용법: docker compose -f docker/docker-compose.dev.yml up
+
+services:
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-dev-data:/data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    networks:
+      - wowdb-dev-net
+
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=256M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://localhost:9092
+    networks:
+      - wowdb-dev-net
+
+  sn-1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.storage-node
+    ports:
+      - "9060:9060"
+      - "8040:8040"
+    volumes:
+      - sn-dev-data:/data
+    environment:
+      NODE_ID: "sn-1"
+      RUST_LOG: "storage_node=debug,shared=debug"
+      GRPC_PORT: "9060"
+      HTTP_PORT: "8040"
+      DATA_DIR: "/data"
+      # QN_PEERS: self-register with QN on startup (dev: single QN)
+      QN_PEERS: "qn-1:9011"
+    develop:
+      watch:
+        - action: rebuild
+          path: ../storage-node/src
+        - action: rebuild
+          path: ../shared/src
+        - action: rebuild
+          path: ../Cargo.lock
+    networks:
+      - wowdb-dev-net
+
+  cn-1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.compute-node
+    ports:
+      - "9040:9040"
+    environment:
+      NODE_ID: "cn-1"
+      RUST_LOG: "compute_node=debug,shared=debug"
+      GRPC_PORT: "9040"
+      STORAGE_NODES: "sn-1:9060"
+      # QN_PEERS: self-register with QN on startup (dev: single QN)
+      QN_PEERS: "qn-1:9011"
+    depends_on:
+      - sn-1
+    develop:
+      watch:
+        - action: rebuild
+          path: ../compute-node/src
+        - action: rebuild
+          path: ../shared/src
+    networks:
+      - wowdb-dev-net
+
+  qn-1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.query-node
+    ports:
+      - "9030:9030"
+      - "8080:8080"
+      - "9010:9010"
+    environment:
+      NODE_ID: "qn-1"
+      RUST_LOG: "query_node=debug,shared=debug"
+      MYSQL_PORT: "9030"
+      WEB_PORT: "8080"
+      RAFT_PORT: "9010"
+      GRPC_PORT: "9011"
+      RAFT_PEERS: "qn-1:9010"
+      COMPUTE_NODES: "cn-1:9040"
+    depends_on:
+      - cn-1
+    develop:
+      watch:
+        - action: rebuild
+          path: ../query-node/src
+        - action: rebuild
+          path: ../shared/src
+    networks:
+      - wowdb-dev-net
+
+volumes:
+  minio-dev-data:
+  sn-dev-data:
+
+networks:
+  wowdb-dev-net:
+    driver: bridge

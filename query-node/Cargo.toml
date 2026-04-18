@@ -1,0 +1,69 @@
+[package]
+name        = "query-node"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "query_node"
+path = "src/lib.rs"
+
+[[bin]]
+name = "query-node"
+path = "src/main.rs"
+
+[dependencies]
+shared.workspace       = true
+tokio.workspace        = true
+tokio-stream.workspace = true
+tonic.workspace        = true
+async-trait.workspace  = true
+futures.workspace      = true
+prost.workspace   = true
+serde.workspace   = true
+serde_json.workspace = true
+toml.workspace    = true
+thiserror.workspace = true
+anyhow.workspace  = true
+uuid.workspace    = true
+chrono.workspace  = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+arrow2.workspace  = true
+
+# MySQL Wire Protocol server
+opensrv-mysql = "0.4"
+
+# Raft consensus (Phase B에서 추가: openraft = { version = "0.9", features = ["serde"] })
+
+# SQL parsing
+sqlparser = { version = "0.49", features = ["visitor"] }
+
+# Web server
+axum = { version = "0.7", features = ["ws"] }
+
+# Kafka consumer (cmake + C librdkafka; requires cmake on PATH)
+rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }
+
+# S3 / object storage (for External Table)
+object_store = { version = "0.10", features = ["aws"] }
+
+# HTTP client (Spark stream load coordination)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Metrics
+prometheus = "0.13"
+
+# Regex (LIKE 구현용)
+regex = "1"
+
+# 디스크 사용량 조회 (statvfs)
+libc = "0.2"
+
+[features]
+default   = []
+kafka     = ["rdkafka"]
+
+[build-dependencies]
+tonic-build = "0.12"
+prost-build = "0.13"
+protoc-bin-vendored = "3"

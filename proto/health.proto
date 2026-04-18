@@ -1,0 +1,27 @@
+syntax = "proto3";
+package wowdb.health;
+
+// 공통 헬스체크 서비스 (모든 노드 공통)
+service HealthService {
+    rpc Check(HealthRequest) returns (HealthResponse);
+    rpc Watch(HealthRequest) returns (stream HealthResponse);
+}
+
+message HealthRequest {
+    string service = 1;   // "query-node" | "compute-node" | "storage-node"
+}
+
+message HealthResponse {
+    enum Status {
+        UNKNOWN     = 0;
+        SERVING     = 1;
+        NOT_SERVING = 2;
+        SERVICE_UNKNOWN = 3;
+    }
+    Status status    = 1;
+    string version   = 2;
+    string node_id   = 3;
+    string node_type = 4;
+    map<string, string> details = 5;
+    int64 uptime_s   = 6;
+}
