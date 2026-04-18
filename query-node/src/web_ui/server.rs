@@ -1,5 +1,6 @@
 // T082: axum HTTP/WebSocket 서버 — 포트 8080, 정적 파일 서빙, API 라우팅
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -13,11 +14,17 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::meta::cube::CubeManager;
 use crate::raft::RaftManager;
 use crate::session_mv::manager::SmvManager;
+
+// ─── 노드 레지스트리 ──────────────────────────────────────────────────────────
+
+/// key: "{node_type}:{node_id}"  (예: "storage:sn-local-1")
+pub type NodeRegistry = RwLock<HashMap<String, super::monitoring::NodeStatus>>;
 
 // ─── 앱 상태 ─────────────────────────────────────────────────────────────────
 
@@ -26,6 +33,10 @@ pub struct WebUiState {
     pub cube_mgr: Arc<CubeManager>,
     pub smv_mgr:  Arc<SmvManager>,
     pub raft:     Arc<RaftManager>,
+    /// 이 QN의 NODE_ID (환경변수 NODE_ID 또는 설정에서 로드)
+    pub node_id:  String,
+    /// 동적 노드 등록 레지스트리 (QN/SN/CN이 HTTP POST로 자가 등록)
+    pub nodes:    Arc<NodeRegistry>,
 }
 
 // ─── 라우터 빌드 ─────────────────────────────────────────────────────────────
@@ -47,9 +58,14 @@ pub fn build_router(state: WebUiState) -> Router {
         .route("/api/sql/execute",     post(super::sql_editor::execute_sql))
         .route("/api/sql/history",     get(super::sql_editor::query_history))
         // 모니터링
-        .route("/api/v1/cluster",    get(super::monitoring::cluster_overview))
-        .route("/api/v1/profiler",   get(super::monitoring::profiler_summary))
-        .route("/metrics",           get(super::monitoring::prometheus_metrics))
+        .route("/api/v1/cluster",           get(super::monitoring::cluster_overview))
+        .route("/api/v1/nodes/register",    post(super::monitoring::register_node))
+        .route("/api/v1/profiler",          get(super::monitoring::profiler_summary))
+        .route("/api/v1/lsm",               get(super::monitoring::lsm_overview))
+        .route("/metrics",                  get(super::monitoring::prometheus_metrics))
+        // 대시보드 HTML
+        .route("/",          get(super::dashboard::root_redirect))
+        .route("/dashboard", get(super::dashboard::dashboard_handler))
         // WebSocket SQL 스트리밍
         .route("/ws/sql", get(ws_sql_handler))
         .with_state(state)
@@ -116,7 +132,8 @@ mod tests {
         let cube_mgr = Arc::new(CubeManager::new(raft.clone()));
         let smv_mgr  = Arc::new(SmvManager::new(raft.clone()));
 
-        let state = WebUiState { cube_mgr, smv_mgr, raft };
+        let nodes = Arc::new(NodeRegistry::default());
+        let state = WebUiState { cube_mgr, smv_mgr, raft, node_id: "qn-test".to_string(), nodes };
         let _router = build_router(state);
         // 라우터가 패닉 없이 생성되면 통과
     }

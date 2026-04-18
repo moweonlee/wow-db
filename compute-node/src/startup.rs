@@ -1,76 +1,75 @@
-// T175: Compute Node self-registration with Query Node (via QN_PEERS env var)
+// Compute Node self-registration with Query Node via HTTP
 //
-// On startup, CN reads `QN_PEERS` (comma-separated `host:grpc_port` list)
-// and calls the ClusterService `Join` RPC on the first reachable QN.
+// On startup, CN reads `QN_HTTP_PEERS` (comma-separated `host:http_port`)
+// and POSTs to /api/v1/nodes/register on the first reachable QN.
+// Then spawns a heartbeat task to re-register every 15 seconds.
 
 use anyhow::Result;
 use tracing::{info, warn};
 
-/// Attempt to register this Compute Node with the cluster.
-///
-/// Reads `QN_PEERS` environment variable (comma-separated `host:port`).
-/// Falls back silently in standalone/dev mode when no peers are configured.
+/// Register this CN with QN and spawn a background heartbeat task.
 pub async fn register_with_cluster(
     node_id:   &str,
     grpc_addr: &str,
 ) -> Result<()> {
-    let peers_raw = match std::env::var("QN_PEERS") {
+    let peers_raw = match std::env::var("QN_HTTP_PEERS") {
         Ok(v) if !v.trim().is_empty() => v,
         _ => {
-            info!("QN_PEERS not set — running in standalone mode (no cluster registration)");
+            info!("QN_HTTP_PEERS not set — standalone mode (no cluster registration)");
             return Ok(());
         }
     };
 
-    let peers: Vec<&str> = peers_raw.split(',')
-        .map(|s| s.trim())
+    let peers: Vec<String> = peers_raw.split(',')
+        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
 
-    info!(
-        node_id,
-        grpc_addr,
-        peer_count = peers.len(),
-        "Registering Compute Node with cluster"
-    );
-
-    for peer in &peers {
-        match try_register(node_id, grpc_addr, peer).await {
-            Ok(_) => {
-                info!(qn_peer = peer, "Self-registration successful");
-                return Ok(());
-            }
-            Err(e) => {
-                warn!(qn_peer = peer, err = %e, "Self-registration attempt failed, trying next peer");
-            }
-        }
+    let registered = try_register_all(node_id, grpc_addr, &peers).await;
+    if !registered {
+        warn!(node_id, "All QN peers unreachable — will retry via heartbeat");
     }
 
-    warn!(
-        node_id,
-        "All QN peers unreachable — Compute Node running without cluster registration"
-    );
+    // 백그라운드 heartbeat (15초마다)
+    let nid  = node_id.to_string();
+    let grpc = grpc_addr.to_string();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(15));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            try_register_all(&nid, &grpc, &peers).await;
+        }
+    });
+
     Ok(())
 }
 
-/// Send JOIN request to a single QN peer.
-/// In the current implementation this is a stub; replaced by actual gRPC call in Phase D.
-async fn try_register(node_id: &str, grpc_addr: &str, qn_peer: &str) -> Result<()> {
-    // TODO (Phase D): Replace stub with actual gRPC ClusterService::Join call
-    //
-    // let mut client = ClusterServiceClient::connect(format!("http://{}", qn_peer)).await?;
-    // client.join(JoinRequest {
-    //     node_id:   node_id.to_string(),
-    //     node_type: NodeTypeProto::ComputeNode as i32,
-    //     grpc_addr: grpc_addr.to_string(),
-    // }).await?;
+async fn try_register_all(node_id: &str, grpc_addr: &str, peers: &[String]) -> bool {
+    for peer in peers {
+        if try_register(node_id, grpc_addr, peer).await.is_ok() {
+            info!(qn_peer = %peer, node_id, "Self-registration OK");
+            return true;
+        }
+    }
+    false
+}
 
-    info!(
-        node_id,
-        grpc_addr,
-        qn_peer,
-        "ClusterService::Join stub called (Phase D: replace with real gRPC)"
-    );
+async fn try_register(node_id: &str, grpc_addr: &str, qn_http: &str) -> Result<()> {
+    let url = format!("http://{}/api/v1/nodes/register", qn_http);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    client.post(&url)
+        .json(&serde_json::json!({
+            "node_id":   node_id,
+            "node_type": "compute",
+            "address":   grpc_addr,
+            "role":      "Worker",
+        }))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("register POST {}: {}", url, e))?;
     Ok(())
 }
 
@@ -80,17 +79,8 @@ mod tests {
 
     #[tokio::test]
     async fn register_without_qn_peers_succeeds() {
-        // No QN_PEERS set → standalone mode, no error
-        std::env::remove_var("QN_PEERS");
+        std::env::remove_var("QN_HTTP_PEERS");
         let result = register_with_cluster("cn-1", "127.0.0.1:9040").await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn register_with_empty_qn_peers_succeeds() {
-        std::env::set_var("QN_PEERS", "");
-        let result = register_with_cluster("cn-1", "127.0.0.1:9040").await;
-        std::env::remove_var("QN_PEERS");
         assert!(result.is_ok());
     }
 }

@@ -6,6 +6,33 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// ─── LSM 상태 직렬화 구조체 (대시보드 API 용) ─────────────────────────────────
+
+/// 레벨별 Part(SSTable) 수 및 크기 — 대시보드 `/api/v1/lsm-status` 응답에 사용
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LsmLevelStats {
+    pub level:          u32,
+    pub file_count:     usize,
+    pub size_bytes:     u64,
+    pub compaction_score: f64,
+}
+
+/// 한 Tablet(파티션)의 전체 LSM 상태
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TabletLsmStats {
+    pub tablet_id:        String,
+    pub cube_name:        String,
+    pub partition_name:   String,
+    pub levels:           Vec<LsmLevelStats>,
+    pub l0_file_count:    usize,
+    pub total_levels:     u32,
+    pub level_sizes:      Vec<u64>,       // 레벨별 총 바이트
+    pub compaction_score: f64,
+    pub compaction_status: String,        // "Idle" | "Running" | "Pending"
+    pub write_control:    String,         // "Normal" | "Slowdown" | "Stop"
+    pub last_compaction_ms: Option<u64>,
+}
+
 // ─── SSTable 참조 (레벨 내 단위) ─────────────────────────────────────────────
 
 /// 레벨 내 하나의 SSTable 파일에 대한 참조
@@ -146,6 +173,18 @@ impl PartitionLevels {
             }
         }
         Ok(())
+    }
+
+    /// 레벨별 통계 반환 (대시보드 용)
+    pub fn level_stats(&self) -> Vec<LsmLevelStats> {
+        self.levels.iter().enumerate().map(|(lvl, ssts)| {
+            LsmLevelStats {
+                level:           lvl as u32,
+                file_count:      ssts.len(),
+                size_bytes:      ssts.iter().map(|s| s.size_bytes).sum(),
+                compaction_score: self.compaction_score(lvl),
+            }
+        }).collect()
     }
 
     /// Arc<SstRef> 에서 SstRef 를 가져와 레벨에 추가 (compaction 출력용)

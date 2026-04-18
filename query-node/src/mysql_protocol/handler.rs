@@ -114,6 +114,8 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
     ) -> Result<()> {
         debug!(sql = %sql, "COM_QUERY");
         let lower = sql.trim().to_lowercase();
+        // First keyword of the SQL (handles multiline: "SELECT\n  col FROM t")
+        let first_kw: &str = lower.split_ascii_whitespace().next().unwrap_or("");
 
         // USE database
         if lower.starts_with("use ") {
@@ -392,8 +394,32 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
         }
 
         // ── INSERT ────────────────────────────────────────────────────────────
-        if lower.starts_with("insert ") {
-            match execute_insert(sql).await {
+        if first_kw == "insert" {
+            // DDL 스키마 조회: 컬럼 순서 + 분산 키 컬럼
+            let (schema_cols, dist_col) = {
+                let table_hint = {
+                    let up = sql.to_uppercase();
+                    let after = up.find("INTO").map(|p| sql[p+4..].trim().to_string());
+                    after.as_deref()
+                        .map(|s| s.split_whitespace().next().unwrap_or("").trim_matches('`').to_string())
+                        .filter(|s| !s.is_empty())
+                };
+                if let Some(tname) = table_hint {
+                    match self.cube_mgr.get_by_name(&tname).await {
+                        Ok(Some(schema)) => {
+                            let cols = Some(schema.columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>());
+                            let dist = schema.distribution.column.clone();
+                            let dist_col = if dist.is_empty() { None } else { Some(dist) };
+                            (cols, dist_col)
+                        }
+                        _ => (None, None),
+                    }
+                } else {
+                    (None, None)
+                }
+            };
+
+            match execute_insert(sql, schema_cols, dist_col).await {
                 Ok(r) => return results.completed(OkResponse {
                     affected_rows: r.rows_affected,
                     ..Default::default()
@@ -405,7 +431,7 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
         // ── Behavioral Routing (T157/T161) ────────────────────────────────────
         // For SELECT/analytics queries: detect pattern and optionally rewrite
         // SQL to use an Active Behavioral Table (Session MV).
-        let effective_sql: std::borrow::Cow<str> = if lower.starts_with("select ")
+        let effective_sql: std::borrow::Cow<str> = if first_kw == "select"
             || lower.contains("funnel_count(")
             || lower.contains("cohort_analysis(")
             || lower.contains("path_analysis(")
@@ -488,7 +514,7 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
         }
 
         // ── SELECT ────────────────────────────────────────────────────────────
-        if lower_exec.starts_with("select ") {
+        if lower_exec.split_ascii_whitespace().next() == Some("select") {
             let warnings_count = self.pending_warnings.lock().unwrap().len() as u16;
             match execute_select(sql_to_exec).await {
                 Ok(sel) => {
@@ -514,10 +540,29 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
 
         // ── SELECT 에 걸리지 않는 시스템 변수 쿼리 (SELECT 이외 경로) ─────────
 
-        // ── DELETE ────────────────────────────────────────────────────────────
+        // ── DELETE / TRUNCATE ─────────────────────────────────────────────────
         if lower.starts_with("delete from") || lower.starts_with("truncate") {
             let table = lower.split_whitespace().last().unwrap_or("").trim_end_matches(';').to_string();
+            // MEM_STORE 비우기
             MEM_STORE.drop_table(&table);
+            // SN MemTable 비우기 — 전체 행을 재삽입 방지하기 위해 새 tablet 초기화
+            // 현재 SN API에 delete 엔드포인트가 없으므로 storage_client 재초기화 방식 사용:
+            // SN의 TabletWriter 를 DROP + 재생성하면 MemTable 이 비워진다.
+            // → SN HTTP DELETE /api/v1/tablet/{tablet_id} 호출 (또는 내부 스텁)
+            // 임시: SN 직접 호출을 통해 해당 tablet의 WAL을 초기화
+            {
+                let sn_http = std::env::var("STORAGE_NODES")
+                    .unwrap_or_default()
+                    .split(',')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .replace(":9060", ":8040");
+                if !sn_http.is_empty() {
+                    let url = format!("http://{}/api/v1/tablet/{}/truncate", sn_http, table);
+                    let _ = reqwest::Client::new().post(&url).send().await;
+                }
+            }
             return results.completed(OkResponse::default()).await.map_err(Into::into);
         }
 

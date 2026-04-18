@@ -41,6 +41,8 @@ pub struct StorageServiceImpl {
     data_dir: Arc<String>,
     /// TabletWriterRegistry: WAL + MemTable 에 실제 데이터를 쓰고 읽는 핵심 컴포넌트
     registry: Arc<TabletWriterRegistry>,
+    /// 대시보드 /logs 엔드포인트용 인메모리 로그 버퍼 (FR-008)
+    log_buf:  Option<Arc<std::sync::Mutex<shared::log_buffer::LogBuffer>>>,
 }
 
 impl StorageServiceImpl {
@@ -50,6 +52,7 @@ impl StorageServiceImpl {
             node_id:  Arc::new(node_id),
             data_dir: Arc::new(data_dir),
             registry,
+            log_buf:  None,
         }
     }
 
@@ -58,6 +61,26 @@ impl StorageServiceImpl {
             node_id:  Arc::new(node_id),
             data_dir: Arc::new(data_dir),
             registry,
+            log_buf:  None,
+        }
+    }
+
+    /// LOG_BUFFER 를 주입하여 gRPC 핸들러에서 직접 로그를 기록할 수 있게 함 (FR-008)
+    pub fn with_log_buf(
+        mut self,
+        log_buf: Arc<std::sync::Mutex<shared::log_buffer::LogBuffer>>,
+    ) -> Self {
+        self.log_buf = Some(log_buf);
+        self
+    }
+
+    /// 로그 버퍼에 항목 push (log_buf 가 None 이면 no-op)
+    fn push_log(&self, level: shared::log_buffer::LogLevel, target: &str, message: &str,
+                fields: Vec<(&str, &str)>) {
+        if let Some(buf) = &self.log_buf {
+            if let Ok(mut b) = buf.lock() {
+                b.push(shared::log_buffer::make_entry(level, target, message, fields));
+            }
         }
     }
 }
@@ -124,6 +147,13 @@ impl StorageService for StorageServiceImpl {
             .map_err(|e| Status::internal(format!("write_rows error: {e}")))?;
 
         info!(tablet_id = %tablet_id, rows = count, "WriteRows OK — WAL + MemTable");
+        // FR-008: SN Write 이벤트 로그 기록
+        self.push_log(
+            shared::log_buffer::LogLevel::Info,
+            "storage_node::grpc::server",
+            &format!("WriteRows OK tablet={} rows={}", tablet_id, count),
+            vec![("tablet_id", &tablet_id), ("rows", &count.to_string())],
+        );
         Ok(Response::new(WriteResponse { success: true, lsn: count, error: String::new() }))
     }
 
@@ -131,11 +161,21 @@ impl StorageService for StorageServiceImpl {
         let r = req.into_inner();
         let tablet_id = r.tablet_id.clone();
         info!(tablet_id = %tablet_id, "ScanTablet — MemTable scan");
+        // FR-008: Read 이벤트 로그 기록
+        self.push_log(
+            shared::log_buffer::LogLevel::Info,
+            "storage_node::grpc::server",
+            &format!("ScanTablet START tablet={}", tablet_id),
+            vec![("tablet_id", &tablet_id)],
+        );
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<ScanBatch, Status>>(16);
 
-        let registry = self.registry.clone();
+        let registry  = self.registry.clone();
+        let log_buf   = self.log_buf.clone();
+        let tid_clone = tablet_id.clone();
         tokio::spawn(async move {
+            let tablet_id = tid_clone;
             let writer = match registry.get_or_create(&tablet_id).await {
                 Ok(w)  => w,
                 Err(e) => {
@@ -175,6 +215,17 @@ impl StorageService for StorageServiceImpl {
 
             let _ = tx.send(Ok(batch)).await;
             info!(tablet_id = %tablet_id, rows = row_count, "ScanTablet OK");
+            // FR-008: Read 완료 이벤트 로그 기록
+            if let Some(buf) = log_buf {
+                if let Ok(mut b) = buf.lock() {
+                    b.push(shared::log_buffer::make_entry(
+                        shared::log_buffer::LogLevel::Info,
+                        "storage_node::grpc::server",
+                        &format!("ScanTablet DONE tablet={} rows={}", tablet_id, row_count),
+                        vec![("tablet_id", &tablet_id), ("rows", &row_count.to_string())],
+                    ));
+                }
+            }
         });
 
         Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
@@ -390,6 +441,36 @@ impl StorageService for StorageServiceImpl {
 pub async fn serve(addr: SocketAddr, node_id: String, data_dir: String) -> Result<()> {
     let svc = StorageServiceImpl::new(node_id, data_dir);
     info!(%addr, "Storage gRPC 서버 시작");
+    tonic::transport::Server::builder()
+        .add_service(StorageServiceServer::new(svc))
+        .serve(addr)
+        .await?;
+    Ok(())
+}
+
+/// 외부 TabletWriterRegistry + LogBuffer 를 주입받아 기동 (FR-008 지원)
+pub async fn serve_with_registry(
+    addr:     SocketAddr,
+    node_id:  String,
+    data_dir: String,
+    registry: Arc<TabletWriterRegistry>,
+) -> Result<()> {
+    serve_with_registry_and_log(addr, node_id, data_dir, registry, None).await
+}
+
+/// Registry + LogBuffer 모두 주입받는 기동 함수 (대시보드 로그 연동)
+pub async fn serve_with_registry_and_log(
+    addr:     SocketAddr,
+    node_id:  String,
+    data_dir: String,
+    registry: Arc<TabletWriterRegistry>,
+    log_buf:  Option<Arc<std::sync::Mutex<shared::log_buffer::LogBuffer>>>,
+) -> Result<()> {
+    let mut svc = StorageServiceImpl::new_with_registry(node_id, data_dir, registry);
+    if let Some(buf) = log_buf {
+        svc = svc.with_log_buf(buf);
+    }
+    info!(%addr, "Storage gRPC 서버 시작 (shared registry + log)");
     tonic::transport::Server::builder()
         .add_service(StorageServiceServer::new(svc))
         .serve(addr)

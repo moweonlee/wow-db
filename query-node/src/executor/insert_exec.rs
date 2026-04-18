@@ -13,7 +13,15 @@ pub struct InsertResult {
 }
 
 /// SQL 문자열로부터 INSERT 실행 (async — gRPC storage-node 또는 MEM_STORE)
-pub async fn execute_insert(sql: &str) -> Result<InsertResult, String> {
+///
+/// `schema_cols`: 테이블의 DDL 컬럼 순서 — SQL에 컬럼 목록이 없을 때 사용.
+/// `dist_col`:    분산 키 컬럼명 (Some이면 hash sharding, None이면 첫 SN에 쓰기).
+/// MySQL 표준: INSERT INTO t VALUES (v1, v2, ...) 는 DDL 순서로 매핑.
+pub async fn execute_insert(
+    sql: &str,
+    schema_cols: Option<Vec<String>>,
+    dist_col: Option<String>,
+) -> Result<InsertResult, String> {
     let sql = sql.trim().trim_end_matches(';');
     let upper = sql.to_uppercase();
 
@@ -25,7 +33,10 @@ pub async fn execute_insert(sql: &str) -> Result<InsertResult, String> {
     let (table_name, rest) = split_table_name(rest);
     let rest = rest.trim();
 
-    // 컬럼 목록 (선택 사항)
+    // 컬럼 목록 결정:
+    //   1) SQL에 명시된 경우: SQL 컬럼 사용
+    //   2) schema_cols가 있는 경우: DDL 순서 사용 (MySQL 표준)
+    //   3) 없으면 col_0, col_1, ... (폴백)
     let (columns, values_str) = if rest.starts_with('(') && !rest.to_uppercase().starts_with("(SELECT") {
         let upper_rest = rest.to_uppercase();
         let values_pos = upper_rest.find("VALUES").ok_or("INSERT: VALUES keyword not found")?;
@@ -36,7 +47,8 @@ pub async fn execute_insert(sql: &str) -> Result<InsertResult, String> {
     } else {
         let upper_rest = rest.to_uppercase();
         let values_pos = upper_rest.find("VALUES").ok_or("INSERT: VALUES keyword not found")?;
-        (None, rest[values_pos + 6..].trim())
+        // schema_cols 가 있으면 DDL 순서 사용, 없으면 None (col_0, col_1... 폴백)
+        (schema_cols, rest[values_pos + 6..].trim())
     };
 
     // VALUES (...), (...) 파싱
@@ -73,18 +85,19 @@ pub async fn execute_insert(sql: &str) -> Result<InsertResult, String> {
 
     let count = parsed_rows.len() as u64;
 
-    // storage-node gRPC 경로 시도 → 실패 또는 미설정이면 MEM_STORE 폴백
+    // SN gRPC 쓰기 시도 (성공 여부와 무관하게 MEM_STORE에도 항상 기록)
     {
         let mut pool = crate::storage_client::STORAGE.lock().await;
         if pool.has_storage() {
-            match pool.write_rows(&table_name, &parsed_rows).await {
-                Some(n) => return Ok(InsertResult { rows_affected: n }),
-                None    => {} // 연결 실패 → MEM_STORE 폴백
-            }
+            let _ = if let Some(ref col) = dist_col {
+                pool.write_rows_sharded(&table_name, &parsed_rows, col).await
+            } else {
+                pool.write_rows(&table_name, &parsed_rows).await
+            };
         }
     }
 
-    // MEM_STORE 폴백
+    // 항상 MEM_STORE에 기록 (SN 쓰기 실패·성공 모두, SELECT 폴백용)
     for row in parsed_rows {
         MEM_STORE.insert(&table_name, row);
     }
@@ -237,14 +250,14 @@ mod tests {
     #[tokio::test]
     async fn test_insert_basic() {
         let sql = "INSERT INTO test_tbl (id, name, score) VALUES (1, 'alice', 99.5), (2, 'bob', 87)";
-        let r = execute_insert(sql).await.unwrap();
+        let r = execute_insert(sql, None, None).await.unwrap();
         assert_eq!(r.rows_affected, 2);
     }
 
     #[tokio::test]
     async fn test_insert_json() {
         let sql = r#"INSERT INTO json_tbl (id, props) VALUES (1, '{"page":"home","ref":"google"}')"#;
-        let r = execute_insert(sql).await.unwrap();
+        let r = execute_insert(sql, None, None).await.unwrap();
         assert_eq!(r.rows_affected, 1);
     }
 }

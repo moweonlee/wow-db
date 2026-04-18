@@ -180,6 +180,9 @@ impl TabletWriter {
                 rows = replayed,
                 "WAL replay 완료 — MemTable 복구"
             );
+            // FR-008: WAL 이벤트 — main.rs 의 LOG_BUFFER 는 바이너리 전용이라 직접 참조 불가.
+            // 향후 LogBuffer 를 TabletWriter 에 주입하는 방식으로 개선 가능.
+            // 현재는 info! tracing 로그로만 기록 (운영 로그 파일에는 남음).
         }
         Ok(())
     }
@@ -278,6 +281,42 @@ impl TabletWriter {
     pub async fn memtable_size(&self) -> usize {
         self.memtable.lock().await.size_bytes()
     }
+
+    /// LSM 레벨 통계 반환 (대시보드 `/api/v1/lsm-status` 용)
+    pub async fn get_lsm_stats(&self) -> crate::lsm::levels::TabletLsmStats {
+        use crate::lsm::levels::TabletLsmStats;
+
+        // TabletWriter 는 PartitionCompactor 를 직접 보유하지 않으므로
+        // 데이터 디렉터리에서 MANIFEST를 읽어 레벨 정보를 구성한다.
+        // 현재는 인메모리 MemTable 행 수만 알 수 있으므로 가용한 정보만 반환.
+        let mem_size = self.memtable.lock().await.size_bytes();
+
+        // tablet_id = "cube_name/partition" 형식이 아닌 경우 분리
+        let (cube_name, partition_name) = if let Some(pos) = self.tablet_id.rfind('/') {
+            (self.tablet_id[..pos].to_string(), self.tablet_id[pos+1..].to_string())
+        } else {
+            (self.tablet_id.clone(), "default".to_string())
+        };
+
+        TabletLsmStats {
+            tablet_id:        self.tablet_id.clone(),
+            cube_name,
+            partition_name,
+            levels:           vec![crate::lsm::levels::LsmLevelStats {
+                level: 0,
+                file_count: 0,  // PartitionCompactor 미연결 — 0으로 표시
+                size_bytes: mem_size as u64,
+                compaction_score: 0.0,
+            }],
+            l0_file_count:    0,
+            total_levels:     0,
+            level_sizes:      vec![mem_size as u64],
+            compaction_score: 0.0,
+            compaction_status: "Idle".to_string(),
+            write_control:    "Normal".to_string(),
+            last_compaction_ms: None,
+        }
+    }
 }
 
 // ─── Tablet Writer Registry ───────────────────────────────────────────────────
@@ -294,6 +333,23 @@ impl TabletWriterRegistry {
             writers:  Arc::new(Mutex::new(HashMap::new())),
             data_dir,
         }
+    }
+
+    /// Tablet 을 레지스트리에서 제거 (TRUNCATE/DELETE 시 MemTable 비우기)
+    pub async fn drop_tablet(&self, tablet_id: &str) {
+        let mut writers = self.writers.lock().await;
+        writers.remove(tablet_id);
+        tracing::info!(tablet_id = %tablet_id, "TabletWriter dropped (truncate)");
+    }
+
+    /// 등록된 모든 Tablet 의 LSM 통계 반환 (대시보드 용)
+    pub async fn get_all_lsm_stats(&self) -> Vec<crate::lsm::levels::TabletLsmStats> {
+        let writers = self.writers.lock().await;
+        let mut stats = Vec::new();
+        for writer in writers.values() {
+            stats.push(writer.get_lsm_stats().await);
+        }
+        stats
     }
 
     pub async fn get_or_create(&self, tablet_id: &str) -> Result<Arc<TabletWriter>> {

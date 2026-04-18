@@ -41,6 +41,9 @@ crossbeam-channel = "0.5"
 # HTTP health server
 axum = { version = "0.7" }
 
+# HTTP client (cluster self-registration)
+reqwest = { version = "0.12", features = ["json"] }
+
 [build-dependencies]
 tonic-build = "0.12"
 prost-build = "0.13"

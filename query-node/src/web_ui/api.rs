@@ -27,9 +27,12 @@ pub struct CubeListResponse {
 
 #[derive(Debug, Serialize)]
 pub struct CubeSummary {
-    pub name:        String,
-    pub database:    String,
-    pub column_count: usize,
+    pub name:            String,
+    pub database:        String,
+    pub column_count:    usize,
+    pub partition_count: u32,
+    pub row_count:       u64,
+    pub size_bytes:      u64,
     pub storage_backend: String,
 }
 
@@ -78,6 +81,9 @@ pub async fn list_cubes(State(state): State<WebUiState>) -> impl IntoResponse {
                 name:            c.name.clone(),
                 database:        c.database.clone(),
                 column_count:    c.columns.len(),
+                partition_count: 0, // aggregated from SN in Phase D
+                row_count:       0, // aggregated from SN in Phase D
+                size_bytes:      0, // aggregated from SN in Phase D
                 storage_backend: format!("{:?}", c.storage_backend),
             }).collect();
             let count = summaries.len();

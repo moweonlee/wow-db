@@ -11,6 +11,46 @@ use crate::profiler::PROFILER;
 
 use super::server::WebUiState;
 
+// ─── 노드 등록 요청 타입 ──────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct RegisterRequest {
+    pub node_id:   String,
+    pub node_type: String,  // "query" | "compute" | "storage"
+    pub address:   String,  // grpc 또는 접속 주소
+    pub role:      Option<String>,
+    pub http_addr: Option<String>,
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+}
+
+/// POST /api/v1/nodes/register — SN/CN이 기동 시 호출하여 레지스트리에 등록
+pub async fn register_node(
+    State(state): State<WebUiState>,
+    Json(body): Json<RegisterRequest>,
+) -> impl IntoResponse {
+    let role = body.role.unwrap_or_else(|| match body.node_type.as_str() {
+        "storage" => "Storage".to_string(),
+        "compute" => "Worker".to_string(),
+        _         => body.node_type.clone(),
+    });
+    let node = NodeStatus {
+        id:           body.node_id.clone(),
+        address:      body.address,
+        role,
+        alive:        true,
+        cpu_pct:      0.0,
+        memory_mb:    0.0,
+        last_seen_ms: now_ms(),
+    };
+    let key = format!("{}:{}", body.node_type, body.node_id);
+    state.nodes.write().await.insert(key, node);
+    tracing::info!(node_id = %body.node_id, node_type = %body.node_type, "Node registered");
+    Json(serde_json::json!({"ok": true}))
+}
+
 // ─── 응답 타입 ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -77,31 +117,56 @@ fn to_summary(p: &crate::profiler::QueryProfile) -> QuerySummary {
 pub async fn cluster_overview(
     State(state): State<WebUiState>,
 ) -> impl IntoResponse {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
+    let ts = now_ms();
+    const TTL_MS: u64 = 15_000; // 15초 이상 heartbeat 없으면 offline (heartbeat=5s × 3)
 
-    // QN 자신의 상태 (단일 노드 스텁)
+    // QN 자신의 상태
     let self_cpu    = METRICS.cpu_usage_pct.get();
     let self_mem_mb = METRICS.memory_used_bytes.get() / (1024.0 * 1024.0);
+    let node_id_str = state.node_id.clone();
 
-    let node_id_str = state.raft.node_id.0.to_string();
-    let qn_node = NodeStatus {
+    let mysql_port  = std::env::var("MYSQL_PORT").unwrap_or_else(|_| "9030".to_string());
+    let self_qn = NodeStatus {
         id:           node_id_str.clone(),
-        address:      "localhost:9030".to_string(),
-        role:         "Leader".to_string(), // Phase B에서 실제 Raft 역할로 교체
+        address:      format!("127.0.0.1:{}", mysql_port),
+        role:         "Leader".to_string(),
         alive:        true,
         cpu_pct:      self_cpu,
         memory_mb:    self_mem_mb,
-        last_seen_ms: now_ms,
+        last_seen_ms: ts,
     };
 
+    // 레지스트리에서 읽기
+    let reg = state.nodes.read().await;
+    let mut query_nodes  = vec![self_qn];
+    let mut compute_nodes: Vec<NodeStatus> = Vec::new();
+    let mut data_nodes:    Vec<NodeStatus> = Vec::new();
+
+    for (key, node) in reg.iter() {
+        let mut n = node.clone();
+        // TTL 초과 → offline
+        if ts.saturating_sub(n.last_seen_ms) > TTL_MS {
+            n.alive = false;
+        }
+        if key.starts_with("query:")   { query_nodes.push(n); }
+        else if key.starts_with("compute:") { compute_nodes.push(n); }
+        else if key.starts_with("storage:") { data_nodes.push(n); }
+    }
+    drop(reg);
+
+    // 레지스트리가 비어 있을 때 스텁 유지 (하위 호환)
+    if compute_nodes.is_empty() {
+        compute_nodes = build_cn_status(ts);
+    }
+    if data_nodes.is_empty() {
+        data_nodes = build_dn_status(ts);
+    }
+
     let overview = ClusterOverview {
-        timestamp_ms:      now_ms,
-        query_nodes:       vec![qn_node],
-        compute_nodes:     build_cn_status(now_ms),
-        data_nodes:        build_dn_status(now_ms),
+        timestamp_ms:      ts,
+        query_nodes,
+        compute_nodes,
+        data_nodes,
         raft_leader_id:    Some(node_id_str),
         raft_term:         METRICS.raft_term.get() as u64,
         total_tablets:     METRICS.tablets_total.get(),
@@ -155,6 +220,76 @@ fn build_cn_status(now_ms: u64) -> Vec<NodeStatus> {
             last_seen_ms: now_ms,
         })
         .collect()
+}
+
+/// GET /api/v1/lsm — 모든 SN의 LSM Compaction 상태 집계
+pub async fn lsm_overview() -> impl IntoResponse {
+    // STORAGE_HTTP_NODES 우선, 없으면 STORAGE_NODES 에서 gRPC 포트 → HTTP 포트 변환 시도
+    let sn_list: Vec<String> = {
+        let http_nodes = std::env::var("STORAGE_HTTP_NODES").unwrap_or_default();
+        if !http_nodes.trim().is_empty() {
+            http_nodes.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+        } else {
+            // STORAGE_NODES 의 포트 9060 → 8040 으로 대체 (dev 기본값)
+            std::env::var("STORAGE_NODES").unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().replace(":9060", ":8040").replace(":9061", ":8041").replace(":9062", ":8042"))
+                .filter(|s| !s.is_empty())
+                .collect()
+        }
+    };
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let mut nodes: Vec<serde_json::Value> = Vec::new();
+    let mut total_l0 = 0u64;
+    let mut slowdown = 0u32;
+    let mut stop_count = 0u32;
+
+    for sn_addr in &sn_list {
+        let url = format!("http://{}/api/v1/lsm-status", sn_addr);
+        match reqwest::get(&url).await {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<serde_json::Value>().await {
+                    Ok(data) => {
+                        let l0 = data.get("total_l0_files").and_then(|v| v.as_u64()).unwrap_or(0);
+                        total_l0 += l0;
+                        let wc = data.get("write_control").and_then(|v| v.as_str()).unwrap_or("Normal");
+                        if wc == "Slowdown" { slowdown += 1; }
+                        if wc == "Stop"     { stop_count += 1; }
+                        nodes.push(data);
+                    }
+                    Err(e) => {
+                        nodes.push(serde_json::json!({
+                            "node_id": sn_addr, "sn_endpoint": sn_addr,
+                            "partitions": [], "total_l0_files": 0,
+                            "compaction_running": false, "write_control": "Unknown",
+                            "error": e.to_string(), "updated_at_ms": now_ms,
+                        }));
+                    }
+                }
+            }
+            _ => {
+                nodes.push(serde_json::json!({
+                    "node_id": sn_addr, "sn_endpoint": sn_addr,
+                    "partitions": [], "total_l0_files": 0,
+                    "compaction_running": false, "write_control": "Unknown",
+                    "error": "unreachable", "updated_at_ms": now_ms,
+                }));
+            }
+        }
+    }
+
+    Json(serde_json::json!({
+        "nodes": nodes,
+        "total_l0_files": total_l0,
+        "nodes_with_slowdown": slowdown,
+        "nodes_with_stop": stop_count,
+        "fetched_at_ms": now_ms,
+    }))
 }
 
 fn build_dn_status(now_ms: u64) -> Vec<NodeStatus> {

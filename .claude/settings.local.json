@@ -129,7 +129,27 @@
       "Bash(grep -E \"^test |FAILED|ok$|result:|error\\\\[\")",
       "Bash(grep -E \"^test lsm|FAILED|ok$|result:\")",
       "Bash(grep -v \"^.*//.*MemTable\")",
-      "Bash(xargs ls *)"
+      "Bash(xargs ls *)",
+      "Bash(echo \"CREATE exit=$?\")",
+      "Bash(echo \"exit=$?\")",
+      "Bash(echo \"CREATE done: $?\")",
+      "Bash(echo \"INSERT done: $?\")",
+      "Bash(ls logs/*.log)",
+      "Bash(winget search *)",
+      "Bash(iperf3 *)",
+      "Bash(scoop --version)",
+      "Bash(choco --version)",
+      "Bash(python -m json.tool)",
+      "Bash(grep -E \"test result|FAILED|ok$|FAILED$\")",
+      "Bash(powershell.exe -NonInteractive -File scripts/dev/scale-local.ps1)",
+      "Bash(taskkill /F /IM query-node.exe /T)",
+      "Bash(taskkill /F /IM compute-node.exe /T)",
+      "Bash(taskkill /F /IM storage-node.exe /T)",
+      "Bash(powershell.exe -NonInteractive -File scripts/dev/run-local.ps1 -NoBuild)",
+      "Bash(powershell.exe *)",
+      "Bash(python scripts/tpch/bench.py --sf 0.01 --host 127.0.0.1 --port 19030 --query \"SELECT COUNT\\(*\\) as cnt FROM customer\")",
+      "Bash(python -c ' *)",
+      "Bash(python *)"
     ]
   }
 }
