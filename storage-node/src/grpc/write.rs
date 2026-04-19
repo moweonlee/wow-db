@@ -6,12 +6,14 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
 use shared::types::{SortKey, SortKeyComponent};
 
+use crate::lsm::levels::{CompactionConfig, PartitionLevels, SstRef, WriteControl};
 use crate::lsm::memtable::{MemTable, DEFAULT_MEMTABLE_THRESHOLD};
+use crate::lsm::sstable::{PartitionSeqCounter, SsTableFlusher};
 use crate::lsm::wal::{Wal, WalEntry};
 
 // ─── 쓰기 요청 타입 ──────────────────────────────────────────────────────────
@@ -117,12 +119,14 @@ pub fn deserialize_write_batch(data: &[u8]) -> Result<Vec<WriteRow>> {
 
 // ─── Tablet Writer ────────────────────────────────────────────────────────────
 
-/// 단일 Tablet의 쓰기 담당 (WAL + MemTable)
+/// 단일 Tablet의 쓰기 담당 (WAL + MemTable + SSTable flush pipeline)
 pub struct TabletWriter {
-    tablet_id: String,
-    wal:       Arc<Wal>,
-    memtable:  Arc<Mutex<MemTable>>,
-    data_dir:  PathBuf,
+    tablet_id:   String,
+    wal:         Arc<Wal>,
+    memtable:    Arc<Mutex<MemTable>>,
+    data_dir:    PathBuf,
+    levels:      Arc<RwLock<PartitionLevels>>,
+    seq_counter: Arc<PartitionSeqCounter>,
 }
 
 impl TabletWriter {
@@ -131,7 +135,10 @@ impl TabletWriter {
         let wal = Arc::new(Wal::open(&wal_dir).await?);
         let memtable = Arc::new(Mutex::new(MemTable::new(DEFAULT_MEMTABLE_THRESHOLD)));
 
-        let writer = Self { tablet_id: tablet_id.clone(), wal, memtable, data_dir };
+        let levels      = Arc::new(RwLock::new(PartitionLevels::new(CompactionConfig::default())));
+        let seq_counter = Arc::new(PartitionSeqCounter::new(0));
+
+        let writer = Self { tablet_id: tablet_id.clone(), wal, memtable, data_dir, levels, seq_counter };
 
         // WAL replay: 크래시/재시작 후 MemTable 복구
         writer.replay_wal().await?;
@@ -216,10 +223,56 @@ impl TabletWriter {
             "MemTable insert complete"
         );
 
-        // MemTable이 가득 찬 경우: flush 트리거 (비동기 — Phase D에서 완전 구현)
+        // MemTable이 가득 찬 경우: 스냅샷 → reset → 백그라운드 SSTable flush
         if mem.is_full() {
-            info!(tablet_id = %self.tablet_id, "MemTable full, flush needed");
-            // TODO: freeze → SSTable flush 트리거
+            let imm = mem.snapshot_as_immutable();
+            mem.reset();
+            drop(mem);
+
+            info!(tablet_id = %self.tablet_id, "MemTable full, triggering SSTable flush");
+            let levels        = Arc::clone(&self.levels);
+            let seq_counter   = Arc::clone(&self.seq_counter);
+            let partition_dir = self.data_dir.join(&self.tablet_id);
+            let tablet_id     = self.tablet_id.clone();
+
+            tokio::spawn(async move {
+                let seq     = seq_counter.next();
+                let flusher = SsTableFlusher::new(&partition_dir);
+                match flusher.flush(imm, seq, seq).await {
+                    Ok(meta) => {
+                        let size_bytes: u64 =
+                            meta.columns.iter().map(|c| c.compressed_bytes).sum();
+                        let sst = SstRef {
+                            id:             meta.id,
+                            sequence_num:   meta.sequence_num,
+                            generation:     meta.generation,
+                            compacted_from: meta.compacted_from,
+                            level:          0,
+                            path:           partition_dir
+                                .join(format!("_meta/sstable-{:010}.json", meta.seq)),
+                            size_bytes,
+                            row_count:      meta.row_count,
+                            min_sort_key:   meta.min_sort_key,
+                            max_sort_key:   meta.max_sort_key,
+                        };
+                        let mut lvls = levels.write().await;
+                        lvls.add(sst);
+                        info!(
+                            tablet_id = %tablet_id,
+                            seq,
+                            l0_count = lvls.l0_count(),
+                            "SSTable flushed → L0"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            tablet_id = %tablet_id,
+                            err = %e,
+                            "SSTable flush 실패"
+                        );
+                    }
+                }
+            });
         }
 
         Ok(row_count as u64)
@@ -297,26 +350,36 @@ impl TabletWriter {
             (self.tablet_id.clone(), "default".to_string())
         };
 
-        // SSTable flush 미구현 단계 — MemTable 데이터가 전부.
-        // SSTable이 생성되면 PartitionLevels를 TabletWriter에 연결하여 교체 예정.
+        let lvls = self.levels.read().await;
+        let mut level_stats = lvls.level_stats();
+        // 아직 flush 안 된 MemTable 데이터를 L0 크기에 합산
+        if let Some(l0) = level_stats.first_mut() {
+            l0.size_bytes += mem_size as u64;
+        }
+        let l0_count         = lvls.l0_count();
+        let sst_rows: u64    = lvls.read_snapshot().iter().map(|s| s.row_count).sum();
+        let compaction_score = lvls.compaction_score(0);
+        let level_sizes: Vec<u64> = level_stats.iter().map(|ls| ls.size_bytes).collect();
+        let write_control    = match lvls.write_control() {
+            WriteControl::Stop     => "Stop",
+            WriteControl::Slowdown => "Slowdown",
+            WriteControl::Normal   => "Normal",
+        }.to_string();
+        drop(lvls);
+
         TabletLsmStats {
-            tablet_id:         self.tablet_id.clone(),
+            tablet_id:          self.tablet_id.clone(),
             cube_name,
             partition_name,
-            levels:            vec![crate::lsm::levels::LsmLevelStats {
-                level: 0,
-                file_count: 0,
-                size_bytes: mem_size as u64,
-                compaction_score: 0.0,
-            }],
-            l0_file_count:     0,
-            total_levels:      1,
-            level_sizes:       vec![mem_size as u64],
-            compaction_score:  0.0,
-            compaction_status: "Idle".to_string(),
-            write_control:     "Normal".to_string(),
+            levels:             level_stats,
+            l0_file_count:      l0_count,
+            total_levels:       level_sizes.len() as u32,
+            level_sizes,
+            compaction_score,
+            compaction_status:  "Idle".to_string(),
+            write_control,
             last_compaction_ms: None,
-            total_rows:        mem_rows,
+            total_rows:         mem_rows + sst_rows,
         }
     }
 }
