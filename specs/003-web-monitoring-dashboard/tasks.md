@@ -270,4 +270,48 @@ US1(클러스터 노드 현황)만 완성해도 운영자가 클러스터 상태
 **체크포인트**:
 - `cargo build -p query-node` 오류 없이 완료
 - Storage 탭 HTML에 Partitions / Rows / Size 컬럼 표시 확인
-- QN 피어가 장애 시 15초 이내 OFFLINE 전환 확인
+- QN 피어가 장애 시 15초 이내 DISCONNECTED 전환 확인
+
+---
+
+## Phase D: FR-003 완성 — SN API 집계 연동
+
+**목적**: Storage 탭의 파티션 수·총 행 수·데이터 크기를 플레이스홀더(`-`)에서 실제 SN 집계 값으로 교체 (FR-003 완전 이행)
+
+**독립 테스트**: `curl http://localhost:8080/api/cubes` → `partition_count`, `row_count`, `size_bytes` 필드에 0이 아닌 실제 값 포함
+
+### 구현
+
+- [x] TD001 [US2] `storage-node/src/main.rs` — `/api/v1/lsm-status` 응답 JSON에 `total_rows: u64`, `total_size_bytes: u64` 필드 추가 (MemTable 행 수 + SSTable 파일 크기 합산)
+- [x] TD002 [P] [US2] `storage-node/src/lsm/levels.rs` — `TabletLsmStats`에 `total_rows: u64` 필드 추가; `storage-node/src/lsm/memtable.rs` — `MemTable.row_count()` 메서드 추가; `storage-node/src/grpc/write.rs` — `get_lsm_stats()`에서 실제 MemTable 행 수 반환
+- [x] TD003 [US2] `query-node/src/web_ui/api.rs` — `list_cubes()` 에서 `STORAGE_HTTP_NODES`/`STORAGE_NODES` 환경변수 SN 목록 각각에 `GET /api/v1/lsm-status` tokio::spawn 병렬 호출, cube_name별 `total_rows`/`size_bytes`/`partition_count` 집계 후 `CubeSummary` 필드에 실제 값 설정
+- [x] TD004 [P] [US2] `query-node/src/web_ui/api.rs` — SN 접속 불가 시 해당 SN 건너뜀, 나머지 SN 값은 정상 집계 (부분 응답 허용)
+
+**체크포인트**:
+- 테이블에 데이터 삽입 후 Storage 탭에서 Rows/Size 컬럼에 실제 값 표시 확인
+- SN 1개 중단 시 나머지 SN 값은 정상 표시, 중단된 SN 항목은 `-` 표시
+
+---
+
+## Phase 10: 미구현 Edge Case 및 UX 보완
+
+**목적**: spec.md Edge Cases C1·C2 구현, SC-003·SC-005 성능 검증 (C3)
+
+### C1 — Storage 탭 테이블 검색 필터
+
+- [x] TC001 [P] [US2] `query-node/src/web_ui/dashboard.rs` — Storage 탭 상단에 `<input type="text" id="table-filter" placeholder="테이블 검색...">` 추가 및 JS `filterStorage(val)` 함수: `input` 이벤트 시 테이블 행 `tr.style.display` 필터링 (대소문자 무시)
+
+### C2 — 자동 새로고침 주기 선택
+
+- [x] TC002 [P] `query-node/src/web_ui/dashboard.rs` — 페이지 우상단에 `<select id="refresh-interval">` (5초/10초/30초/끄기) 추가. `setRefreshInterval(ms)` 함수: `clearInterval` 후 새 주기로 세 탭 타이머 모두 재등록. `value="0"` 선택 시 자동갱신 중지.
+
+### C3 — SC-003, SC-005 성능 검증
+
+- [x] TC003 T046 확장 체크리스트 항목 추가 — 성능 검증 명령 2개를 Phase 7 체크포인트에 포함:
+  - `curl -s -w "%{time_total}\n" -o /dev/null http://localhost:8080/api/cubes` → 3.0초 미만
+  - `curl -s -w "%{time_total}\n" -o /dev/null http://localhost:10040/logs` → 2.0초 미만
+
+**체크포인트**:
+- Storage 탭에 "테이블 검색..." 입력창 표시, 입력 시 실시간 필터링 동작
+- 새로고침 주기 드롭다운 표시, 변경 시 갱신 주기 즉시 반영
+- curl 응답 시간이 각 SC 기준 이내임을 확인

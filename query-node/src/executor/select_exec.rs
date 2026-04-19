@@ -23,39 +23,47 @@ pub struct SelectResult {
 ///   2. SN 단일 노드 + CN 설정 → QN→CN→SN 파이프라인
 ///   3. MEM_STORE 폴백
 pub async fn execute_select(sql: &str) -> Result<SelectResult, String> {
-    let table_name = quick_extract_table(sql);
+    let all_tables = quick_extract_all_tables(sql);
 
     // ── 우선순위 1: SN 다중 노드 — 전체 scan_all_rows → QN 집계 ─────────────
     // 샤딩된 데이터는 여러 SN에 분산되어 있으므로 모든 SN을 스캔하여 머지한 후
     // QN 에서 GROUP BY / ORDER BY / LIMIT 을 처리한다.
-    if let Some(ref table) = table_name {
+    // 멀티-테이블 FROM(j1, j2)도 지원: FROM의 모든 테이블을 SN에서 스캔한다.
+    if !all_tables.is_empty() {
         let sn_count = {
             let pool = crate::storage_client::STORAGE.lock().await;
             pool.sn_count()
         };
 
         if sn_count > 0 {
-            let sn_rows = {
-                let mut pool = crate::storage_client::STORAGE.lock().await;
-                pool.scan_all_rows(table).await
-            };
+            let mut any_sn_hit = false;
+            for table in &all_tables {
+                let sn_rows = {
+                    let mut pool = crate::storage_client::STORAGE.lock().await;
+                    pool.scan_all_rows(table).await
+                };
 
-            if let Some(rows) = sn_rows {
-                if !rows.is_empty() {
-                    // SN에 실제 데이터가 있으면 MEM_STORE를 SN 데이터로 교체
-                    MEM_STORE.drop_table(table);
-                    for row in &rows {
-                        MEM_STORE.insert(table, row.clone());
+                if let Some(rows) = sn_rows {
+                    any_sn_hit = true;
+                    if !rows.is_empty() {
+                        // SN에 실제 데이터가 있으면 MEM_STORE를 SN 데이터로 교체
+                        MEM_STORE.drop_table(table);
+                        for row in &rows {
+                            MEM_STORE.insert(table, row.clone());
+                        }
+                        tracing::debug!(table, total = rows.len(), "select: scan_all_rows merged");
                     }
-                    tracing::debug!(table, total = rows.len(), "select: scan_all_rows merged");
+                    // SN이 빈 결과를 반환해도 MEM_STORE 데이터는 유지 (INSERT 이중-기록 보장)
                 }
-                // SN가 빈 결과를 반환해도 MEM_STORE 데이터는 유지 (INSERT 이중-기록 보장)
+            }
+            if any_sn_hit {
                 return execute_select_sync(sql);
             }
         }
     }
 
     // ── 우선순위 2: CN 경유 (SN 미연결 시 폴백) ──────────────────────────────
+    let table_name = all_tables.into_iter().next();
     if let Some(ref table) = table_name {
         let cn_has_compute = crate::cn_client::CN.lock().await.has_compute();
         if cn_has_compute {
@@ -90,16 +98,43 @@ pub async fn execute_select(sql: &str) -> Result<SelectResult, String> {
     execute_select_sync(sql)
 }
 
-/// SELECT 테이블명 빠른 추출 (SN scan 전 사용)
-fn quick_extract_table(sql: &str) -> Option<String> {
+/// Extract ALL table names from FROM clause (handles comma-separated and multiline SQL).
+/// Skips aliases. Returns empty vec if FROM not found.
+fn quick_extract_all_tables(sql: &str) -> Vec<String> {
     let lower = sql.to_lowercase();
-    let from_pos = lower.find(" from ")?;
-    let after_from = lower[from_pos + 6..].trim();
-    let name: String = after_from
-        .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '_')
-        .collect();
-    if name.is_empty() { None } else { Some(name) }
+
+    // Find FROM keyword (handle leading space or newline)
+    let from_start = [" from ", "\nfrom ", "\tfrom "]
+        .iter()
+        .find_map(|pat| lower.find(pat).map(|p| p + pat.len()));
+    let after_from = match from_start {
+        Some(p) => lower[p..].trim_start(),
+        None    => return vec![],
+    };
+
+    // End of FROM clause — first keyword that starts a new clause
+    let end_pos = [" where ", "\nwhere ", " group ", "\ngroup ",
+                   " order ", "\norder ", " having ", "\nhaving ",
+                   " limit ", "\nlimit ", " join ", "\njoin "]
+        .iter()
+        .filter_map(|kw| after_from.find(kw))
+        .min()
+        .unwrap_or(after_from.len());
+
+    let from_clause = &after_from[..end_pos];
+
+    // Each comma-separated segment: first word = table name (skip alias)
+    from_clause.split(',')
+        .filter_map(|seg| {
+            let name: String = seg.trim()
+                .split(|c: char| c.is_whitespace())
+                .next()
+                .unwrap_or("")
+                .trim_matches('`')
+                .to_string();
+            if name.is_empty() || name.starts_with('(') { None } else { Some(name) }
+        })
+        .collect()
 }
 
 /// 동기 SELECT 실행 (MEM_STORE 기반)
@@ -196,12 +231,18 @@ fn execute_select_sync(sql: &str) -> Result<SelectResult, String> {
         };
         let right_rows = MEM_STORE.scan(&extra_table);
 
+        eprintln!("[join] table={extra_table} left_rows={} right_rows={}", rows.len(), right_rows.len());
+
         let known_cols: std::collections::HashSet<String> = rows.first()
             .map(|r| r.keys().cloned().collect())
             .unwrap_or_default();
         let right_cols: std::collections::HashSet<String> = right_rows.first()
             .map(|r| r.keys().cloned().collect())
             .unwrap_or_default();
+
+        eprintln!("[join] eq_conds={eq_conds:?}");
+        eprintln!("[join] known_cols sample: {:?}", known_cols.iter().take(5).collect::<Vec<_>>());
+        eprintln!("[join] right_cols sample: {:?}", right_cols.iter().take(5).collect::<Vec<_>>());
 
         // Use hash join when an equality condition links known col to new table col
         let join_key = eq_conds.iter().find_map(|(a, b)| {
@@ -213,6 +254,7 @@ fn execute_select_sync(sql: &str) -> Result<SelectResult, String> {
                 None
             }
         });
+        eprintln!("[join] join_key={join_key:?}");
 
         rows = if let Some((lc, rc)) = join_key {
             hash_join_tables(rows, right_rows, &lc, &rc, extra_alias.as_deref())
@@ -384,16 +426,36 @@ fn hash_join_tables(
     right_col: &str,
     right_alias: Option<&str>,
 ) -> Vec<Row> {
+    tracing::debug!(
+        left_rows = left.len(), right_rows = right.len(),
+        left_col, right_col, "hash_join_tables: start"
+    );
+    eprintln!("[hash_join] left={} rows on {left_col}, right={} rows on {right_col}",
+        left.len(), right.len());
+
     let mut right_index: std::collections::HashMap<String, Vec<usize>> =
         std::collections::HashMap::new();
     for (i, row) in right.iter().enumerate() {
         if let Some(v) = row.get(right_col) {
-            right_index.entry(json_to_sort_str(v)).or_default().push(i);
+            let k = json_to_sort_str(v);
+            if i < 3 { eprintln!("[hash_join] right index[{i}]: {right_col}={v} → key={k:?}"); }
+            right_index.entry(k).or_default().push(i);
+        } else {
+            if i < 3 { eprintln!("[hash_join] right row[{i}] missing col {right_col}: {:?}", row.keys().collect::<Vec<_>>()); }
         }
     }
+    eprintln!("[hash_join] right_index size={}", right_index.len());
+
     let mut result = Vec::new();
-    for left_row in &left {
-        let key = left_row.get(left_col).map(json_to_sort_str).unwrap_or_default();
+    for (li, left_row) in left.iter().enumerate() {
+        let key = left_row.get(left_col).map(|v| {
+            let k = json_to_sort_str(v);
+            if li < 3 { eprintln!("[hash_join] probe left[{li}]: {left_col}={v} → key={k:?} hit={}", right_index.contains_key(&k)); }
+            k
+        }).unwrap_or_else(|| {
+            if li < 3 { eprintln!("[hash_join] left row[{li}] missing col {left_col}: {:?}", left_row.keys().collect::<Vec<_>>()); }
+            String::new()
+        });
         if let Some(idxs) = right_index.get(&key) {
             for &i in idxs {
                 let right_row = &right[i];
@@ -408,6 +470,7 @@ fn hash_join_tables(
             }
         }
     }
+    eprintln!("[hash_join] result={} rows", result.len());
     result
 }
 
@@ -1039,11 +1102,19 @@ fn json_to_str(v: &Value) -> String {
 
 fn json_to_sort_str(v: &Value) -> String {
     match v {
-        Value::String(s) => s.clone(),
         Value::Number(n) => format!("{:020.6}", n.as_f64().unwrap_or(0.0)),
-        Value::Bool(b)   => b.to_string(),
-        Value::Null      => String::new(),
-        other            => other.to_string(),
+        Value::String(s) => {
+            // Normalize numeric strings to same key format as numbers.
+            // Needed when SN returns integers as JSON strings but MEM_STORE has serde_json Numbers.
+            if let Ok(n) = s.parse::<f64>() {
+                format!("{:020.6}", n)
+            } else {
+                s.clone()
+            }
+        }
+        Value::Bool(b) => b.to_string(),
+        Value::Null    => String::new(),
+        other          => other.to_string(),
     }
 }
 

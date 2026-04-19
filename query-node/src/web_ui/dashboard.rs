@@ -79,12 +79,35 @@ fn render_dashboard(active_tab: &str) -> String {
     .section-title {{ color: #4af; margin: 10px 0 6px; font-size: 13px; }}
     .error-msg {{ color: #f66; padding: 8px; background: #2a1a1a; margin: 8px 0; }}
     .empty-msg {{ color: #666; padding: 8px; }}
+    .toolbar {{ display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }}
+    .search-input {{
+      background: #2a2a2a; border: 1px solid #444; color: #e0e0e0;
+      padding: 4px 8px; font-family: monospace; font-size: 12px; width: 220px;
+    }}
+    .refresh-select {{
+      background: #2a2a2a; border: 1px solid #444; color: #aaa;
+      padding: 4px 8px; font-family: monospace; font-size: 12px;
+    }}
+    .topbar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }}
   </style>
 </head>
 <body>
 
-<pre class="logo">{logo}</pre>
-<div class="subtitle">Distributed OLAP Database — Monitoring Dashboard</div>
+<div class="topbar">
+  <div>
+    <pre class="logo">{logo}</pre>
+    <div class="subtitle">Distributed OLAP Database — Monitoring Dashboard</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:6px;align-self:flex-start;margin-top:4px;">
+    <span style="color:#888;font-size:12px;">Auto-refresh:</span>
+    <select class="refresh-select" id="refresh-interval" onchange="setRefreshInterval(+this.value)">
+      <option value="5000" selected>5초</option>
+      <option value="10000">10초</option>
+      <option value="30000">30초</option>
+      <option value="0">끄기</option>
+    </select>
+  </div>
+</div>
 
 <div class="tabs">
   <button class="tab-btn{cluster_active}" onclick="showTab('cluster')">Cluster</button>
@@ -103,7 +126,11 @@ fn render_dashboard(active_tab: &str) -> String {
 </div>
 
 <div id="tab-storage" class="tab-content{storage_active}">
-  <div class="section-title">Tables (Cubes)</div>
+  <div class="toolbar">
+    <div class="section-title" style="margin:0">Tables (Cubes)</div>
+    <input type="text" class="search-input" id="table-filter"
+      placeholder="테이블 검색..." oninput="filterStorage(this.value)">
+  </div>
   <div id="storage-table"><div class="empty-msg">Loading...</div></div>
   <div class="updated" id="storage-updated"></div>
 </div>
@@ -206,10 +233,10 @@ async function fetchLsm() {{
       return;
     }}
 
-    // Collect all level indices across all partitions
+    // Derive maxLevel from levels[] array (file_count 직접 참조)
     let maxLevel = 0;
     nodes.forEach(n => (n.partitions || []).forEach(p => {{
-      if (p.total_levels > maxLevel) maxLevel = p.total_levels;
+      (p.levels || []).forEach(lv => {{ if (lv.level > maxLevel) maxLevel = lv.level; }});
     }}));
 
     let html = '<table><tr><th>SN</th><th>Table</th><th>Partition</th>';
@@ -223,20 +250,19 @@ async function fetchLsm() {{
         return;
       }}
       parts.forEach(p => {{
-        const sizes = p.level_sizes || [];
-        const wc = n.write_control || 'Unknown';
+        const wc = p.write_control || n.write_control || 'Normal';
         const wcClass = wc === 'Stop' ? 'stop' : wc === 'Slowdown' ? 'warn' : '';
         html += `<tr>
           <td>${{esc(n.node_id)}}</td>
           <td>${{esc(p.cube_name)}}</td>
           <td>${{esc(p.partition_name)}}</td>`;
         for (let l = 0; l <= maxLevel; l++) {{
-          const cnt = p.l0_file_count !== undefined && l === 0 ? p.l0_file_count
-                    : (sizes[l] ? Math.ceil(sizes[l] / (64 * 1024 * 1024)) : 0);
+          const lvlData = (p.levels || []).find(lv => lv.level === l);
+          const cnt = lvlData ? lvlData.file_count : 0;
           const style = l === 0 && cnt >= 4 ? ' class="warn"' : '';
           html += `<td${{style}}>${{cnt}}</td>`;
         }}
-        html += `<td>${{esc(p.compaction_status || '-')}}</td>
+        html += `<td>${{esc(p.compaction_status || 'Idle')}}</td>
           <td class="${{wcClass}}">${{esc(wc)}}</td>
         </tr>`;
       }});
@@ -249,11 +275,30 @@ async function fetchLsm() {{
   }}
 }}
 
-// ─── Initial load + auto-refresh
+// ─── Storage 검색 필터 (클라이언트 사이드, 대소문자 무시)
+function filterStorage(val) {{
+  const q = val.toLowerCase();
+  document.querySelectorAll('#storage-table table tr:not(:first-child)').forEach(tr => {{
+    const name = tr.cells[0] ? tr.cells[0].textContent.toLowerCase() : '';
+    tr.style.display = name.includes(q) ? '' : 'none';
+  }});
+}}
+
+// ─── Auto-refresh 동적 타이머 관리
+let clusterTimer = null, storageTimer = null, lsmTimer = null;
+
+function setRefreshInterval(ms) {{
+  clearInterval(clusterTimer); clearInterval(storageTimer); clearInterval(lsmTimer);
+  if (ms > 0) {{
+    clusterTimer = setInterval(fetchCluster, ms);
+    storageTimer = setInterval(fetchStorage, ms);
+    lsmTimer     = setInterval(fetchLsm,     ms);
+  }}
+}}
+
+// ─── Initial load + auto-refresh (기본 5초)
 fetchCluster(); fetchStorage(); fetchLsm();
-setInterval(fetchCluster, 5000);
-setInterval(fetchStorage, 5000);
-setInterval(fetchLsm, 5000);
+setRefreshInterval(5000);
 </script>
 </body>
 </html>"#,

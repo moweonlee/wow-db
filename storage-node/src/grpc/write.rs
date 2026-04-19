@@ -286,35 +286,37 @@ impl TabletWriter {
     pub async fn get_lsm_stats(&self) -> crate::lsm::levels::TabletLsmStats {
         use crate::lsm::levels::TabletLsmStats;
 
-        // TabletWriter 는 PartitionCompactor 를 직접 보유하지 않으므로
-        // 데이터 디렉터리에서 MANIFEST를 읽어 레벨 정보를 구성한다.
-        // 현재는 인메모리 MemTable 행 수만 알 수 있으므로 가용한 정보만 반환.
-        let mem_size = self.memtable.lock().await.size_bytes();
+        let mem = self.memtable.lock().await;
+        let mem_size = mem.size_bytes();
+        let mem_rows = mem.row_count() as u64;
+        drop(mem);
 
-        // tablet_id = "cube_name/partition" 형식이 아닌 경우 분리
         let (cube_name, partition_name) = if let Some(pos) = self.tablet_id.rfind('/') {
             (self.tablet_id[..pos].to_string(), self.tablet_id[pos+1..].to_string())
         } else {
             (self.tablet_id.clone(), "default".to_string())
         };
 
+        // SSTable flush 미구현 단계 — MemTable 데이터가 전부.
+        // SSTable이 생성되면 PartitionLevels를 TabletWriter에 연결하여 교체 예정.
         TabletLsmStats {
-            tablet_id:        self.tablet_id.clone(),
+            tablet_id:         self.tablet_id.clone(),
             cube_name,
             partition_name,
-            levels:           vec![crate::lsm::levels::LsmLevelStats {
+            levels:            vec![crate::lsm::levels::LsmLevelStats {
                 level: 0,
-                file_count: 0,  // PartitionCompactor 미연결 — 0으로 표시
+                file_count: 0,
                 size_bytes: mem_size as u64,
                 compaction_score: 0.0,
             }],
-            l0_file_count:    0,
-            total_levels:     0,
-            level_sizes:      vec![mem_size as u64],
-            compaction_score: 0.0,
+            l0_file_count:     0,
+            total_levels:      1,
+            level_sizes:       vec![mem_size as u64],
+            compaction_score:  0.0,
             compaction_status: "Idle".to_string(),
-            write_control:    "Normal".to_string(),
+            write_control:     "Normal".to_string(),
             last_compaction_ms: None,
+            total_rows:        mem_rows,
         }
     }
 }

@@ -31,6 +31,7 @@ pub struct TabletLsmStats {
     pub compaction_status: String,        // "Idle" | "Running" | "Pending"
     pub write_control:    String,         // "Normal" | "Slowdown" | "Stop"
     pub last_compaction_ms: Option<u64>,
+    pub total_rows:       u64,            // MemTable + SSTable 추정 행 수
 }
 
 // ─── SSTable 참조 (레벨 내 단위) ─────────────────────────────────────────────

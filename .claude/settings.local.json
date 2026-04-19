@@ -149,7 +149,14 @@
       "Bash(powershell.exe *)",
       "Bash(python scripts/tpch/bench.py --sf 0.01 --host 127.0.0.1 --port 19030 --query \"SELECT COUNT\\(*\\) as cnt FROM customer\")",
       "Bash(python -c ' *)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(Get-Process query-node *)",
+      "Bash(Stop-Process -Force)",
+      "Bash(taskkill /F /IM query-node.exe)",
+      "Bash(grep -E \"^test |FAILED|ok$|PASSED\")",
+      "Bash(grep -E \"ok$|FAILED|error\\\\[E\")",
+      "Bash(claude mcp *)",
+      "Bash(echo \"EXIT:$?\")"
     ]
   }
 }

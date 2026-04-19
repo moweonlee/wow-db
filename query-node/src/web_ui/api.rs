@@ -1,5 +1,6 @@
 // T083: Web UI REST API — Cube 목록, 컬럼 목록, Cube 생성 엔드포인트
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -73,26 +74,91 @@ pub struct ColumnRequest {
 
 // ─── 핸들러 ──────────────────────────────────────────────────────────────────
 
-/// GET /api/cubes — Cube 목록 반환
+/// GET /api/cubes — Cube 목록 반환 (SN에서 row_count, size_bytes, partition_count 집계)
 pub async fn list_cubes(State(state): State<WebUiState>) -> impl IntoResponse {
-    match state.cube_mgr.list().await {
-        Ok(cubes) => {
-            let summaries: Vec<_> = cubes.iter().map(|c| CubeSummary {
-                name:            c.name.clone(),
-                database:        c.database.clone(),
-                column_count:    c.columns.len(),
-                partition_count: 0, // aggregated from SN in Phase D
-                row_count:       0, // aggregated from SN in Phase D
-                size_bytes:      0, // aggregated from SN in Phase D
-                storage_backend: format!("{:?}", c.storage_backend),
-            }).collect();
-            let count = summaries.len();
-            (StatusCode::OK, Json(CubeListResponse { cubes: summaries, count })).into_response()
-        }
-        Err(e) => (
+    let cubes = match state.cube_mgr.list().await {
+        Ok(c) => c,
+        Err(e) => return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
         ).into_response(),
+    };
+
+    let sn_stats = fetch_sn_cube_stats().await;
+
+    let summaries: Vec<_> = cubes.iter().map(|c| {
+        let stats = sn_stats.get(&c.name).copied().unwrap_or_default();
+        CubeSummary {
+            name:            c.name.clone(),
+            database:        c.database.clone(),
+            column_count:    c.columns.len(),
+            partition_count: stats.partition_count,
+            row_count:       stats.row_count,
+            size_bytes:      stats.size_bytes,
+            storage_backend: format!("{:?}", c.storage_backend),
+        }
+    }).collect();
+
+    let count = summaries.len();
+    (StatusCode::OK, Json(CubeListResponse { cubes: summaries, count })).into_response()
+}
+
+#[derive(Clone, Copy, Default)]
+struct CubeStats {
+    row_count:       u64,
+    size_bytes:      u64,
+    partition_count: u32,
+}
+
+/// STORAGE_HTTP_NODES (또는 STORAGE_NODES 포트 변환) 목록에서 각 SN의
+/// `/api/v1/lsm-status`를 병렬 조회하여 cube_name별 통계를 집계한다.
+/// SN 접속 실패 시 해당 SN은 건너뛰고 나머지 SN 값은 정상 반영한다 (TD004).
+async fn fetch_sn_cube_stats() -> HashMap<String, CubeStats> {
+    let sn_list = sn_http_list();
+    if sn_list.is_empty() {
+        return HashMap::new();
+    }
+
+    let handles: Vec<_> = sn_list.into_iter().map(|addr| {
+        tokio::spawn(async move {
+            let url = format!("http://{}/api/v1/lsm-status", addr);
+            let resp = reqwest::get(&url).await.ok()?;
+            if !resp.status().is_success() { return None; }
+            resp.json::<serde_json::Value>().await.ok()
+        })
+    }).collect();
+
+    let mut stats: HashMap<String, CubeStats> = HashMap::new();
+    for handle in handles {
+        let data = match handle.await {
+            Ok(Some(v)) => v,
+            _ => continue,
+        };
+        let Some(partitions) = data.get("partitions").and_then(|v| v.as_array()) else { continue };
+        for p in partitions {
+            let cube_name = p.get("cube_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if cube_name.is_empty() { continue; }
+            let entry = stats.entry(cube_name).or_default();
+            entry.row_count += p.get("total_rows").and_then(|v| v.as_u64()).unwrap_or(0);
+            entry.size_bytes += p.get("level_sizes").and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|x| x.as_u64()).sum::<u64>())
+                .unwrap_or(0);
+            entry.partition_count += 1;
+        }
+    }
+    stats
+}
+
+fn sn_http_list() -> Vec<String> {
+    let http_nodes = std::env::var("STORAGE_HTTP_NODES").unwrap_or_default();
+    if !http_nodes.trim().is_empty() {
+        http_nodes.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    } else {
+        std::env::var("STORAGE_NODES").unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().replace(":9060", ":8040").replace(":9061", ":8041").replace(":9062", ":8042"))
+            .filter(|s| !s.is_empty())
+            .collect()
     }
 }
 

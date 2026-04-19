@@ -107,6 +107,11 @@ impl MemTable {
         self.size_bytes.load(Ordering::Relaxed)
     }
 
+    /// 삽입된 행 수 (tombstone 포함)
+    pub fn row_count(&self) -> usize {
+        self.map.len()
+    }
+
     /// 임계값 초과 여부
     pub fn is_full(&self) -> bool {
         self.size_bytes() >= self.threshold

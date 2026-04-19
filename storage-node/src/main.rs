@@ -218,13 +218,28 @@ async fn main() -> Result<()> {
                 async move {
                     let partitions = reg.get_all_lsm_stats().await;
                     let total_l0: usize = partitions.iter().map(|p| p.l0_file_count).sum();
+                    let total_rows: u64 = partitions.iter().map(|p| p.total_rows).sum();
+                    let total_size_bytes: u64 = partitions.iter()
+                        .flat_map(|p| p.level_sizes.iter().copied())
+                        .sum();
+                    let compaction_running = partitions.iter()
+                        .any(|p| p.compaction_status == "Running");
+                    let write_control = if partitions.iter().any(|p| p.write_control == "Stop") {
+                        "Stop"
+                    } else if partitions.iter().any(|p| p.write_control == "Slowdown") {
+                        "Slowdown"
+                    } else {
+                        "Normal"
+                    };
                     Json(serde_json::json!({
                         "node_id": nid,
                         "sn_endpoint": format!("127.0.0.1:{}", http_port),
                         "partitions": partitions,
                         "total_l0_files": total_l0,
-                        "compaction_running": false,
-                        "write_control": "Normal",
+                        "total_rows": total_rows,
+                        "total_size_bytes": total_size_bytes,
+                        "compaction_running": compaction_running,
+                        "write_control": write_control,
                         "updated_at_ms": std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default().as_millis() as u64,
