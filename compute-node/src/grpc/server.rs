@@ -61,11 +61,31 @@ impl ComputeService for ComputeServiceImpl {
         let plan_bytes  = r.plan.clone();
 
         tokio::spawn(async move {
+            let start_ms = shared::log_buffer::now_ms();
+
+            // 시작 로그 기록 (FR-007: Fragment ID + timestamp)
+            if let Ok(mut buf) = crate::LOG_BUFFER.lock() {
+                buf.push(shared::log_buffer::make_entry(
+                    shared::log_buffer::LogLevel::Info,
+                    "compute_node::grpc::server",
+                    &format!("ExecuteFragment START fragment_id={}", fragment_id),
+                    vec![("query_id", &query_id), ("fragment_id", &fragment_id)],
+                ));
+            }
+
             // 1. plan JSON 역직렬화 (QN이 보낸 FragmentPlan)
             let plan: FragmentPlan = match serde_json::from_slice(&plan_bytes) {
                 Ok(p) => p,
                 Err(e) => {
                     warn!(err = %e, "plan deserialize failed");
+                    if let Ok(mut buf) = crate::LOG_BUFFER.lock() {
+                        buf.push(shared::log_buffer::make_entry(
+                            shared::log_buffer::LogLevel::Error,
+                            "compute_node::grpc::server",
+                            &format!("ExecuteFragment ERROR fragment_id={} err={}", fragment_id, e),
+                            vec![("fragment_id", &fragment_id)],
+                        ));
+                    }
                     let _ = tx.send(Err(Status::invalid_argument(format!("plan JSON error: {e}")))).await;
                     return;
                 }
@@ -84,17 +104,47 @@ impl ComputeService for ComputeServiceImpl {
                 Ok(r) => r,
                 Err(e) => {
                     warn!(err = %e, "SN scan failed");
+                    if let Ok(mut buf) = crate::LOG_BUFFER.lock() {
+                        buf.push(shared::log_buffer::make_entry(
+                            shared::log_buffer::LogLevel::Error,
+                            "compute_node::grpc::server",
+                            &format!("ExecuteFragment SN_ERROR fragment_id={} err={}", fragment_id, e),
+                            vec![("fragment_id", &fragment_id), ("table", &plan.table)],
+                        ));
+                    }
                     let _ = tx.send(Err(Status::internal(format!("SN scan error: {e}")))).await;
                     return;
                 }
             };
 
             let row_count = rows.len() as u64;
+            let elapsed_ms = shared::log_buffer::now_ms().saturating_sub(start_ms);
+
             info!(
                 query_id = %query_id,
                 rows     = row_count,
+                elapsed_ms,
                 "ExecuteFragment: SN scan OK, sending results"
             );
+
+            // 완료 로그 기록 (FR-007: 처리 시간 + 결과 행 수 포함)
+            if let Ok(mut buf) = crate::LOG_BUFFER.lock() {
+                buf.push(shared::log_buffer::make_entry(
+                    shared::log_buffer::LogLevel::Info,
+                    "compute_node::grpc::server",
+                    &format!(
+                        "ExecuteFragment DONE fragment_id={} table={} rows={} elapsed_ms={}",
+                        fragment_id, plan.table, row_count, elapsed_ms
+                    ),
+                    vec![
+                        ("fragment_id", &fragment_id),
+                        ("query_id",    &query_id),
+                        ("table",       &plan.table),
+                        ("rows",        &row_count.to_string()),
+                        ("elapsed_ms",  &elapsed_ms.to_string()),
+                    ],
+                ));
+            }
 
             // 3. 결과를 JSON bytes 로 직렬화 → FragmentResult.batch
             let batch_bytes = serde_json::to_vec(&rows).unwrap_or_default();

@@ -1,8 +1,10 @@
 ﻿# wow-db Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-12
+Auto-generated from all feature plans. Last updated: 2026-04-17
 
 ## Active Technologies
+- Rust 1.87 stable + axum (already in use), tokio, serde_json, tracing (002-wow-db-srs-v02)
+- 읽기 전용 — Raft KV (cube 목록), SN gRPC scan (LSM 상태 폴링) (002-wow-db-srs-v02)
 
 - Rust 1.87 stable (주), C++ 없음 (rdkafka의 librdkafka 제외) (002-wow-db-srs-v02)
 
@@ -51,6 +53,7 @@ cargo clippy --workspace            # Lint
 Rust 1.87 stable (주), C++ 없음 (rdkafka의 librdkafka 제외): Follow standard conventions
 
 ## Recent Changes
+- 002-wow-db-srs-v02: Added Rust 1.87 stable + axum (already in use), tokio, serde_json, tracing
 
 - 002-wow-db-srs-v02: Added Rust 1.87 stable (주), C++ 없음 (rdkafka의 librdkafka 제외)
 

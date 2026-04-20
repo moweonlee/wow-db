@@ -18,6 +18,7 @@ mod resource_group;
 mod executor;
 mod disk_monitor;
 mod rpc;
+mod startup;
 pub mod storage_client;
 pub mod cn_client;
 
@@ -142,16 +143,27 @@ async fn main() -> Result<()> {
         "Query Node starting"
     );
 
-    // ── 공유 매니저 초기화 ────────────────────────────────────────────────────
-    let raft     = Arc::new(RaftManager::new_local());
+    // ── 공유 매니저 초기화 (Raft KV 영속화 활성화) ───────────────────────────
+    let qn_data_dir = {
+        let base = std::env::var("QN_DATA_DIR")
+            .unwrap_or_else(|_| {
+                let tmp = std::env::temp_dir();
+                format!("{}/wowdb-dev/{}/meta", tmp.display(), node_id)
+            });
+        std::path::PathBuf::from(base)
+    };
+    let raft     = Arc::new(RaftManager::new_with_persistence(1, &qn_data_dir));
     let cube_mgr = Arc::new(CubeManager::new(raft.clone()));
     let smv_mgr  = Arc::new(SmvManager::new(raft.clone()));
 
     // ── Web UI 서버 기동 (포트 8080) ─────────────────────────────────────────
+    let node_registry = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
     let web_state = WebUiState {
         cube_mgr: cube_mgr.clone(),
         smv_mgr:  smv_mgr.clone(),
         raft:     raft.clone(),
+        node_id:  node_id.clone(),
+        nodes:    node_registry,
     };
     let web_port_copy = web_port;
     tokio::spawn(async move {
@@ -160,6 +172,19 @@ async fn main() -> Result<()> {
         }
     });
     info!(port = web_port, "Web UI server started");
+
+    // ── QN 피어 등록 (StarRocks FE 패턴: QN끼리 서로 등록) ──────────────────
+    {
+        let nid       = node_id.clone();
+        let mysql_str = format!("127.0.0.1:{}", mysql_port);
+        tokio::spawn(async move {
+            // Web UI 서버가 바인딩될 때까지 잠시 대기
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            if let Err(e) = startup::register_with_qn_peers(nid, mysql_str, web_port).await {
+                tracing::warn!(err = %e, "QN peer registration error");
+            }
+        });
+    }
 
     // ── MySQL Protocol 서버 기동 (포트 9030) ─────────────────────────────────
     let mysql_addr: SocketAddr = format!("0.0.0.0:{}", mysql_port).parse()?;

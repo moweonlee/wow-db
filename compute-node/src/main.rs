@@ -12,11 +12,20 @@ mod analytics;
 mod result_cache;
 mod startup;
 
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex, LazyLock};
+
 use anyhow::Result;
-use axum::{routing::get, Router, Json};
+use axum::{routing::get, Router, Json, extract::Query};
 use serde::Deserialize;
 use tokio::net::TcpListener;
 use tracing::info;
+
+use shared::log_buffer::{LogBuffer, LogEntry, LogLevel, LogsResponse, make_entry, now_ms};
+
+// ── 전역 로그 버퍼 ────────────────────────────────────────────────────────────
+pub static LOG_BUFFER: LazyLock<Arc<Mutex<LogBuffer>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(LogBuffer::new(100))));
 
 // ── TOML 설정 구조체 ──────────────────────────────────────────────────────────
 
@@ -123,6 +132,10 @@ async fn main() -> Result<()> {
     #[cfg(not(target_arch = "x86_64"))]
     info!(node_id = %node_id, grpc_port, storage_nodes = %sn_addrs, "Compute Node starting");
 
+    // ── 클러스터 자가 등록 (QN_HTTP_PEERS 설정 시) ────────────────────────────
+    let cn_grpc_addr = format!("127.0.0.1:{}", grpc_port);
+    startup::register_with_cluster(&node_id, &cn_grpc_addr).await?;
+
     // ── gRPC ComputeService 기동 (QN 의 ExecuteFragment 요청 수신) ──────────
     let grpc_addr_str = format!("0.0.0.0:{}", grpc_port);
     let grpc_node     = node_id.clone();
@@ -134,14 +147,36 @@ async fn main() -> Result<()> {
     });
     info!(port = grpc_port, "Compute Node gRPC server started (ExecuteFragment)");
 
-    // ── HTTP 서버 기동 (헬스체크) ────────────────────────────────────────────
+    // 시작 로그 기록
+    LOG_BUFFER.lock().unwrap().push(make_entry(
+        LogLevel::Info, "compute_node", "Compute Node started",
+        vec![("node_id", &node_id), ("grpc_port", &grpc_port.to_string())],
+    ));
+
+    // ── HTTP 서버 기동 (헬스체크 + /logs) ────────────────────────────────────
     let nid = node_id.clone();
+    let nid2 = node_id.clone();
     let router = Router::new()
         .route("/health", get(|| async { Json(serde_json::json!({ "status": "ok" })) }))
         .route("/healthz", get(|| async { Json(serde_json::json!({ "status": "ok" })) }))
         .route("/api/v1/info", get(move || {
             let id = nid.clone();
             async move { Json(serde_json::json!({ "node_id": id, "role": "compute" })) }
+        }))
+        .route("/logs", get({
+            let nid = nid2.clone();
+            move |q: Query<LogQuery>| {
+                let nid = nid.clone();
+                async move {
+                    let min_level = q.level.as_deref()
+                        .map(LogLevel::from_str)
+                        .unwrap_or(LogLevel::Debug);
+                    let buf = LOG_BUFFER.lock().unwrap();
+                    let entries = buf.recent_by_level(&min_level, 100);
+                    let total = buf.len();
+                    Json(LogsResponse { node_id: nid, role: "compute".into(), entries, total_buffered: total })
+                }
+            }
         }));
 
     let http_addr = format!("0.0.0.0:{}", http_port);
@@ -157,6 +192,11 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[derive(Deserialize)]
+struct LogQuery {
+    level: Option<String>,
 }
 
 fn num_cpus() -> usize {

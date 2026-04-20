@@ -6,12 +6,14 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
 use shared::types::{SortKey, SortKeyComponent};
 
+use crate::lsm::levels::{CompactionConfig, PartitionLevels, SstRef, WriteControl};
 use crate::lsm::memtable::{MemTable, DEFAULT_MEMTABLE_THRESHOLD};
+use crate::lsm::sstable::{PartitionSeqCounter, SsTableFlusher};
 use crate::lsm::wal::{Wal, WalEntry};
 
 // ─── 쓰기 요청 타입 ──────────────────────────────────────────────────────────
@@ -117,12 +119,14 @@ pub fn deserialize_write_batch(data: &[u8]) -> Result<Vec<WriteRow>> {
 
 // ─── Tablet Writer ────────────────────────────────────────────────────────────
 
-/// 단일 Tablet의 쓰기 담당 (WAL + MemTable)
+/// 단일 Tablet의 쓰기 담당 (WAL + MemTable + SSTable flush pipeline)
 pub struct TabletWriter {
-    tablet_id: String,
-    wal:       Arc<Wal>,
-    memtable:  Arc<Mutex<MemTable>>,
-    data_dir:  PathBuf,
+    tablet_id:   String,
+    wal:         Arc<Wal>,
+    memtable:    Arc<Mutex<MemTable>>,
+    data_dir:    PathBuf,
+    levels:      Arc<RwLock<PartitionLevels>>,
+    seq_counter: Arc<PartitionSeqCounter>,
 }
 
 impl TabletWriter {
@@ -131,7 +135,10 @@ impl TabletWriter {
         let wal = Arc::new(Wal::open(&wal_dir).await?);
         let memtable = Arc::new(Mutex::new(MemTable::new(DEFAULT_MEMTABLE_THRESHOLD)));
 
-        let writer = Self { tablet_id: tablet_id.clone(), wal, memtable, data_dir };
+        let levels      = Arc::new(RwLock::new(PartitionLevels::new(CompactionConfig::default())));
+        let seq_counter = Arc::new(PartitionSeqCounter::new(0));
+
+        let writer = Self { tablet_id: tablet_id.clone(), wal, memtable, data_dir, levels, seq_counter };
 
         // WAL replay: 크래시/재시작 후 MemTable 복구
         writer.replay_wal().await?;
@@ -180,6 +187,9 @@ impl TabletWriter {
                 rows = replayed,
                 "WAL replay 완료 — MemTable 복구"
             );
+            // FR-008: WAL 이벤트 — main.rs 의 LOG_BUFFER 는 바이너리 전용이라 직접 참조 불가.
+            // 향후 LogBuffer 를 TabletWriter 에 주입하는 방식으로 개선 가능.
+            // 현재는 info! tracing 로그로만 기록 (운영 로그 파일에는 남음).
         }
         Ok(())
     }
@@ -213,10 +223,56 @@ impl TabletWriter {
             "MemTable insert complete"
         );
 
-        // MemTable이 가득 찬 경우: flush 트리거 (비동기 — Phase D에서 완전 구현)
+        // MemTable이 가득 찬 경우: 스냅샷 → reset → 백그라운드 SSTable flush
         if mem.is_full() {
-            info!(tablet_id = %self.tablet_id, "MemTable full, flush needed");
-            // TODO: freeze → SSTable flush 트리거
+            let imm = mem.snapshot_as_immutable();
+            mem.reset();
+            drop(mem);
+
+            info!(tablet_id = %self.tablet_id, "MemTable full, triggering SSTable flush");
+            let levels        = Arc::clone(&self.levels);
+            let seq_counter   = Arc::clone(&self.seq_counter);
+            let partition_dir = self.data_dir.join(&self.tablet_id);
+            let tablet_id     = self.tablet_id.clone();
+
+            tokio::spawn(async move {
+                let seq     = seq_counter.next();
+                let flusher = SsTableFlusher::new(&partition_dir);
+                match flusher.flush(imm, seq, seq).await {
+                    Ok(meta) => {
+                        let size_bytes: u64 =
+                            meta.columns.iter().map(|c| c.compressed_bytes).sum();
+                        let sst = SstRef {
+                            id:             meta.id,
+                            sequence_num:   meta.sequence_num,
+                            generation:     meta.generation,
+                            compacted_from: meta.compacted_from,
+                            level:          0,
+                            path:           partition_dir
+                                .join(format!("_meta/sstable-{:010}.json", meta.seq)),
+                            size_bytes,
+                            row_count:      meta.row_count,
+                            min_sort_key:   meta.min_sort_key,
+                            max_sort_key:   meta.max_sort_key,
+                        };
+                        let mut lvls = levels.write().await;
+                        lvls.add(sst);
+                        info!(
+                            tablet_id = %tablet_id,
+                            seq,
+                            l0_count = lvls.l0_count(),
+                            "SSTable flushed → L0"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            tablet_id = %tablet_id,
+                            err = %e,
+                            "SSTable flush 실패"
+                        );
+                    }
+                }
+            });
         }
 
         Ok(row_count as u64)
@@ -278,6 +334,54 @@ impl TabletWriter {
     pub async fn memtable_size(&self) -> usize {
         self.memtable.lock().await.size_bytes()
     }
+
+    /// LSM 레벨 통계 반환 (대시보드 `/api/v1/lsm-status` 용)
+    pub async fn get_lsm_stats(&self) -> crate::lsm::levels::TabletLsmStats {
+        use crate::lsm::levels::TabletLsmStats;
+
+        let mem = self.memtable.lock().await;
+        let mem_size = mem.size_bytes();
+        let mem_rows = mem.row_count() as u64;
+        drop(mem);
+
+        let (cube_name, partition_name) = if let Some(pos) = self.tablet_id.rfind('/') {
+            (self.tablet_id[..pos].to_string(), self.tablet_id[pos+1..].to_string())
+        } else {
+            (self.tablet_id.clone(), "default".to_string())
+        };
+
+        let lvls = self.levels.read().await;
+        let mut level_stats = lvls.level_stats();
+        // 아직 flush 안 된 MemTable 데이터를 L0 크기에 합산
+        if let Some(l0) = level_stats.first_mut() {
+            l0.size_bytes += mem_size as u64;
+        }
+        let l0_count         = lvls.l0_count();
+        let sst_rows: u64    = lvls.read_snapshot().iter().map(|s| s.row_count).sum();
+        let compaction_score = lvls.compaction_score(0);
+        let level_sizes: Vec<u64> = level_stats.iter().map(|ls| ls.size_bytes).collect();
+        let write_control    = match lvls.write_control() {
+            WriteControl::Stop     => "Stop",
+            WriteControl::Slowdown => "Slowdown",
+            WriteControl::Normal   => "Normal",
+        }.to_string();
+        drop(lvls);
+
+        TabletLsmStats {
+            tablet_id:          self.tablet_id.clone(),
+            cube_name,
+            partition_name,
+            levels:             level_stats,
+            l0_file_count:      l0_count,
+            total_levels:       level_sizes.len() as u32,
+            level_sizes,
+            compaction_score,
+            compaction_status:  "Idle".to_string(),
+            write_control,
+            last_compaction_ms: None,
+            total_rows:         mem_rows + sst_rows,
+        }
+    }
 }
 
 // ─── Tablet Writer Registry ───────────────────────────────────────────────────
@@ -294,6 +398,33 @@ impl TabletWriterRegistry {
             writers:  Arc::new(Mutex::new(HashMap::new())),
             data_dir,
         }
+    }
+
+    /// Tablet 을 레지스트리에서 제거하고 물리 데이터 디렉토리 삭제 (DROP CUBE / TRUNCATE)
+    pub async fn drop_tablet(&self, tablet_id: &str) {
+        {
+            let mut writers = self.writers.lock().await;
+            writers.remove(tablet_id);
+        }
+        // 락 밖에서 디스크 I/O 수행
+        let tablet_dir = self.data_dir.join(tablet_id);
+        if tablet_dir.exists() {
+            match tokio::fs::remove_dir_all(&tablet_dir).await {
+                Ok(_)  => tracing::info!(tablet_id, "Tablet data directory deleted"),
+                Err(e) => tracing::warn!(tablet_id, err = %e, "Failed to delete tablet data dir"),
+            }
+        }
+        tracing::info!(tablet_id = %tablet_id, "TabletWriter dropped and data purged");
+    }
+
+    /// 등록된 모든 Tablet 의 LSM 통계 반환 (대시보드 용)
+    pub async fn get_all_lsm_stats(&self) -> Vec<crate::lsm::levels::TabletLsmStats> {
+        let writers = self.writers.lock().await;
+        let mut stats = Vec::new();
+        for writer in writers.values() {
+            stats.push(writer.get_lsm_stats().await);
+        }
+        stats
     }
 
     pub async fn get_or_create(&self, tablet_id: &str) -> Result<Arc<TabletWriter>> {

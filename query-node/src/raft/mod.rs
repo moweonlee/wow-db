@@ -3,12 +3,13 @@
 // 완전 구현: Phase E (영속화 + 실제 네트워크 전송)
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 // ─── Raft 노드 식별 ───────────────────────────────────────────────────────────
 
@@ -61,11 +62,30 @@ pub struct RaftResponse {
 
 // ─── 상태 머신 ────────────────────────────────────────────────────────────────
 
-/// 메타데이터 KV 상태 머신 (인메모리 — Phase E에서 RocksDB 영속화)
+/// 메타데이터 KV 상태 머신 (JSON 스냅샷 영속화)
 #[derive(Debug, Default)]
 pub struct MetaStateMachine {
     /// KV 저장소: "cube:{id}" → schema_json, "tablet:{id}" → info_json 등
     pub kv: BTreeMap<String, String>,
+}
+
+impl MetaStateMachine {
+    /// 파일에서 KV 스냅샷을 로드 (QN 재시작 복구용)
+    fn load_from_file(path: &Path) -> Self {
+        match std::fs::read_to_string(path) {
+            Ok(json) => match serde_json::from_str::<BTreeMap<String, String>>(&json) {
+                Ok(kv) => {
+                    info!(path = %path.display(), entries = kv.len(), "Raft: snapshot loaded");
+                    MetaStateMachine { kv }
+                }
+                Err(e) => {
+                    warn!(path = %path.display(), err = %e, "Raft: corrupt snapshot, starting fresh");
+                    MetaStateMachine::default()
+                }
+            },
+            Err(_) => MetaStateMachine::default(),
+        }
+    }
 }
 
 impl MetaStateMachine {
@@ -120,13 +140,29 @@ pub struct RaftManager {
     pub node_id: RaftNodeId,
     /// 공유 상태 머신 (읽기/쓰기 잠금)
     pub sm:      Arc<RwLock<MetaStateMachine>>,
+    /// JSON 스냅샷 파일 경로 (None이면 메모리 전용)
+    snapshot_path: Option<PathBuf>,
 }
 
 impl RaftManager {
     pub fn new(node_id: u64) -> Self {
         Self {
-            node_id: RaftNodeId(node_id),
-            sm:      Arc::new(RwLock::new(MetaStateMachine::default())),
+            node_id:       RaftNodeId(node_id),
+            sm:            Arc::new(RwLock::new(MetaStateMachine::default())),
+            snapshot_path: None,
+        }
+    }
+
+    /// 디스크 영속화를 활성화한 RaftManager 생성
+    /// data_dir: QN 노드별 고유 디렉터리 (재시작 후 복구에 사용)
+    pub fn new_with_persistence(node_id: u64, data_dir: &Path) -> Self {
+        let snapshot_path = data_dir.join("raft_snapshot.json");
+        let sm = MetaStateMachine::load_from_file(&snapshot_path);
+        let _ = std::fs::create_dir_all(data_dir); // ensure dir exists
+        Self {
+            node_id:       RaftNodeId(node_id),
+            sm:            Arc::new(RwLock::new(sm)),
+            snapshot_path: Some(snapshot_path),
         }
     }
 
@@ -148,13 +184,30 @@ impl RaftManager {
         Ok(())
     }
 
-    /// 커맨드를 Raft 로그에 기록하고 상태 머신에 적용
-    ///
-    /// Phase B 전: 직접 상태 머신에 적용 (Raft 합의 없이)
+    /// 커맨드를 Raft 로그에 기록하고 상태 머신에 적용 (Phase B 전: 직접 적용)
     pub async fn write(&self, cmd: RaftCommand) -> Result<RaftResponse> {
-        let mut sm = self.sm.write().await;
-        sm.apply(&cmd);
-        debug!(cmd = ?cmd, "Raft write (stub — no consensus yet)");
+        let snapshot = {
+            let mut sm = self.sm.write().await;
+            sm.apply(&cmd);
+            self.snapshot_path.as_ref().map(|_| sm.kv.clone())
+        };
+
+        // JSON 스냅샷을 원자적 파일로 영속화 (tmp → rename)
+        if let (Some(kv), Some(path)) = (snapshot, &self.snapshot_path) {
+            match serde_json::to_string(&kv) {
+                Ok(json) => {
+                    let tmp = path.with_extension("json.tmp");
+                    if let Err(e) = tokio::fs::write(&tmp, &json).await
+                        .and_then(|_| std::fs::rename(&tmp, path).map_err(Into::into))
+                    {
+                        warn!(path = %path.display(), err = %e, "Raft: snapshot persist failed");
+                    }
+                }
+                Err(e) => warn!(err = %e, "Raft: snapshot serialize failed"),
+            }
+        }
+
+        debug!(cmd = ?cmd, "Raft write");
         Ok(RaftResponse { ok: true })
     }
 
@@ -168,7 +221,7 @@ impl RaftManager {
         self.sm.clone()
     }
 
-    /// 로컬(단일 노드) RaftManager 생성 — 테스트용
+    /// 로컬(단일 노드) RaftManager 생성 — 테스트 전용 (메모리 전용, 영속화 없음)
     pub fn new_local() -> Self {
         Self::new(1)
     }

@@ -107,9 +107,21 @@ impl MemTable {
         self.size_bytes.load(Ordering::Relaxed)
     }
 
+    /// 삽입된 행 수 (tombstone 포함)
+    pub fn row_count(&self) -> usize {
+        self.map.len()
+    }
+
     /// 임계값 초과 여부
     pub fn is_full(&self) -> bool {
         self.size_bytes() >= self.threshold
+    }
+
+    /// MemTable 내용 초기화 (flush 완료 후 새 쓰기 수신용).
+    /// seq_gen 은 보존하여 시퀀스 단조증가 불변 조건 유지.
+    pub fn reset(&mut self) {
+        self.map = Arc::new(SkipMap::new());
+        self.size_bytes.store(0, Ordering::SeqCst);
     }
 
     /// MemTable을 Immutable 스냅샷으로 변환 (self 소비)

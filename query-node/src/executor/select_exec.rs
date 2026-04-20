@@ -16,18 +16,54 @@ pub struct SelectResult {
 
 // ── 공개 진입점 ─────────────────────────────────────────────────────────────
 
-/// SQL SELECT 실행 (async — QN→CN→SN 또는 직접 SN, 또는 MEM_STORE 폴백)
+/// SQL SELECT 실행 (async — QN→SN 전체 스캔 또는 CN→SN 단일, 또는 MEM_STORE 폴백)
 ///
 /// 우선순위:
-///   1. CN 노드 설정 시 → QN→CN→SN 전체 파이프라인
-///   2. SN 직접 연결 시 → QN→SN (CN 없을 때)
+///   1. SN 다중 노드 → scan_all_rows (모든 SN 스캔 후 QN에서 GROUP BY 머지)
+///   2. SN 단일 노드 + CN 설정 → QN→CN→SN 파이프라인
 ///   3. MEM_STORE 폴백
 pub async fn execute_select(sql: &str) -> Result<SelectResult, String> {
-    let table_name = quick_extract_table(sql);
+    let all_tables = quick_extract_all_tables(sql);
 
-    // ── 우선순위 1: CN 경유 (QN→CN→SN) ──────────────────────────────────────
-    // CN 은 raw rows 를 반환한다. QN 은 이를 MEM_STORE 에 넣고
-    // execute_select_sync 로 SQL 연산(COUNT, WHERE, GROUP BY 등)을 적용한다.
+    // ── 우선순위 1: SN 다중 노드 — 전체 scan_all_rows → QN 집계 ─────────────
+    // 샤딩된 데이터는 여러 SN에 분산되어 있으므로 모든 SN을 스캔하여 머지한 후
+    // QN 에서 GROUP BY / ORDER BY / LIMIT 을 처리한다.
+    // 멀티-테이블 FROM(j1, j2)도 지원: FROM의 모든 테이블을 SN에서 스캔한다.
+    if !all_tables.is_empty() {
+        let sn_count = {
+            let pool = crate::storage_client::STORAGE.lock().await;
+            pool.sn_count()
+        };
+
+        if sn_count > 0 {
+            let mut any_sn_hit = false;
+            for table in &all_tables {
+                let sn_rows = {
+                    let mut pool = crate::storage_client::STORAGE.lock().await;
+                    pool.scan_all_rows(table).await
+                };
+
+                if let Some(rows) = sn_rows {
+                    any_sn_hit = true;
+                    if !rows.is_empty() {
+                        // SN에 실제 데이터가 있으면 MEM_STORE를 SN 데이터로 교체
+                        MEM_STORE.drop_table(table);
+                        for row in &rows {
+                            MEM_STORE.insert(table, row.clone());
+                        }
+                        tracing::debug!(table, total = rows.len(), "select: scan_all_rows merged");
+                    }
+                    // SN이 빈 결과를 반환해도 MEM_STORE 데이터는 유지 (INSERT 이중-기록 보장)
+                }
+            }
+            if any_sn_hit {
+                return execute_select_sync(sql);
+            }
+        }
+    }
+
+    // ── 우선순위 2: CN 경유 (SN 미연결 시 폴백) ──────────────────────────────
+    let table_name = all_tables.into_iter().next();
     if let Some(ref table) = table_name {
         let cn_has_compute = crate::cn_client::CN.lock().await.has_compute();
         if cn_has_compute {
@@ -45,7 +81,6 @@ pub async fn execute_select(sql: &str) -> Result<SelectResult, String> {
             };
 
             if let Some(result) = cn_rows {
-                // CN raw rows → MEM_STORE 교체 → SQL 연산 재적용
                 MEM_STORE.drop_table(table);
                 for row in &result.rows {
                     let map: std::collections::HashMap<String, serde_json::Value> =
@@ -56,20 +91,6 @@ pub async fn execute_select(sql: &str) -> Result<SelectResult, String> {
                 }
                 return execute_select_sync(sql);
             }
-            // CN 실패 → SN 직접 폴백
-        }
-    }
-
-    // ── 우선순위 2: SN 직접 스캔 (QN→SN) ────────────────────────────────────
-    if let Some(ref table) = table_name {
-        let mut pool = crate::storage_client::STORAGE.lock().await;
-        if pool.has_storage() {
-            if let Some(sn_rows) = pool.scan_rows(table).await {
-                MEM_STORE.drop_table(table);
-                for row in &sn_rows {
-                    MEM_STORE.insert(table, row.clone());
-                }
-            }
         }
     }
 
@@ -77,16 +98,43 @@ pub async fn execute_select(sql: &str) -> Result<SelectResult, String> {
     execute_select_sync(sql)
 }
 
-/// SELECT 테이블명 빠른 추출 (SN scan 전 사용)
-fn quick_extract_table(sql: &str) -> Option<String> {
+/// Extract ALL table names from FROM clause (handles comma-separated and multiline SQL).
+/// Skips aliases. Returns empty vec if FROM not found.
+fn quick_extract_all_tables(sql: &str) -> Vec<String> {
     let lower = sql.to_lowercase();
-    let from_pos = lower.find(" from ")?;
-    let after_from = lower[from_pos + 6..].trim();
-    let name: String = after_from
-        .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '_')
-        .collect();
-    if name.is_empty() { None } else { Some(name) }
+
+    // Find FROM keyword (handle leading space or newline)
+    let from_start = [" from ", "\nfrom ", "\tfrom "]
+        .iter()
+        .find_map(|pat| lower.find(pat).map(|p| p + pat.len()));
+    let after_from = match from_start {
+        Some(p) => lower[p..].trim_start(),
+        None    => return vec![],
+    };
+
+    // End of FROM clause — first keyword that starts a new clause
+    let end_pos = [" where ", "\nwhere ", " group ", "\ngroup ",
+                   " order ", "\norder ", " having ", "\nhaving ",
+                   " limit ", "\nlimit ", " join ", "\njoin "]
+        .iter()
+        .filter_map(|kw| after_from.find(kw))
+        .min()
+        .unwrap_or(after_from.len());
+
+    let from_clause = &after_from[..end_pos];
+
+    // Each comma-separated segment: first word = table name (skip alias)
+    from_clause.split(',')
+        .filter_map(|seg| {
+            let name: String = seg.trim()
+                .split(|c: char| c.is_whitespace())
+                .next()
+                .unwrap_or("")
+                .trim_matches('`')
+                .to_string();
+            if name.is_empty() || name.starts_with('(') { None } else { Some(name) }
+        })
+        .collect()
 }
 
 /// 동기 SELECT 실행 (MEM_STORE 기반)
@@ -159,12 +207,95 @@ fn execute_select_sync(sql: &str) -> Result<SelectResult, String> {
         raw_base_rows
     };
 
+    // Extract equality conditions from WHERE for hash join (col1 = col2 pairs)
+    let eq_conds: Vec<(String, String)> = select.selection.as_ref()
+        .map(|e| extract_eq_conditions(e))
+        .unwrap_or_default();
+
+    // Split WHERE into AND-conjuncts for predicate pushdown
+    let conjuncts: Vec<sqlparser::ast::Expr> = select.selection.as_ref()
+        .map(|e| split_and_conjuncts(e))
+        .unwrap_or_default();
+
+    // Collect all columns referenced in the query for join pipeline column projection
+    let needed_cols = collect_query_needed_cols(
+        &select.projection,
+        select.selection.as_ref(),
+        &select.group_by,
+        query.order_by.as_ref(),
+        select.having.as_ref(),
+    );
+
+    // Macro-like helper: apply pushdown then project (inline closure)
+    macro_rules! prune {
+        ($r:expr) => {{
+            let r = apply_partial_where($r, &conjuncts);
+            if let Some(ref nc) = needed_cols { project_to_needed_cols(r, nc) } else { r }
+        }};
+    }
+
+    // Apply pushdown + projection to base table before any joins
+    let base_rows = prune!(base_rows);
+
     let mut rows: Vec<Row> = if from_item.joins.is_empty() {
         base_rows
     } else {
-        // JOIN 수행: nested loop join
-        apply_joins(base_rows, &from_item.joins, left_alias.as_deref())?
+        let joined = apply_joins(base_rows, &from_item.joins, left_alias.as_deref())?;
+        prune!(joined)
     };
+
+    // Handle comma-separated FROM tables (FROM a, b, c → implicit hash/cross joins)
+    for extra_from in &select.from[1..] {
+        let extra_table = match &extra_from.relation {
+            TableFactor::Table { name, .. } =>
+                name.0.last().map(|i| i.value.clone()).unwrap_or_default(),
+            _ => continue,
+        };
+        let extra_alias = match &extra_from.relation {
+            TableFactor::Table { alias, .. } => alias.as_ref().map(|a| a.name.value.clone()),
+            _ => None,
+        };
+        let right_rows = MEM_STORE.scan(&extra_table);
+
+        eprintln!("[join] table={extra_table} left_rows={} right_rows={}", rows.len(), right_rows.len());
+
+        let known_cols: std::collections::HashSet<String> = rows.first()
+            .map(|r| r.keys().cloned().collect())
+            .unwrap_or_default();
+        let right_cols: std::collections::HashSet<String> = right_rows.first()
+            .map(|r| r.keys().cloned().collect())
+            .unwrap_or_default();
+
+        eprintln!("[join] eq_conds={eq_conds:?}");
+        eprintln!("[join] known_cols sample: {:?}", known_cols.iter().take(5).collect::<Vec<_>>());
+        eprintln!("[join] right_cols sample: {:?}", right_cols.iter().take(5).collect::<Vec<_>>());
+
+        // Use hash join when an equality condition links known col to new table col
+        let join_key = eq_conds.iter().find_map(|(a, b)| {
+            if known_cols.contains(a) && right_cols.contains(b) {
+                Some((a.clone(), b.clone()))
+            } else if known_cols.contains(b) && right_cols.contains(a) {
+                Some((b.clone(), a.clone()))
+            } else {
+                None
+            }
+        });
+        eprintln!("[join] join_key={join_key:?}");
+
+        rows = if let Some((lc, rc)) = join_key {
+            hash_join_tables(rows, right_rows, &lc, &rc, extra_alias.as_deref())
+        } else {
+            cross_join_tables(rows, &right_rows, extra_alias.as_deref())
+        };
+
+        // Predicate pushdown + column projection after each join
+        rows = prune!(rows);
+
+        if !extra_from.joins.is_empty() {
+            rows = apply_joins(rows, &extra_from.joins, extra_alias.as_deref())?;
+            rows = prune!(rows);
+        }
+    }
 
     // WHERE 필터
     if let Some(ref where_expr) = select.selection {
@@ -285,6 +416,244 @@ fn apply_joins(
     Ok(result)
 }
 
+// ── 멀티-테이블 FROM 헬퍼 ────────────────────────────────────────────────────
+
+/// Extract all col=col equality pairs from a WHERE expression (for hash join planning)
+fn extract_eq_conditions(expr: &sqlparser::ast::Expr) -> Vec<(String, String)> {
+    use sqlparser::ast::{Expr, BinaryOperator};
+    match expr {
+        Expr::BinaryOp { left, op: BinaryOperator::Eq, right } => {
+            match (simple_col_name(left), simple_col_name(right)) {
+                (Some(l), Some(r)) => vec![(l, r)],
+                _ => vec![],
+            }
+        }
+        Expr::BinaryOp { left, op: BinaryOperator::And, right } => {
+            let mut v = extract_eq_conditions(left);
+            v.extend(extract_eq_conditions(right));
+            v
+        }
+        Expr::Nested(inner) => extract_eq_conditions(inner),
+        _ => vec![],
+    }
+}
+
+fn simple_col_name(expr: &sqlparser::ast::Expr) -> Option<String> {
+    use sqlparser::ast::Expr;
+    match expr {
+        Expr::Identifier(i) => Some(i.value.trim_matches('`').to_string()),
+        Expr::CompoundIdentifier(parts) =>
+            parts.last().map(|i| i.value.trim_matches('`').to_string()),
+        _ => None,
+    }
+}
+
+/// Split a WHERE expression into AND-conjuncts for predicate pushdown.
+fn split_and_conjuncts(expr: &sqlparser::ast::Expr) -> Vec<sqlparser::ast::Expr> {
+    use sqlparser::ast::{Expr, BinaryOperator};
+    match expr {
+        Expr::BinaryOp { left, op: BinaryOperator::And, right } => {
+            let mut v = split_and_conjuncts(left);
+            v.extend(split_and_conjuncts(right));
+            v
+        }
+        Expr::Nested(inner) => split_and_conjuncts(inner),
+        _ => vec![expr.clone()],
+    }
+}
+
+/// Collect all column identifiers referenced in an expression (lowercase).
+fn collect_expr_cols(expr: &sqlparser::ast::Expr) -> std::collections::HashSet<String> {
+    use sqlparser::ast::{Expr, FunctionArg, FunctionArgExpr, FunctionArguments};
+    let mut cols = std::collections::HashSet::new();
+    fn walk(e: &Expr, out: &mut std::collections::HashSet<String>) {
+        match e {
+            Expr::Identifier(i) => { out.insert(i.value.trim_matches('`').to_lowercase()); }
+            Expr::CompoundIdentifier(parts) => {
+                if let Some(last) = parts.last() {
+                    out.insert(last.value.trim_matches('`').to_lowercase());
+                }
+            }
+            Expr::BinaryOp { left, right, .. } => { walk(left, out); walk(right, out); }
+            Expr::UnaryOp { expr, .. } => walk(expr, out),
+            Expr::Between { expr, low, high, .. } => { walk(expr, out); walk(low, out); walk(high, out); }
+            Expr::InList { expr, list, .. } => { walk(expr, out); list.iter().for_each(|e| walk(e, out)); }
+            Expr::Like { expr, pattern, .. } => { walk(expr, out); walk(pattern, out); }
+            Expr::Function(f) => {
+                if let FunctionArguments::List(list) = &f.args {
+                    for arg in &list.args {
+                        if let FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) = arg { walk(e, out); }
+                    }
+                }
+            }
+            Expr::Nested(inner) => walk(inner, out),
+            Expr::Case { operand, conditions, results, else_result } => {
+                if let Some(op) = operand { walk(op, out); }
+                conditions.iter().for_each(|e| walk(e, out));
+                results.iter().for_each(|e| walk(e, out));
+                if let Some(er) = else_result { walk(er, out); }
+            }
+            _ => {}
+        }
+    }
+    walk(expr, &mut cols);
+    cols
+}
+
+/// Apply WHERE conjuncts that are fully evaluable with the current row set.
+/// Conjuncts referencing columns not yet available are skipped (pass-through).
+fn apply_partial_where(rows: Vec<Row>, conjuncts: &[sqlparser::ast::Expr]) -> Vec<Row> {
+    if rows.is_empty() || conjuncts.is_empty() {
+        return rows;
+    }
+    let available: std::collections::HashSet<String> = rows.first()
+        .map(|r| r.keys().map(|k| k.to_lowercase()).collect())
+        .unwrap_or_default();
+
+    // Only apply conjuncts where every referenced column is present
+    let applicable: Vec<&sqlparser::ast::Expr> = conjuncts.iter()
+        .filter(|c| {
+            let needed = collect_expr_cols(c);
+            !needed.is_empty() && needed.iter().all(|col| {
+                available.contains(col.as_str()) ||
+                available.iter().any(|k| k.ends_with(&format!(".{col}")))
+            })
+        })
+        .collect();
+
+    if applicable.is_empty() {
+        return rows;
+    }
+
+    let before = rows.len();
+    let result: Vec<Row> = rows.into_iter()
+        .filter(|row| applicable.iter().all(|c| eval_expr(c, row).as_bool()))
+        .collect();
+    if before != result.len() {
+        eprintln!("[pushdown] {} conjunct(s): {} → {} rows", applicable.len(), before, result.len());
+    }
+    result
+}
+
+/// Collect all column names needed by the entire query for join pipeline projection.
+/// Returns None if a wildcard is present (must keep all columns).
+fn collect_query_needed_cols(
+    projection: &[sqlparser::ast::SelectItem],
+    where_expr: Option<&sqlparser::ast::Expr>,
+    group_by: &sqlparser::ast::GroupByExpr,
+    order_by: Option<&sqlparser::ast::OrderBy>,
+    having: Option<&sqlparser::ast::Expr>,
+) -> Option<std::collections::HashSet<String>> {
+    use sqlparser::ast::{SelectItem, GroupByExpr};
+    let mut cols = std::collections::HashSet::new();
+    for item in projection {
+        match item {
+            SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _) => return None,
+            SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => {
+                cols.extend(collect_expr_cols(e));
+            }
+        }
+    }
+    if let Some(e) = where_expr { cols.extend(collect_expr_cols(e)); }
+    if let GroupByExpr::Expressions(exprs, _) = group_by {
+        for e in exprs { cols.extend(collect_expr_cols(e)); }
+    }
+    if let Some(ob) = order_by {
+        for oe in &ob.exprs { cols.extend(collect_expr_cols(&oe.expr)); }
+    }
+    if let Some(e) = having { cols.extend(collect_expr_cols(e)); }
+    Some(cols)
+}
+
+/// Project rows to only the columns needed by the query, reducing per-row memory.
+/// Precomputes keep-set from first row to amortize the cost across all rows.
+fn project_to_needed_cols(rows: Vec<Row>, needed: &std::collections::HashSet<String>) -> Vec<Row> {
+    if needed.is_empty() || rows.is_empty() { return rows; }
+    let keep: Vec<String> = rows.first()
+        .map(|r| r.keys().filter(|k| {
+            let kl = k.to_lowercase();
+            needed.contains(&kl) || needed.iter().any(|n| kl.ends_with(&format!(".{n}")))
+        }).cloned().collect())
+        .unwrap_or_default();
+    if keep.is_empty() { return rows; }
+    let keep_set: std::collections::HashSet<&str> = keep.iter().map(|s| s.as_str()).collect();
+    rows.into_iter().map(|mut row| { row.retain(|k, _| keep_set.contains(k.as_str())); row }).collect()
+}
+
+/// Hash join: build index on right[right_col], probe with left[left_col]. O(n+m).
+fn hash_join_tables(
+    left: Vec<Row>,
+    right: Vec<Row>,
+    left_col: &str,
+    right_col: &str,
+    right_alias: Option<&str>,
+) -> Vec<Row> {
+    tracing::debug!(
+        left_rows = left.len(), right_rows = right.len(),
+        left_col, right_col, "hash_join_tables: start"
+    );
+    eprintln!("[hash_join] left={} rows on {left_col}, right={} rows on {right_col}",
+        left.len(), right.len());
+
+    let mut right_index: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (i, row) in right.iter().enumerate() {
+        if let Some(v) = row.get(right_col) {
+            let k = json_to_sort_str(v);
+            if i < 3 { eprintln!("[hash_join] right index[{i}]: {right_col}={v} → key={k:?}"); }
+            right_index.entry(k).or_default().push(i);
+        } else {
+            if i < 3 { eprintln!("[hash_join] right row[{i}] missing col {right_col}: {:?}", row.keys().collect::<Vec<_>>()); }
+        }
+    }
+    eprintln!("[hash_join] right_index size={}", right_index.len());
+
+    let mut result = Vec::new();
+    for (li, left_row) in left.iter().enumerate() {
+        let key = left_row.get(left_col).map(|v| {
+            let k = json_to_sort_str(v);
+            if li < 3 { eprintln!("[hash_join] probe left[{li}]: {left_col}={v} → key={k:?} hit={}", right_index.contains_key(&k)); }
+            k
+        }).unwrap_or_else(|| {
+            if li < 3 { eprintln!("[hash_join] left row[{li}] missing col {left_col}: {:?}", left_row.keys().collect::<Vec<_>>()); }
+            String::new()
+        });
+        if let Some(idxs) = right_index.get(&key) {
+            for &i in idxs {
+                let right_row = &right[i];
+                let mut merged = left_row.clone();
+                for (k, v) in right_row.iter() {
+                    merged.entry(k.clone()).or_insert_with(|| v.clone());
+                    if let Some(alias) = right_alias {
+                        merged.insert(format!("{}.{}", alias, k), v.clone());
+                    }
+                }
+                result.push(merged);
+            }
+        }
+    }
+    eprintln!("[hash_join] result={} rows", result.len());
+    result
+}
+
+/// Cross join fallback (used when no equality join key is found)
+fn cross_join_tables(left: Vec<Row>, right: &[Row], right_alias: Option<&str>) -> Vec<Row> {
+    let mut result = Vec::with_capacity(left.len() * right.len());
+    for left_row in &left {
+        for right_row in right {
+            let mut merged = left_row.clone();
+            for (k, v) in right_row.iter() {
+                merged.entry(k.clone()).or_insert_with(|| v.clone());
+                if let Some(alias) = right_alias {
+                    merged.insert(format!("{}.{}", alias, k), v.clone());
+                }
+            }
+            result.push(merged);
+        }
+    }
+    result
+}
+
 // ── GROUP BY 집계 ─────────────────────────────────────────────────────────────
 
 fn execute_group_by(
@@ -398,17 +767,17 @@ fn project_rows(
         result.push(out);
     }
 
-    // 집계 함수만 있는 경우 (GROUP BY 없이 COUNT(*) 등)
-    let all_agg = !has_wildcard && items.iter().all(|i| match i {
+    // 집계 함수만 있는 경우 (GROUP BY 없이 COUNT(*), SUM, 복합 집계식 등)
+    let any_agg = !has_wildcard && items.iter().any(|i| match i {
         sqlparser::ast::SelectItem::UnnamedExpr(e) |
-        sqlparser::ast::SelectItem::ExprWithAlias { expr: e, .. } => is_aggregate(e),
+        sqlparser::ast::SelectItem::ExprWithAlias { expr: e, .. } => contains_aggregate(e),
         _ => false,
     });
-    if all_agg {
+    if any_agg {
         let group_rows: Vec<&Row> = rows.iter().collect();
         let agg_row: Vec<Value> = items.iter().map(|item| match item {
             sqlparser::ast::SelectItem::UnnamedExpr(expr) |
-            sqlparser::ast::SelectItem::ExprWithAlias { expr, .. } => eval_aggregate(expr, &group_rows),
+            sqlparser::ast::SelectItem::ExprWithAlias { expr, .. } => eval_aggregate_expr(expr, &group_rows),
             _ => Value::Null,
         }).collect();
         return Ok(SelectResult { columns: col_names, rows: vec![agg_row] });
@@ -700,6 +1069,46 @@ fn is_aggregate(expr: &sqlparser::ast::Expr) -> bool {
     }
 }
 
+/// True if expr contains any aggregate function anywhere (e.g. 100 * SUM(...) / SUM(...))
+fn contains_aggregate(expr: &sqlparser::ast::Expr) -> bool {
+    use sqlparser::ast::Expr;
+    match expr {
+        Expr::Function(_) => is_aggregate(expr),
+        Expr::BinaryOp { left, right, .. } => contains_aggregate(left) || contains_aggregate(right),
+        Expr::UnaryOp { expr, .. } => contains_aggregate(expr),
+        Expr::Nested(inner) => contains_aggregate(inner),
+        _ => false,
+    }
+}
+
+/// Evaluate an expression that may contain embedded aggregate functions.
+/// Used for no-GROUP-BY aggregates like `100.0 * SUM(a) / SUM(b)`.
+fn eval_aggregate_expr(expr: &sqlparser::ast::Expr, group_rows: &[&Row]) -> Value {
+    use sqlparser::ast::{Expr, BinaryOperator};
+    match expr {
+        // Direct aggregate → existing eval_aggregate
+        Expr::Function(_) if is_aggregate(expr) => eval_aggregate(expr, group_rows),
+        // Arithmetic with embedded aggregates
+        Expr::BinaryOp { left, op, right } => {
+            let lv = EvalResult::Val(eval_aggregate_expr(left, group_rows));
+            let rv = EvalResult::Val(eval_aggregate_expr(right, group_rows));
+            match op {
+                BinaryOperator::Plus     => numeric_op(&lv, &rv, |a, b| a + b),
+                BinaryOperator::Minus    => numeric_op(&lv, &rv, |a, b| a - b),
+                BinaryOperator::Multiply => numeric_op(&lv, &rv, |a, b| a * b),
+                BinaryOperator::Divide   => numeric_op(&lv, &rv, |a, b| if b == 0.0 { 0.0 } else { a / b }),
+                _ => EvalResult::Null,
+            }.into_value()
+        }
+        Expr::Nested(inner) => eval_aggregate_expr(inner, group_rows),
+        Expr::Value(v) => sql_value_to_json(v),
+        // Scalar expr: evaluate on first row
+        other => group_rows.first()
+            .map(|r| eval_expr(other, r).into_value())
+            .unwrap_or(Value::Null),
+    }
+}
+
 fn eval_aggregate(expr: &sqlparser::ast::Expr, group_rows: &[&Row]) -> Value {
     let func = match expr { sqlparser::ast::Expr::Function(f) => f, _ => return Value::Null };
     let name = func.name.to_string().to_uppercase();
@@ -736,15 +1145,10 @@ fn eval_aggregate(expr: &sqlparser::ast::Expr, group_rows: &[&Row]) -> Value {
             }
         }
         "SUM" => col_expr.map(|e| {
-            let vals: Vec<Value> = group_rows.iter().map(|r| eval_expr(e, r).into_value()).collect();
-            // 모든 값이 정수이면 정수 합계 반환
-            if vals.iter().all(|v| matches!(v, Value::Number(n) if n.is_i64() || n.is_u64()) || matches!(v, Value::Null)) {
-                let s: i64 = vals.iter().filter_map(|v| match v { Value::Number(n) => n.as_i64(), _ => None }).sum();
-                serde_json::json!(s)
-            } else {
-                let s: f64 = vals.iter().filter_map(|v| match v { Value::Number(n) => n.as_f64(), _ => None }).sum();
-                serde_json::json!(s)
-            }
+            // as_f64() handles both Value::Number and Value::String("3.14") column values
+            let vals: Vec<f64> = group_rows.iter().filter_map(|r| eval_expr(e, r).as_f64()).collect();
+            if vals.is_empty() { Value::Null }
+            else { serde_json::json!(vals.iter().sum::<f64>()) }
         }).unwrap_or(Value::Null),
         "AVG" => col_expr.map(|e| {
             let vals: Vec<f64> = group_rows.iter().filter_map(|r| eval_expr(e, r).as_f64()).collect();
@@ -855,11 +1259,19 @@ fn json_to_str(v: &Value) -> String {
 
 fn json_to_sort_str(v: &Value) -> String {
     match v {
-        Value::String(s) => s.clone(),
         Value::Number(n) => format!("{:020.6}", n.as_f64().unwrap_or(0.0)),
-        Value::Bool(b)   => b.to_string(),
-        Value::Null      => String::new(),
-        other            => other.to_string(),
+        Value::String(s) => {
+            // Normalize numeric strings to same key format as numbers.
+            // Needed when SN returns integers as JSON strings but MEM_STORE has serde_json Numbers.
+            if let Ok(n) = s.parse::<f64>() {
+                format!("{:020.6}", n)
+            } else {
+                s.clone()
+            }
+        }
+        Value::Bool(b) => b.to_string(),
+        Value::Null    => String::new(),
+        other          => other.to_string(),
     }
 }
 
@@ -931,21 +1343,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_select_with_where() {
-        execute_insert("INSERT INTO sel_w_test (id, val) VALUES (1, 10), (2, 20), (3, 30)").await.unwrap();
+        execute_insert("INSERT INTO sel_w_test (id, val) VALUES (1, 10), (2, 20), (3, 30)", None, None).await.unwrap();
         let r = execute_select("SELECT id, val FROM sel_w_test WHERE val > 15").await.unwrap();
         assert_eq!(r.rows.len(), 2);
     }
 
     #[tokio::test]
     async fn test_group_by_count() {
-        execute_insert("INSERT INTO grp_c_test (cat, val) VALUES ('a', 1), ('a', 2), ('b', 3)").await.unwrap();
+        execute_insert("INSERT INTO grp_c_test (cat, val) VALUES ('a', 1), ('a', 2), ('b', 3)", None, None).await.unwrap();
         let r = execute_select("SELECT cat, COUNT(*) FROM grp_c_test GROUP BY cat").await.unwrap();
         assert_eq!(r.rows.len(), 2);
     }
 
     #[tokio::test]
     async fn test_select_star() {
-        execute_insert("INSERT INTO star_test (a, b) VALUES (1, 2), (3, 4)").await.unwrap();
+        execute_insert("INSERT INTO star_test (a, b) VALUES (1, 2), (3, 4)", None, None).await.unwrap();
         let r = execute_select("SELECT * FROM star_test").await.unwrap();
         assert_eq!(r.rows.len(), 2);
         assert_eq!(r.columns.len(), 2);
@@ -953,14 +1365,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_all() {
-        execute_insert("INSERT INTO cnt_test (x) VALUES (1), (2), (3), (4), (5)").await.unwrap();
+        execute_insert("INSERT INTO cnt_test (x) VALUES (1), (2), (3), (4), (5)", None, None).await.unwrap();
         let r = execute_select("SELECT COUNT(*) FROM cnt_test").await.unwrap();
         assert_eq!(r.rows[0][0], serde_json::json!(5i64));
     }
 
     #[tokio::test]
     async fn test_order_by_limit() {
-        execute_insert("INSERT INTO ord_test (n) VALUES (3), (1), (2)").await.unwrap();
+        execute_insert("INSERT INTO ord_test (n) VALUES (3), (1), (2)", None, None).await.unwrap();
         let r = execute_select("SELECT n FROM ord_test ORDER BY n ASC LIMIT 2").await.unwrap();
         assert_eq!(r.rows.len(), 2);
         assert_eq!(r.rows[0][0], serde_json::json!(1));

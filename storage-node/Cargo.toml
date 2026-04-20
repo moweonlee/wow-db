@@ -53,6 +53,9 @@ bytes = "1"
 axum = { version = "0.7" }
 tokio-util = { version = "0.7" }
 
+# HTTP client (cluster self-registration)
+reqwest = { version = "0.12", features = ["json"] }
+
 # Skip-list for MemTable
 crossbeam-skiplist = "0.1"
 
