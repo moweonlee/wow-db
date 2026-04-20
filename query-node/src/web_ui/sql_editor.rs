@@ -121,9 +121,7 @@ pub async fn execute_sql(
                         name:      c.clone(),
                         data_type: "String".to_string(),
                     }).collect();
-                    let rows = sel.rows.into_iter().map(|row| {
-                        row.into_iter().map(|v| v).collect()
-                    }).collect();
+                    let rows: Vec<Vec<serde_json::Value>> = sel.rows;
                     ("success".to_string(), cols, rows, None)
                 }
                 Err(e) => ("error".to_string(), vec![], vec![], Some(e)),

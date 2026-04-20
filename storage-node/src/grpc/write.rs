@@ -427,6 +427,36 @@ impl TabletWriterRegistry {
         stats
     }
 
+    /// 등록된 모든 Tablet의 SSTable 참조 목록 반환 (GetPartList용)
+    pub async fn get_all_sst_refs(&self) -> Vec<std::sync::Arc<crate::lsm::levels::SstRef>> {
+        let writers = self.writers.lock().await;
+        let mut all = Vec::new();
+        for writer in writers.values() {
+            let lvls = writer.levels.read().await;
+            all.extend(lvls.read_snapshot());
+        }
+        all
+    }
+
+    /// 모든 Tablet의 집계 통계 (row_count, size_bytes, part_count) 반환 (GetShardInfo용)
+    pub async fn aggregate_stats(&self) -> (u64, u64, u32) {
+        let writers = self.writers.lock().await;
+        let mut row_count = 0u64;
+        let mut size_bytes = 0u64;
+        let mut part_count = 0u32;
+        for writer in writers.values() {
+            let lvls = writer.levels.read().await;
+            let ssts = lvls.read_snapshot();
+            row_count  += ssts.iter().map(|s| s.row_count).sum::<u64>();
+            size_bytes += ssts.iter().map(|s| s.size_bytes).sum::<u64>();
+            part_count += ssts.len() as u32;
+            // Include MemTable row count
+            let mem = writer.memtable.lock().await;
+            row_count += mem.row_count() as u64;
+        }
+        (row_count, size_bytes, part_count)
+    }
+
     pub async fn get_or_create(&self, tablet_id: &str) -> Result<Arc<TabletWriter>> {
         let mut writers = self.writers.lock().await;
         if let Some(w) = writers.get(tablet_id) {

@@ -7,6 +7,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::Result;
+use chrono::Utc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
@@ -388,11 +389,27 @@ impl StorageService for StorageServiceImpl {
         let r = req.into_inner();
         info!(
             shard_id = %format!("{:02x?}", &r.shard_id[..8.min(r.shard_id.len())]),
-            "GetPartList 요청 수신 (stub — 빈 스트림 반환)"
+            "GetPartList 요청"
         );
-        // TODO (Phase B): SN LSM 엔진에서 실제 Part 목록 조회
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<PartInfo, Status>>(1);
-        drop(tx); // 즉시 스트림 종료
+        let sst_refs = self.registry.get_all_sst_refs().await;
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<PartInfo, Status>>(16);
+        tokio::spawn(async move {
+            for sst in sst_refs {
+                let created_at_ms = Utc::now().timestamp_millis();
+                let info = PartInfo {
+                    part_id:          sst.id.to_string(),
+                    level:            sst.level,
+                    sequence_num:     sst.sequence_num,
+                    row_count:        sst.row_count,
+                    size_bytes:       sst.size_bytes,
+                    min_sort_key:     String::from_utf8_lossy(&sst.min_sort_key).into_owned(),
+                    max_sort_key:     String::from_utf8_lossy(&sst.max_sort_key).into_owned(),
+                    bloom_size_bytes: 0,
+                    created_at_ms,
+                };
+                if tx.send(Ok(info)).await.is_err() { break; }
+            }
+        });
         Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
     }
 
@@ -407,14 +424,14 @@ impl StorageService for StorageServiceImpl {
         let r = req.into_inner();
         info!(
             shard_id = %format!("{:02x?}", &r.shard_id[..8.min(r.shard_id.len())]),
-            "GetShardInfo 요청 수신 (stub — 더미 통계 반환)"
+            "GetShardInfo 요청"
         );
-        // TODO (Phase B): SN LSM 엔진에서 실제 Shard 통계 조회
+        let (row_count, size_bytes, part_count) = self.registry.aggregate_stats().await;
         Ok(Response::new(ShardInfoResponse {
-            row_count:  0,
-            size_bytes: 0,
-            part_count: 0,
-            lsn:        0,
+            row_count,
+            size_bytes,
+            part_count,
+            lsn: 0,
         }))
     }
 
