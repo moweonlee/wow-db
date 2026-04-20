@@ -400,11 +400,21 @@ impl TabletWriterRegistry {
         }
     }
 
-    /// Tablet 을 레지스트리에서 제거 (TRUNCATE/DELETE 시 MemTable 비우기)
+    /// Tablet 을 레지스트리에서 제거하고 물리 데이터 디렉토리 삭제 (DROP CUBE / TRUNCATE)
     pub async fn drop_tablet(&self, tablet_id: &str) {
-        let mut writers = self.writers.lock().await;
-        writers.remove(tablet_id);
-        tracing::info!(tablet_id = %tablet_id, "TabletWriter dropped (truncate)");
+        {
+            let mut writers = self.writers.lock().await;
+            writers.remove(tablet_id);
+        }
+        // 락 밖에서 디스크 I/O 수행
+        let tablet_dir = self.data_dir.join(tablet_id);
+        if tablet_dir.exists() {
+            match tokio::fs::remove_dir_all(&tablet_dir).await {
+                Ok(_)  => tracing::info!(tablet_id, "Tablet data directory deleted"),
+                Err(e) => tracing::warn!(tablet_id, err = %e, "Failed to delete tablet data dir"),
+            }
+        }
+        tracing::info!(tablet_id = %tablet_id, "TabletWriter dropped and data purged");
     }
 
     /// 등록된 모든 Tablet 의 LSM 통계 반환 (대시보드 용)

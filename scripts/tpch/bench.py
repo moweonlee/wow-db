@@ -119,20 +119,20 @@ def esc(s):
 # ─── Schema DDL ──────────────────────────────────────────────────────────────
 
 SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS region (
+CREATE CUBE IF NOT EXISTS region (
     r_regionkey  INT NOT NULL,
     r_name       VARCHAR(25) NOT NULL,
     r_comment    VARCHAR(152)
 );
 
-CREATE TABLE IF NOT EXISTS nation (
+CREATE CUBE IF NOT EXISTS nation (
     n_nationkey  INT NOT NULL,
     n_name       VARCHAR(25) NOT NULL,
     n_regionkey  INT NOT NULL,
     n_comment    VARCHAR(152)
 );
 
-CREATE TABLE IF NOT EXISTS supplier (
+CREATE CUBE IF NOT EXISTS supplier (
     s_suppkey    INT NOT NULL,
     s_name       VARCHAR(25) NOT NULL,
     s_address    VARCHAR(40) NOT NULL,
@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS supplier (
     s_comment    VARCHAR(101)
 );
 
-CREATE TABLE IF NOT EXISTS customer (
+CREATE CUBE IF NOT EXISTS customer (
     c_custkey    INT NOT NULL,
     c_name       VARCHAR(25) NOT NULL,
     c_address    VARCHAR(40) NOT NULL,
@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS customer (
     c_comment    VARCHAR(117)
 );
 
-CREATE TABLE IF NOT EXISTS part (
+CREATE CUBE IF NOT EXISTS part (
     p_partkey     INT NOT NULL,
     p_name        VARCHAR(55) NOT NULL,
     p_mfgr        VARCHAR(25) NOT NULL,
@@ -165,7 +165,7 @@ CREATE TABLE IF NOT EXISTS part (
     p_comment     VARCHAR(23)
 );
 
-CREATE TABLE IF NOT EXISTS partsupp (
+CREATE CUBE IF NOT EXISTS partsupp (
     ps_partkey    INT NOT NULL,
     ps_suppkey    INT NOT NULL,
     ps_availqty   INT NOT NULL,
@@ -173,7 +173,7 @@ CREATE TABLE IF NOT EXISTS partsupp (
     ps_comment    VARCHAR(199)
 );
 
-CREATE TABLE IF NOT EXISTS orders (
+CREATE CUBE IF NOT EXISTS orders (
     o_orderkey      INT NOT NULL,
     o_custkey       INT NOT NULL,
     o_orderstatus   VARCHAR(1) NOT NULL,
@@ -185,7 +185,7 @@ CREATE TABLE IF NOT EXISTS orders (
     o_comment       VARCHAR(79)
 );
 
-CREATE TABLE IF NOT EXISTS lineitem (
+CREATE CUBE IF NOT EXISTS lineitem (
     l_orderkey      INT NOT NULL,
     l_partkey       INT NOT NULL,
     l_suppkey       INT NOT NULL,
@@ -206,14 +206,14 @@ CREATE TABLE IF NOT EXISTS lineitem (
 """
 
 DROP_SQL = [
-    "DROP TABLE IF EXISTS lineitem",
-    "DROP TABLE IF EXISTS orders",
-    "DROP TABLE IF EXISTS partsupp",
-    "DROP TABLE IF EXISTS part",
-    "DROP TABLE IF EXISTS customer",
-    "DROP TABLE IF EXISTS supplier",
-    "DROP TABLE IF EXISTS nation",
-    "DROP TABLE IF EXISTS region",
+    "DROP CUBE IF EXISTS lineitem",
+    "DROP CUBE IF EXISTS orders",
+    "DROP CUBE IF EXISTS partsupp",
+    "DROP CUBE IF EXISTS part",
+    "DROP CUBE IF EXISTS customer",
+    "DROP CUBE IF EXISTS supplier",
+    "DROP CUBE IF EXISTS nation",
+    "DROP CUBE IF EXISTS region",
 ]
 
 # ─── Data Generators ─────────────────────────────────────────────────────────

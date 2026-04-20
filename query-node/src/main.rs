@@ -143,8 +143,16 @@ async fn main() -> Result<()> {
         "Query Node starting"
     );
 
-    // ── 공유 매니저 초기화 ────────────────────────────────────────────────────
-    let raft     = Arc::new(RaftManager::new_local());
+    // ── 공유 매니저 초기화 (Raft KV 영속화 활성화) ───────────────────────────
+    let qn_data_dir = {
+        let base = std::env::var("QN_DATA_DIR")
+            .unwrap_or_else(|_| {
+                let tmp = std::env::temp_dir();
+                format!("{}/wowdb-dev/{}/meta", tmp.display(), node_id)
+            });
+        std::path::PathBuf::from(base)
+    };
+    let raft     = Arc::new(RaftManager::new_with_persistence(1, &qn_data_dir));
     let cube_mgr = Arc::new(CubeManager::new(raft.clone()));
     let smv_mgr  = Arc::new(SmvManager::new(raft.clone()));
 

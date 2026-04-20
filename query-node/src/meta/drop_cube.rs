@@ -46,16 +46,46 @@ impl DropCubeHandler {
         let tablets = self.tablet_mgr.list_for_cube(&cube_id).await
             .unwrap_or_default();
 
-        // 3. Tablet 삭제 (각 Tablet의 DN에 삭제 요청 — Phase D에서 실제 gRPC 호출)
-        for tablet in &tablets {
-            info!(
-                cube    = %cube_name,
-                tablet  = %tablet.tablet_id,
-                leader_sn = %tablet.leader_sn,
-                "Scheduling tablet deletion (stub)"
-            );
-            // TODO (Phase D): DN gRPC DeleteTablet 호출
-            // dn_client.delete_tablet(tablet.tablet_id).await?;
+        // 3. 모든 SN에 HTTP POST /api/v1/tablet/{cube_name}/truncate 호출
+        //    SN 물리 데이터(WAL + SSTable) 삭제 트리거
+        {
+            let sn_addrs: Vec<String> = std::env::var("STORAGE_NODES")
+                .unwrap_or_default()
+                .split(',')
+                .filter(|s| !s.trim().is_empty())
+                .map(|grpc_addr| {
+                    // gRPC 포트(9060~9069) → HTTP 포트(8040~8049) 변환
+                    let addr = grpc_addr.trim();
+                    if let Some(colon) = addr.rfind(':') {
+                        let port_str = &addr[colon + 1..];
+                        if let Ok(grpc_port) = port_str.parse::<u16>() {
+                            let http_port = grpc_port.saturating_sub(1020);
+                            return format!("{}:{}", &addr[..colon], http_port);
+                        }
+                    }
+                    addr.to_string()
+                })
+                .collect();
+
+            let client = reqwest::Client::new();
+            for sn_http in &sn_addrs {
+                let url = format!("http://{}/api/v1/tablet/{}/truncate", sn_http, cube_name);
+                match client.post(&url).send().await {
+                    Ok(resp) => info!(
+                        cube = %cube_name,
+                        sn   = %sn_http,
+                        status = %resp.status(),
+                        "Tablet truncated on SN"
+                    ),
+                    Err(e) => warn!(
+                        cube = %cube_name,
+                        sn   = %sn_http,
+                        err  = %e,
+                        "Failed to truncate tablet on SN (continuing)"
+                    ),
+                }
+            }
+            let _ = tablets; // suppress unused warning
         }
 
         // 4. Raft 메타 정리
