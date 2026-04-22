@@ -173,6 +173,17 @@ fn execute_select_sync(sql: &str) -> Result<SelectResult, String> {
     // FROM 없는 경우 (SELECT 1, SELECT NOW(), SELECT 'hello', ...)
     if select.from.is_empty() {
         let select_items: Vec<_> = select.projection.iter().collect();
+        // Bare column identifier without FROM → error (e.g. SELECT $$, SELECT foo)
+        // MySQL returns "Unknown column 'X' in 'field list'" for these.
+        // MySQL 8 CLI probes with `select $$` and expects an error; returning a
+        // result set causes it to skip mysql_store_result(), breaking subsequent queries.
+        for item in &select_items {
+            if let sqlparser::ast::SelectItem::UnnamedExpr(sqlparser::ast::Expr::Identifier(id)) = item {
+                if !id.value.starts_with('@') {
+                    return Err(format!("Unknown column '{}' in 'field list'", id.value));
+                }
+            }
+        }
         let empty_row: Row = std::collections::HashMap::new();
         let col_names: Vec<String> = select_items.iter().map(|i| select_item_header(i)).collect();
         let out_row: Vec<Value> = select_items.iter().map(|item| match item {

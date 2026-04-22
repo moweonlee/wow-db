@@ -57,11 +57,16 @@ impl StoragePool {
         if idx >= self.endpoints.len() { return false; }
         if self.clients[idx].is_some() { return true; }
 
+        const GRPC_MSG_LIMIT: usize = 256 * 1024 * 1024; // 256 MiB
+
         let addr = format!("http://{}", self.endpoints[idx]);
         match StorageServiceClient::connect(addr.clone()).await {
             Ok(c) => {
                 info!(addr = %addr, sn_idx = idx, "StoragePool: SN connected");
-                self.clients[idx] = Some(c);
+                self.clients[idx] = Some(
+                    c.max_decoding_message_size(GRPC_MSG_LIMIT)
+                     .max_encoding_message_size(GRPC_MSG_LIMIT),
+                );
                 true
             }
             Err(e) => {

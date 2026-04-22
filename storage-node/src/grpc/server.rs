@@ -188,7 +188,8 @@ impl StorageService for StorageServiceImpl {
             let rows = writer.scan_memtable_rows().await;
             let row_count = rows.len() as u64;
 
-            // rows → JSON → ScanBatch.batch
+            // rows → JSON. Send in chunks of BATCH_ROWS to stay under gRPC message limits.
+            const BATCH_ROWS: usize = 2048;
             let json_rows: Vec<serde_json::Map<String, serde_json::Value>> = rows
                 .into_iter()
                 .map(|(_key, cols)| {
@@ -203,18 +204,31 @@ impl StorageService for StorageServiceImpl {
                 })
                 .collect();
 
-            let batch_bytes = serde_json::to_vec(&json_rows).unwrap_or_default();
-
-            let batch = ScanBatch {
-                tablet_id:        tablet_id.clone(),
-                batch:            batch_bytes,
-                is_last:          true,
-                rows_read:        row_count,
-                granules_scanned: 0,
-                granules_skipped: 0,
-            };
-
-            let _ = tx.send(Ok(batch)).await;
+            let total = json_rows.len();
+            let chunks: Vec<_> = json_rows.chunks(BATCH_ROWS).collect();
+            let n_chunks = chunks.len();
+            for (i, chunk) in chunks.into_iter().enumerate() {
+                let is_last = i + 1 == n_chunks;
+                let batch_bytes = serde_json::to_vec(chunk).unwrap_or_default();
+                let batch = ScanBatch {
+                    tablet_id:        tablet_id.clone(),
+                    batch:            batch_bytes,
+                    is_last,
+                    rows_read:        chunk.len() as u64,
+                    granules_scanned: 0,
+                    granules_skipped: 0,
+                };
+                if tx.send(Ok(batch)).await.is_err() { break; }
+            }
+            if total == 0 {
+                // Always send at least one message so client knows scan completed
+                let _ = tx.send(Ok(ScanBatch {
+                    tablet_id: tablet_id.clone(),
+                    batch: b"[]".to_vec(),
+                    is_last: true, rows_read: 0,
+                    granules_scanned: 0, granules_skipped: 0,
+                })).await;
+            }
             info!(tablet_id = %tablet_id, rows = row_count, "ScanTablet OK");
             // FR-008: Read 완료 이벤트 로그 기록
             if let Some(buf) = log_buf {
@@ -455,11 +469,17 @@ impl StorageService for StorageServiceImpl {
 
 // ─── 서버 기동 ────────────────────────────────────────────────────────────────
 
+const GRPC_MSG_LIMIT: usize = 256 * 1024 * 1024; // 256 MiB
+
 pub async fn serve(addr: SocketAddr, node_id: String, data_dir: String) -> Result<()> {
     let svc = StorageServiceImpl::new(node_id, data_dir);
     info!(%addr, "Storage gRPC 서버 시작");
     tonic::transport::Server::builder()
-        .add_service(StorageServiceServer::new(svc))
+        .add_service(
+            StorageServiceServer::new(svc)
+                .max_encoding_message_size(GRPC_MSG_LIMIT)
+                .max_decoding_message_size(GRPC_MSG_LIMIT),
+        )
         .serve(addr)
         .await?;
     Ok(())

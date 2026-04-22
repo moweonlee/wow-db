@@ -622,7 +622,7 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
         info:   StatementMetaWriter<'a, W>,
     ) -> Result<()> {
         debug!(sql = %query, "COM_STMT_PREPARE");
-        info.reply(1, &[], &[]).await.map_err(Into::into)
+        info.error(ErrorKind::ER_UNKNOWN_ERROR, b"Prepared statements not supported").await.map_err(Into::into)
     }
 
     // ── COM_STMT_EXECUTE ───────────────────────────────────────────────────
