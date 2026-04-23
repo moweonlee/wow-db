@@ -28,6 +28,21 @@ x-cn-common: &cn-common
     QN_PEERS: "qn-1:9011,qn-2:9011,qn-3:9011"
   restart: unless-stopped
 
+x-cn-healthcheck: &cn-healthcheck
+  test: ["CMD", "curl", "-f", "http://localhost:10040/health"]
+  interval: 5s
+  timeout: 3s
+  retries: 10
+  start_period: 20s
+
+x-sn-depends: &sn-depends
+  sn-1:
+    condition: service_healthy
+  sn-2:
+    condition: service_healthy
+  sn-3:
+    condition: service_healthy
+
 x-qn-common: &qn-common
   build:
     context: ..
@@ -40,7 +55,8 @@ x-qn-common: &qn-common
     RAFT_PORT: "9010"
     GRPC_PORT: "9011"
     RAFT_PEERS: "qn-1:9010,qn-2:9010,qn-3:9010"
-    COMPUTE_NODES: "cn-1:9040,cn-2:9040"
+    COMPUTE_NODES: "cn-1:9040,cn-2:9040,cn-3:9040"
+    QN_HTTP_PEERS: "qn-1:8080,qn-2:8080,qn-3:8080"
   restart: unless-stopped
 
 services:
@@ -163,30 +179,20 @@ services:
     networks:
       - wowdb-net
 
-  # ──── Compute Node ×2 ────────────────────────────────────
+  # ──── Compute Node ×3 ────────────────────────────────────
   cn-1:
     <<: *cn-common
     container_name: wowdb-cn-1
     ports:
       - "19040:9040"
+      - "10040:10040"
     environment:
       NODE_ID: "cn-1"
       RUST_LOG: "compute_node=info,shared=info"
       GRPC_PORT: "9040"
       STORAGE_NODES: "sn-1:9060,sn-2:9060,sn-3:9060"
-    depends_on:
-      sn-1:
-        condition: service_healthy
-      sn-2:
-        condition: service_healthy
-      sn-3:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9040/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 20s
+    depends_on: *sn-depends
+    healthcheck: *cn-healthcheck
     networks:
       - wowdb-net
 
@@ -195,24 +201,30 @@ services:
     container_name: wowdb-cn-2
     ports:
       - "29040:9040"
+      - "20040:10040"
     environment:
       NODE_ID: "cn-2"
       RUST_LOG: "compute_node=info,shared=info"
       GRPC_PORT: "9040"
       STORAGE_NODES: "sn-1:9060,sn-2:9060,sn-3:9060"
-    depends_on:
-      sn-1:
-        condition: service_healthy
-      sn-2:
-        condition: service_healthy
-      sn-3:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9040/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 20s
+    depends_on: *sn-depends
+    healthcheck: *cn-healthcheck
+    networks:
+      - wowdb-net
+
+  cn-3:
+    <<: *cn-common
+    container_name: wowdb-cn-3
+    ports:
+      - "39040:9040"
+      - "30040:10040"
+    environment:
+      NODE_ID: "cn-3"
+      RUST_LOG: "compute_node=info,shared=info"
+      GRPC_PORT: "9040"
+      STORAGE_NODES: "sn-1:9060,sn-2:9060,sn-3:9060"
+    depends_on: *sn-depends
+    healthcheck: *cn-healthcheck
     networks:
       - wowdb-net
 
@@ -233,11 +245,15 @@ services:
       RAFT_PORT: "9010"
       GRPC_PORT: "9011"
       RAFT_PEERS: "qn-1:9010,qn-2:9010,qn-3:9010"
-      COMPUTE_NODES: "cn-1:9040,cn-2:9040"
+      COMPUTE_NODES: "cn-1:9040,cn-2:9040,cn-3:9040"
+      QN_HTTP_PEERS: "qn-1:8080,qn-2:8080,qn-3:8080"
+      STORAGE_NODES: "sn-1:9060,sn-2:9060,sn-3:9060"
     depends_on:
       cn-1:
         condition: service_healthy
       cn-2:
+        condition: service_healthy
+      cn-3:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -264,11 +280,15 @@ services:
       RAFT_PORT: "9010"
       GRPC_PORT: "9011"
       RAFT_PEERS: "qn-1:9010,qn-2:9010,qn-3:9010"
-      COMPUTE_NODES: "cn-1:9040,cn-2:9040"
+      COMPUTE_NODES: "cn-1:9040,cn-2:9040,cn-3:9040"
+      QN_HTTP_PEERS: "qn-1:8080,qn-2:8080,qn-3:8080"
+      STORAGE_NODES: "sn-1:9060,sn-2:9060,sn-3:9060"
     depends_on:
       cn-1:
         condition: service_healthy
       cn-2:
+        condition: service_healthy
+      cn-3:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -295,11 +315,15 @@ services:
       RAFT_PORT: "9010"
       GRPC_PORT: "9011"
       RAFT_PEERS: "qn-1:9010,qn-2:9010,qn-3:9010"
-      COMPUTE_NODES: "cn-1:9040,cn-2:9040"
+      COMPUTE_NODES: "cn-1:9040,cn-2:9040,cn-3:9040"
+      QN_HTTP_PEERS: "qn-1:8080,qn-2:8080,qn-3:8080"
+      STORAGE_NODES: "sn-1:9060,sn-2:9060,sn-3:9060"
     depends_on:
       cn-1:
         condition: service_healthy
       cn-2:
+        condition: service_healthy
+      cn-3:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -307,6 +331,20 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+    networks:
+      - wowdb-net
+
+  # ──── MySQL Client ───────────────────────────────────────
+  mysql-client:
+    image: mysql:8.0
+    container_name: wowdb-mysql-client
+    profiles: ["full", "client"]
+    command: ["sleep", "infinity"]
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+    depends_on:
+      qn-1:
+        condition: service_healthy
     networks:
       - wowdb-net
 

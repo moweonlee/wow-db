@@ -48,7 +48,7 @@ pub struct StorageServiceImpl {
 
 impl StorageServiceImpl {
     pub fn new(node_id: String, data_dir: String) -> Self {
-        let registry = Arc::new(TabletWriterRegistry::new(PathBuf::from(&data_dir)));
+        let registry = Arc::new(TabletWriterRegistry::new(PathBuf::from(&data_dir), None));
         Self {
             node_id:  Arc::new(node_id),
             data_dir: Arc::new(data_dir),

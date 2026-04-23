@@ -24,6 +24,8 @@ pub struct SelectResult {
 ///   3. MEM_STORE 폴백
 pub async fn execute_select(sql: &str) -> Result<SelectResult, String> {
     let all_tables = quick_extract_all_tables(sql);
+    // EXISTS subquery inner tables must also be pre-loaded into MEM_STORE
+    let exists_tables = quick_extract_exists_tables(sql);
 
     // ── 우선순위 1: SN 다중 노드 — 전체 scan_all_rows → QN 집계 ─────────────
     // 샤딩된 데이터는 여러 SN에 분산되어 있으므로 모든 SN을 스캔하여 머지한 후
@@ -37,14 +39,24 @@ pub async fn execute_select(sql: &str) -> Result<SelectResult, String> {
 
         if sn_count > 0 {
             let mut any_sn_hit = false;
-            for table in &all_tables {
+            // Scan outer FROM tables + EXISTS inner tables so correlated subqueries work
+            let mut all_to_scan = all_tables.clone();
+            for t in &exists_tables {
+                if !all_to_scan.contains(t) {
+                    all_to_scan.push(t.clone());
+                }
+            }
+            for table in &all_to_scan {
                 let sn_rows = {
                     let mut pool = crate::storage_client::STORAGE.lock().await;
                     pool.scan_all_rows(table).await
                 };
 
                 if let Some(rows) = sn_rows {
-                    any_sn_hit = true;
+                    if all_tables.contains(table) {
+                        // Only outer FROM tables determine SN connectivity
+                        any_sn_hit = true;
+                    }
                     if !rows.is_empty() {
                         // SN에 실제 데이터가 있으면 MEM_STORE를 SN 데이터로 교체
                         MEM_STORE.drop_table(table);
@@ -135,6 +147,37 @@ fn quick_extract_all_tables(sql: &str) -> Vec<String> {
             if name.is_empty() || name.starts_with('(') { None } else { Some(name) }
         })
         .collect()
+}
+
+/// Extract table names from EXISTS/NOT EXISTS subqueries in WHERE clause.
+/// Handles: EXISTS (SELECT ... FROM table_name WHERE ...)
+fn quick_extract_exists_tables(sql: &str) -> Vec<String> {
+    let lower = sql.to_lowercase();
+    let mut tables: Vec<String> = Vec::new();
+    let mut search_pos = 0;
+
+    while let Some(rel) = lower[search_pos..].find("exists") {
+        let abs = search_pos + rel;
+        let after = lower[abs + 6..].trim_start();
+        if after.starts_with('(') {
+            // Find the nearest FROM inside this subquery paren
+            if let Some(from_rel) = after.find(" from ").or_else(|| after.find("\nfrom ")) {
+                let after_from = after[from_rel + 6..].trim_start();
+                let name: String = after_from
+                    .split(|c: char| c.is_whitespace() || c == ')' || c == ',')
+                    .next()
+                    .unwrap_or("")
+                    .trim_matches('`')
+                    .to_string();
+                if !name.is_empty() && !tables.contains(&name) {
+                    tables.push(name);
+                }
+            }
+        }
+        search_pos = abs + 6;
+    }
+
+    tables
 }
 
 /// 동기 SELECT 실행 (MEM_STORE 기반)
@@ -926,6 +969,33 @@ fn eval_expr(expr: &sqlparser::ast::Expr, row: &Row) -> EvalResult {
         }
         E::Nested(inner) => eval_expr(inner, row),
         E::Function(f)   => eval_function(f, row),
+        // EXISTS (SELECT ...): scan inner table with merged outer+inner row context.
+        // Handles correlated subqueries (e.g. WHERE l_orderkey = o_orderkey) by merging
+        // outer row columns so correlated references resolve correctly.
+        E::Exists { subquery, negated } => {
+            use sqlparser::ast::{SetExpr, TableFactor};
+            let found = if let SetExpr::Select(inner_sel) = &*subquery.body {
+                let inner_table = inner_sel.from.first().and_then(|t| match &t.relation {
+                    TableFactor::Table { name, .. } =>
+                        Some(name.0.last().map(|i| i.value.clone()).unwrap_or_default()),
+                    _ => None,
+                });
+                if let Some(tbl) = inner_table {
+                    let inner_rows = super::mem_store::MEM_STORE.scan(&tbl);
+                    inner_rows.iter().any(|inner_row| {
+                        // Merge outer row for correlated column references
+                        let mut ctx: Row = inner_row.clone();
+                        for (k, v) in row.iter() {
+                            ctx.entry(k.clone()).or_insert_with(|| v.clone());
+                        }
+                        inner_sel.selection.as_ref()
+                            .map(|w| eval_expr(w, &ctx).as_bool())
+                            .unwrap_or(true)
+                    })
+                } else { false }
+            } else { false };
+            EvalResult::Bool(if *negated { !found } else { found })
+        }
         E::Case { operand, conditions, results, else_result } => {
             if let Some(op) = operand {
                 let op_val = eval_expr(op, row).into_value();
@@ -1305,6 +1375,22 @@ fn cmp_json(a: &Value, b: &Value) -> std::cmp::Ordering {
         (Value::Number(na), Value::Number(nb)) =>
             na.as_f64().unwrap_or(0.0).partial_cmp(&nb.as_f64().unwrap_or(0.0))
                 .unwrap_or(std::cmp::Ordering::Equal),
+        // SN이 숫자 컬럼 값을 String으로 반환하는 경우 (예: "0.05", "36.0")
+        // 리터럴은 Number이므로 혼합 비교 필요
+        (Value::String(sa), Value::Number(nb)) => {
+            if let Ok(fa) = sa.parse::<f64>() {
+                fa.partial_cmp(&nb.as_f64().unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal)
+            } else {
+                sa.as_str().cmp(nb.to_string().as_str())
+            }
+        }
+        (Value::Number(na), Value::String(sb)) => {
+            if let Ok(fb) = sb.parse::<f64>() {
+                na.as_f64().unwrap_or(0.0).partial_cmp(&fb).unwrap_or(std::cmp::Ordering::Equal)
+            } else {
+                na.to_string().as_str().cmp(sb.as_str())
+            }
+        }
         (Value::String(sa), Value::String(sb)) => sa.cmp(sb),
         (Value::Bool(ba),   Value::Bool(bb))   => ba.cmp(bb),
         (Value::Null, Value::Null) => std::cmp::Ordering::Equal,

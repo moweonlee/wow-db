@@ -178,7 +178,8 @@ async fn main() -> Result<()> {
     // ── TabletWriterRegistry — gRPC 와 HTTP 서버가 공유 ─────────────────────
     // 하나의 Arc로 gRPC WriteRows/Scan + HTTP /api/v1/lsm-status 모두 공유
     let shared_registry = Arc::new(grpc::write::TabletWriterRegistry::new(
-        PathBuf::from(&data_dir)
+        PathBuf::from(&data_dir),
+        Some(Arc::clone(&LOG_BUFFER)),
     ));
     let http_registry = Arc::clone(&shared_registry);
 

@@ -140,7 +140,7 @@
 - [x] T036 [US4] `storage-node/src/main.rs` — 전역 `LOG_BUFFER: LazyLock<Arc<Mutex<LogBuffer>>>` 싱글톤 선언
 - [x] T037 [US4] `storage-node/src/main.rs` — `GET /logs` 엔드포인트 추가: `LogsResponse` JSON 반환
 - [x] T038 [P] [US4] `storage-node/src/grpc/server.rs` — `write_rows`, `scan_tablet` 핸들러에서 `LOG_BUFFER.push(...)` 추가
-- [x] T039 [P] [US4] `storage-node/src/grpc/write.rs` — WAL replay 완료 시 `LOG_BUFFER.push(LogEntry { level: INFO, message: "WAL replay ...", fields: {tablet_id, rows} })` 추가
+- [x] T039 [P] [US4] `storage-node/src/grpc/write.rs` — WAL replay 완료 시 `log_buf.push(LogEntry { level: INFO, message: "WAL replay ...", fields: {tablet_id, rows} })` 추가. `TabletWriter`/`TabletWriterRegistry`에 `log_buf: Option<Arc<Mutex<LogBuffer>>>` 주입 방식으로 구현; `main.rs`에서 `LOG_BUFFER` 전달.
 
 ### 레벨 필터 쿼리 파라미터
 
