@@ -1,0 +1,8 @@
+{
+  "query_id": "Q01",
+  "scale_factor": 0.01,
+  "expected_row_count": 4,
+  "notes": "returnflag/linestatus combinations",
+  "sample_first_row": null,
+  "validation_columns": []
+}

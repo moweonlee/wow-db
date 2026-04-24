@@ -1,0 +1,8 @@
+{
+  "query_id": "Q20",
+  "scale_factor": 0.01,
+  "expected_row_count": 1,
+  "notes": "potential promotion suppliers",
+  "sample_first_row": null,
+  "validation_columns": []
+}

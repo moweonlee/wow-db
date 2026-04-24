@@ -513,8 +513,9 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for WowDbMysqlHa
             }
         }
 
-        // ── SELECT ────────────────────────────────────────────────────────────
-        if lower_exec.split_ascii_whitespace().next() == Some("select") {
+        // ── SELECT / WITH (CTE) ──────────────────────────────────────────────
+        let first_word = lower_exec.split_ascii_whitespace().next();
+        if first_word == Some("select") || first_word == Some("with") {
             let warnings_count = self.pending_warnings.lock().unwrap().len() as u16;
             match execute_select(sql_to_exec).await {
                 Ok(sel) => {

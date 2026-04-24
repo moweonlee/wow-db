@@ -1,0 +1,8 @@
+{
+  "query_id": "Q08",
+  "scale_factor": 0.01,
+  "expected_row_count": 2,
+  "notes": "1995-1996 market share rows",
+  "sample_first_row": null,
+  "validation_columns": []
+}

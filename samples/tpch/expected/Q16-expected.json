@@ -1,0 +1,8 @@
+{
+  "query_id": "Q16",
+  "scale_factor": 0.01,
+  "expected_row_count": 18,
+  "notes": "brand/type/size combinations",
+  "sample_first_row": null,
+  "validation_columns": []
+}

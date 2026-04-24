@@ -1,0 +1,8 @@
+{
+  "query_id": "Q10",
+  "scale_factor": 0.01,
+  "expected_row_count": 20,
+  "notes": "top 20 customers with returns",
+  "sample_first_row": null,
+  "validation_columns": []
+}

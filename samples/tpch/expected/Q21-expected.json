@@ -1,0 +1,8 @@
+{
+  "query_id": "Q21",
+  "scale_factor": 0.01,
+  "expected_row_count": 10,
+  "notes": "suppliers by wait count",
+  "sample_first_row": null,
+  "validation_columns": []
+}

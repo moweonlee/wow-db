@@ -8,10 +8,40 @@ use super::mem_store::{MEM_STORE, Row};
 
 // ── 결과 타입 ────────────────────────────────────────────────────────────────
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SelectResult {
     pub columns: Vec<String>,
     pub rows:    Vec<Vec<Value>>,
+}
+
+// ── 서브쿼리 결과 캐시 (per-query, thread-local) ─────────────────────────────
+// 동일한 서브쿼리 SQL 이 같은 쿼리 내에서 여러 행마다 반복 평가될 때 한 번만 실행 후 캐시.
+// top-level execute_select_sync 호출 시 캐시를 초기화하므로 쿼리 간 오염 없음.
+thread_local! {
+    static SUBQ_CACHE: std::cell::RefCell<std::collections::HashMap<String, SelectResult>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    // EXISTS 최적화: 상관 서브쿼리에서 미리 계산한 키 집합 (sub_str → HashSet<value>)
+    static EXISTS_KEYSET: std::cell::RefCell<std::collections::HashMap<String, std::collections::HashSet<String>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    // EXISTS inner table scan cache: table_name → Arc<Vec<Row>> (avoid re-cloning 60K rows per outer row)
+    static EXISTS_INNER: std::cell::RefCell<std::collections::HashMap<String, std::sync::Arc<Vec<super::mem_store::Row>>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    // EXISTS group index: sub_str → (eq_col, HashMap<eq_val → Vec<row_index>>) for alias-corr optimization
+    static EXISTS_GROUP: std::cell::RefCell<std::collections::HashMap<String, (String, std::collections::HashMap<String, Vec<usize>>)>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    static SUBQ_DEPTH: std::cell::Cell<u32> = std::cell::Cell::new(0);
+}
+
+/// 서브쿼리 결과를 캐시하면서 execute_select_sync 를 실행한다.
+/// 동일한 SQL 은 같은 top-level 쿼리 내에서 한 번만 실행된다.
+fn cached_execute_select_sync(sql: &str) -> Result<SelectResult, String> {
+    let cached = SUBQ_CACHE.with(|c| c.borrow().get(sql).cloned());
+    if let Some(res) = cached {
+        return Ok(res);
+    }
+    let result = execute_select_sync(sql)?;
+    SUBQ_CACHE.with(|c| c.borrow_mut().insert(sql.to_string(), result.clone()));
+    Ok(result)
 }
 
 // ── 공개 진입점 ─────────────────────────────────────────────────────────────
@@ -39,9 +69,10 @@ pub async fn execute_select(sql: &str) -> Result<SelectResult, String> {
 
         if sn_count > 0 {
             let mut any_sn_hit = false;
-            // Scan outer FROM tables + EXISTS inner tables so correlated subqueries work
+            // Scan outer FROM tables + EXISTS inner tables + JOIN right-side tables
             let mut all_to_scan = all_tables.clone();
-            for t in &exists_tables {
+            let join_tables = quick_extract_join_tables(sql);
+            for t in exists_tables.iter().chain(join_tables.iter()) {
                 if !all_to_scan.contains(t) {
                     all_to_scan.push(t.clone());
                 }
@@ -180,11 +211,53 @@ fn quick_extract_exists_tables(sql: &str) -> Vec<String> {
     tables
 }
 
+/// Extract table names from JOIN clauses (LEFT JOIN, INNER JOIN, JOIN …).
+fn quick_extract_join_tables(sql: &str) -> Vec<String> {
+    let lower = sql.to_lowercase();
+    let mut tables: Vec<String> = Vec::new();
+    let mut pos = 0;
+
+    while pos < lower.len() {
+        let Some(rel) = lower[pos..].find("join ") else { break };
+        let abs = pos + rel;
+        // Word-boundary: char before "join" must be whitespace
+        let preceded_ok = abs == 0 || (lower.as_bytes()[abs - 1] as char).is_whitespace();
+        let after = abs + 5;
+        if preceded_ok && after < lower.len() {
+            let name: String = lower[after..].trim_start()
+                .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+                .next()
+                .unwrap_or("")
+                .trim_matches('`')
+                .to_string();
+            if !name.is_empty() && name != "on" && name != "using" && !tables.contains(&name) {
+                tables.push(name);
+            }
+        }
+        pos = abs + 5;
+    }
+    tables
+}
+
 /// 동기 SELECT 실행 (MEM_STORE 기반)
 fn execute_select_sync(sql: &str) -> Result<SelectResult, String> {
     use sqlparser::dialect::MySqlDialect;
     use sqlparser::parser::Parser;
     use sqlparser::ast::{Statement, SetExpr, TableFactor};
+
+    // top-level 호출(depth=0) 시 서브쿼리 캐시를 초기화한다
+    let prev_depth = SUBQ_DEPTH.with(|d| { let v = d.get(); d.set(v + 1); v });
+    if prev_depth == 0 {
+        SUBQ_CACHE.with(|c| c.borrow_mut().clear());
+        EXISTS_KEYSET.with(|c| c.borrow_mut().clear());
+        EXISTS_INNER.with(|c| c.borrow_mut().clear());
+        EXISTS_GROUP.with(|c| c.borrow_mut().clear());
+    }
+    struct DepthDec;
+    impl Drop for DepthDec {
+        fn drop(&mut self) { SUBQ_DEPTH.with(|d| d.set(d.get().saturating_sub(1))); }
+    }
+    let _depth_dec = DepthDec;
 
     let dialect = MySqlDialect {};
     let stmts = Parser::parse_sql(&dialect, sql)
@@ -197,17 +270,66 @@ fn execute_select_sync(sql: &str) -> Result<SelectResult, String> {
         _ => return Err("Not a SELECT statement".into()),
     };
 
+    // Handle CTEs: execute each definition and expose as a MEM_STORE table
+    let mut cte_names: Vec<String> = Vec::new();
+    if let Some(with) = &query.with {
+        for cte in &with.cte_tables {
+            let cte_name = cte.alias.name.value.clone();
+            let cte_sql = format!("{}", cte.query);
+            if let Ok(cte_result) = execute_select_sync(&cte_sql) {
+                MEM_STORE.drop_table(&cte_name);
+                for row_vals in &cte_result.rows {
+                    let mut map: Row = std::collections::HashMap::new();
+                    for (col, val) in cte_result.columns.iter().zip(row_vals.iter()) {
+                        map.insert(col.clone(), val.clone());
+                    }
+                    MEM_STORE.insert(&cte_name, map);
+                }
+                cte_names.push(cte_name);
+            }
+        }
+    }
+
     let select = match *query.body {
         SetExpr::Select(s) => s,
-        _ => return Err("Unsupported query body".into()),
+        _ => {
+            for name in &cte_names { MEM_STORE.drop_table(name); }
+            return Err("Unsupported query body".into());
+        }
     };
 
-    // FROM 절 — 테이블명 (alias 없이 실제 테이블명)
+    // FROM 절 — 파생 테이블(subquery in FROM) 처리: 먼저 내부 쿼리를 실행하고 임시 테이블로 MEM_STORE 에 저장
+    let mut derived_temp_names: Vec<String> = Vec::new();
+    if let Some(first) = select.from.first() {
+        if let TableFactor::Derived { subquery, alias, .. } = &first.relation {
+            let sub_sql = format!("{}", subquery);
+            if let Ok(sub_result) = execute_select_sync(&sub_sql) {
+                let temp_name = alias.as_ref()
+                    .map(|a| a.name.value.clone())
+                    .unwrap_or_else(|| "__derived__".to_string());
+                MEM_STORE.drop_table(&temp_name);
+                for row_vals in &sub_result.rows {
+                    let mut map: Row = std::collections::HashMap::new();
+                    for (col, val) in sub_result.columns.iter().zip(row_vals.iter()) {
+                        map.insert(col.clone(), val.clone());
+                    }
+                    MEM_STORE.insert(&temp_name, map);
+                }
+                derived_temp_names.push(temp_name);
+            }
+        }
+    }
+
+    // FROM 절 — 테이블명 (alias 없이 실제 테이블명, 파생 테이블이면 temp 이름 사용)
     let table_name = select.from.first()
         .and_then(|t| match &t.relation {
             TableFactor::Table { name, .. } => {
                 // 마지막 파트 (schema.table → table)
                 Some(name.0.last().map(|i| i.value.clone()).unwrap_or_default())
+            }
+            TableFactor::Derived { alias, .. } => {
+                alias.as_ref().map(|a| a.name.value.clone())
+                    .or_else(|| derived_temp_names.first().cloned())
             }
             _ => None,
         })
@@ -234,6 +356,8 @@ fn execute_select_sync(sql: &str) -> Result<SelectResult, String> {
             sqlparser::ast::SelectItem::ExprWithAlias { expr, .. } => eval_expr(expr, &empty_row).into_value(),
             _ => Value::Null,
         }).collect();
+        for name in &cte_names { MEM_STORE.drop_table(name); }
+        for name in &derived_temp_names { MEM_STORE.drop_table(name); }
         return Ok(SelectResult { columns: col_names, rows: vec![out_row] });
     }
 
@@ -401,6 +525,8 @@ fn execute_select_sync(sql: &str) -> Result<SelectResult, String> {
         }
     }
 
+    for name in &cte_names { MEM_STORE.drop_table(name); }
+    for name in &derived_temp_names { MEM_STORE.drop_table(name); }
     Ok(result)
 }
 
@@ -438,8 +564,73 @@ fn apply_joins(
         };
         let is_left = matches!(&join.join_operator, JoinOperator::LeftOuter(_));
 
-        // 두 테이블 중 컬럼명이 겹칠 경우 alias.col 형식으로 추가 등록
+        // ON 에서 등호 결합 키를 추출해 해시 조인 시도; 없으면 중첩 루프
+        let eq_pairs: Vec<(String, String)> = on_expr.as_ref()
+            .map(|e| extract_eq_conditions(e))
+            .unwrap_or_default();
+        let left_cols: std::collections::HashSet<String> = result.first()
+            .map(|r| r.keys().cloned().collect())
+            .unwrap_or_default();
+        let right_cols: std::collections::HashSet<String> = right_rows.first()
+            .map(|r| r.keys().cloned().collect())
+            .unwrap_or_default();
+        let hash_key = eq_pairs.iter().find_map(|(a, b)| {
+            if left_cols.contains(a) && right_cols.contains(b) {
+                Some((a.clone(), b.clone()))
+            } else if left_cols.contains(b) && right_cols.contains(a) {
+                Some((b.clone(), a.clone()))
+            } else {
+                None
+            }
+        });
+
+        let null_padded_right: Row = right_rows.first().map(|sample| {
+            sample.keys().map(|k| {
+                let mut pairs = vec![(k.clone(), Value::Null)];
+                if let Some(alias) = &right_alias {
+                    pairs.push((format!("{}.{}", alias, k), Value::Null));
+                }
+                pairs
+            }).flatten().collect()
+        }).unwrap_or_default();
+
         let mut new_result: Vec<Row> = Vec::new();
+
+        if let Some((lk, rk)) = hash_key {
+            // Hash join: build phase on right table
+            let mut hash_map: std::collections::HashMap<String, Vec<&Row>> = std::collections::HashMap::new();
+            for r in &right_rows {
+                let key = r.get(&rk).map(|v| v.to_string()).unwrap_or_default();
+                hash_map.entry(key).or_default().push(r);
+            }
+            for left_row in &result {
+                let probe_key = left_row.get(&lk).map(|v| v.to_string()).unwrap_or_default();
+                let candidates = hash_map.get(&probe_key);
+                let mut matched = false;
+                if let Some(right_matches) = candidates {
+                    for right_row in right_matches {
+                        let mut merged = left_row.clone();
+                        for (k, v) in right_row.iter() {
+                            merged.entry(k.clone()).or_insert_with(|| v.clone());
+                            if let Some(alias) = &right_alias {
+                                merged.insert(format!("{}.{}", alias, k), v.clone());
+                            }
+                        }
+                        let include = on_expr.as_ref().map(|e| eval_expr(e, &merged).as_bool()).unwrap_or(true);
+                        if include {
+                            new_result.push(merged);
+                            matched = true;
+                        }
+                    }
+                }
+                if is_left && !matched {
+                    let mut padded = left_row.clone();
+                    padded.extend(null_padded_right.clone());
+                    new_result.push(padded);
+                }
+            }
+        } else {
+        // Fallback: nested loop join
         for left_row in &result {
             let mut matched = false;
             for right_row in &right_rows {
@@ -460,11 +651,15 @@ fn apply_joins(
                     matched = true;
                 }
             }
-            // LEFT JOIN: 매칭 행이 없으면 left_row만으로 NULL 행 추가
+            // LEFT JOIN: 매칭 행이 없으면 right 컬럼을 NULL로 채운 행 추가
             if is_left && !matched {
-                new_result.push(left_row.clone());
+                let mut padded = left_row.clone();
+                padded.extend(null_padded_right.clone());
+                new_result.push(padded);
             }
         }
+        } // end else (nested loop)
+
         result = new_result;
     }
     Ok(result)
@@ -973,7 +1168,9 @@ fn eval_expr(expr: &sqlparser::ast::Expr, row: &Row) -> EvalResult {
         // Handles correlated subqueries (e.g. WHERE l_orderkey = o_orderkey) by merging
         // outer row columns so correlated references resolve correctly.
         E::Exists { subquery, negated } => {
-            use sqlparser::ast::{SetExpr, TableFactor};
+            use sqlparser::ast::{SetExpr, TableFactor, BinaryOperator as BOp2};
+            let sub_str = format!("{}", subquery);
+
             let found = if let SetExpr::Select(inner_sel) = &*subquery.body {
                 let inner_table = inner_sel.from.first().and_then(|t| match &t.relation {
                     TableFactor::Table { name, .. } =>
@@ -981,20 +1178,275 @@ fn eval_expr(expr: &sqlparser::ast::Expr, row: &Row) -> EvalResult {
                     _ => None,
                 });
                 if let Some(tbl) = inner_table {
-                    let inner_rows = super::mem_store::MEM_STORE.scan(&tbl);
-                    inner_rows.iter().any(|inner_row| {
-                        // Merge outer row for correlated column references
-                        let mut ctx: Row = inner_row.clone();
-                        for (k, v) in row.iter() {
-                            ctx.entry(k.clone()).or_insert_with(|| v.clone());
+                    // Cache inner table scan as Arc to avoid cloning 60K rows per outer row
+                    let inner_rows_arc: std::sync::Arc<Vec<super::mem_store::Row>> =
+                        EXISTS_INNER.with(|c| c.borrow().get(&tbl).cloned())
+                            .unwrap_or_else(|| {
+                                let rows = super::mem_store::MEM_STORE.scan(&tbl);
+                                let arc = std::sync::Arc::new(rows);
+                                EXISTS_INNER.with(|c| c.borrow_mut().insert(tbl.clone(), arc.clone()));
+                                arc
+                            });
+                    let inner_rows = inner_rows_arc.as_ref();
+                    let inner_cols: std::collections::HashSet<String> = inner_rows.first()
+                        .map(|r| r.keys().cloned().collect())
+                        .unwrap_or_default();
+
+                    // Detect correlated equality: inner_col = outer_col
+                    let conditions: Vec<_> = inner_sel.selection.as_ref()
+                        .map(|e| split_and_conjuncts(e))
+                        .unwrap_or_default();
+                    let corr_pair = conditions.iter().find_map(|cond| {
+                        if let sqlparser::ast::Expr::BinaryOp { left, op: BOp2::Eq, right } = cond {
+                            let lc = simple_col_name(left);
+                            let rc = simple_col_name(right);
+                            match (lc, rc) {
+                                (Some(l), Some(r)) if inner_cols.contains(&l) && !inner_cols.contains(&r) => Some((l, r)),
+                                (Some(l), Some(r)) if inner_cols.contains(&r) && !inner_cols.contains(&l) => Some((r, l)),
+                                _ => None,
+                            }
+                        } else { None }
+                    });
+
+                    if let Some((inner_col, outer_col)) = corr_pair {
+                        // Build key set once per top-level query, cache by sub_str
+                        let key_set = EXISTS_KEYSET.with(|c| c.borrow().get(&sub_str).cloned());
+                        let key_set = key_set.unwrap_or_else(|| {
+                            // Non-correlated conditions only (those referencing only inner cols)
+                            let non_corr: Vec<_> = conditions.iter().filter(|cond| {
+                                if let sqlparser::ast::Expr::BinaryOp { left, op: BOp2::Eq, right } = cond {
+                                    let lc = simple_col_name(left);
+                                    let rc = simple_col_name(right);
+                                    match (lc, rc) {
+                                        (Some(l), Some(r)) => inner_cols.contains(&l) && inner_cols.contains(&r),
+                                        _ => true,
+                                    }
+                                } else { true }
+                            }).cloned().collect();
+                            let ks: std::collections::HashSet<String> = inner_rows.iter()
+                                .filter(|ir| non_corr.iter().all(|c| eval_expr(c, ir).as_bool()))
+                                .filter_map(|ir| ir.get(&inner_col).map(|v| json_to_str(v)))
+                                .collect();
+                            EXISTS_KEYSET.with(|c| c.borrow_mut().insert(sub_str.clone(), ks.clone()));
+                            ks
+                        });
+                        let outer_val = row.get(&outer_col).map(|v| json_to_str(v)).unwrap_or_default();
+                        key_set.contains(&outer_val)
+                    } else {
+                        // Fallback: nested loop with alias-aware merged context.
+                        // Also detects alias-based equality for group-index optimization
+                        // (handles self-join EXISTS like l2.col = l1.col where l2 is inner alias).
+                        let inner_alias: Option<String> = inner_sel.from.first()
+                            .and_then(|t| match &t.relation {
+                                TableFactor::Table { alias, .. } =>
+                                    alias.as_ref().map(|a| a.name.value.clone()),
+                                _ => None,
+                            });
+                        // Collect all table-alias prefixes from conditions
+                        fn collect_aliases_from_expr(e: &sqlparser::ast::Expr) -> Vec<String> {
+                            use sqlparser::ast::Expr as E2;
+                            match e {
+                                E2::CompoundIdentifier(parts) if parts.len() >= 2 =>
+                                    vec![parts[0].value.clone()],
+                                E2::BinaryOp { left, right, .. } => {
+                                    let mut v = collect_aliases_from_expr(left);
+                                    v.extend(collect_aliases_from_expr(right));
+                                    v
+                                }
+                                _ => vec![],
+                            }
                         }
-                        inner_sel.selection.as_ref()
-                            .map(|w| eval_expr(w, &ctx).as_bool())
-                            .unwrap_or(true)
-                    })
+                        fn compound_alias(e: &sqlparser::ast::Expr) -> Option<&str> {
+                            match e {
+                                sqlparser::ast::Expr::CompoundIdentifier(ps) if ps.len() >= 2 =>
+                                    Some(ps[0].value.as_str()),
+                                _ => None,
+                            }
+                        }
+                        let outer_aliases: std::collections::HashSet<String> = inner_sel.selection.as_ref()
+                            .map(|e| collect_aliases_from_expr(e))
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|a| inner_alias.as_deref() != Some(a.as_str()))
+                            .collect();
+
+                        // Detect alias-based equality: l2.col = l1.col (same col, different aliases)
+                        // → use group-index optimization instead of O(N*M) fallback
+                        let alias_eq_col: Option<String> = inner_alias.as_ref().and_then(|ia| {
+                            conditions.iter().find_map(|cond| {
+                                if let sqlparser::ast::Expr::BinaryOp { left, op: BOp2::Eq, right } = cond {
+                                    let lc = simple_col_name(left)?;
+                                    let rc = simple_col_name(right)?;
+                                    if lc == rc && inner_cols.contains(&lc) {
+                                        let la = compound_alias(left);
+                                        let ra = compound_alias(right);
+                                        if la == Some(ia.as_str()) || ra == Some(ia.as_str()) {
+                                            return Some(lc);
+                                        }
+                                    }
+                                }
+                                None
+                            })
+                        });
+
+                        if let Some(eq_col) = alias_eq_col {
+                            // Group-index optimization: group inner rows by eq_col value
+                            // Cache as (eq_col, HashMap<val → Vec<idx>>) per sub_str
+                            let (cached_eq, cached_group) = EXISTS_GROUP.with(|c| {
+                                c.borrow().get(&sub_str).cloned()
+                                    .map(|(ec, g)| (Some(ec), Some(g)))
+                                    .unwrap_or((None, None))
+                            });
+                            let group = if let Some(g) = cached_group {
+                                g
+                            } else {
+                                let mut g: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
+                                for (idx, ir) in inner_rows.iter().enumerate() {
+                                    if let Some(v) = ir.get(&eq_col) {
+                                        g.entry(json_to_str(v)).or_default().push(idx);
+                                    }
+                                }
+                                EXISTS_GROUP.with(|c| c.borrow_mut().insert(
+                                    sub_str.clone(),
+                                    (eq_col.clone(), g.clone()),
+                                ));
+                                g
+                            };
+                            // Remaining conditions (exclude the alias-eq condition)
+                            let remaining: Vec<_> = conditions.iter().filter(|cond| {
+                                if let sqlparser::ast::Expr::BinaryOp { left, op: BOp2::Eq, right } = cond {
+                                    let lc = simple_col_name(left);
+                                    let rc = simple_col_name(right);
+                                    !(lc.as_deref() == Some(&eq_col) && rc.as_deref() == Some(&eq_col))
+                                } else { true }
+                            }).collect();
+                            let outer_val = row.get(&eq_col).map(|v| json_to_str(v)).unwrap_or_default();
+                            group.get(&outer_val).map(|idxs| {
+                                idxs.iter().any(|&idx| {
+                                    let inner_row = &inner_rows[idx];
+                                    if remaining.is_empty() { return true; }
+                                    let mut ctx: Row = std::collections::HashMap::new();
+                                    for (k, v) in inner_row.iter() {
+                                        ctx.insert(k.clone(), v.clone());
+                                        if let Some(ref ia) = inner_alias {
+                                            ctx.insert(format!("{}.{}", ia, k), v.clone());
+                                        }
+                                    }
+                                    for (k, v) in row.iter() {
+                                        ctx.entry(k.clone()).or_insert_with(|| v.clone());
+                                        for alias in &outer_aliases {
+                                            ctx.insert(format!("{}.{}", alias, k), v.clone());
+                                        }
+                                    }
+                                    remaining.iter().all(|c| eval_expr(c, &ctx).as_bool())
+                                })
+                            }).unwrap_or(false)
+                        } else {
+                            // Plain fallback: scan all inner rows
+                            inner_rows.iter().any(|inner_row| {
+                                let mut ctx: Row = std::collections::HashMap::new();
+                                // Inner row: bare keys + inner-alias-prefixed keys
+                                for (k, v) in inner_row.iter() {
+                                    ctx.insert(k.clone(), v.clone());
+                                    if let Some(ref ia) = inner_alias {
+                                        ctx.insert(format!("{}.{}", ia, k), v.clone());
+                                    }
+                                }
+                                // Outer row: bare keys (don't overwrite inner) + outer-alias-prefixed keys
+                                for (k, v) in row.iter() {
+                                    ctx.entry(k.clone()).or_insert_with(|| v.clone());
+                                    for alias in &outer_aliases {
+                                        ctx.insert(format!("{}.{}", alias, k), v.clone());
+                                    }
+                                }
+                                inner_sel.selection.as_ref()
+                                    .map(|w| eval_expr(w, &ctx).as_bool())
+                                    .unwrap_or(true)
+                            })
+                        }
+                    }
                 } else { false }
             } else { false };
             EvalResult::Bool(if *negated { !found } else { found })
+        }
+        // IN/NOT IN (SELECT ...) subquery
+        // Uses cached_execute_select_sync: computed once per unique SQL per top-level query.
+        // Handles GROUP BY, HAVING, DISTINCT, aggregates, and derived tables.
+        E::InSubquery { expr, subquery, negated } => {
+            let outer_val = eval_expr(expr, row).into_value();
+            let sub_sql = format!("{}", subquery);
+            let found = match cached_execute_select_sync(&sub_sql) {
+                Ok(res) => res.rows.iter().any(|inner_row| {
+                    inner_row.first().map(|v| json_eq(&outer_val, v)).unwrap_or(false)
+                }),
+                Err(_) => false,
+            };
+            EvalResult::Bool(if *negated { !found } else { found })
+        }
+        // Scalar subquery: (SELECT expr FROM table WHERE ...)
+        // Uses cached_execute_select_sync to properly handle aggregates and avoid per-row overhead.
+        E::Subquery(subquery) => {
+            let sub_sql = format!("{}", subquery);
+            match cached_execute_select_sync(&sub_sql) {
+                Ok(res) if !res.rows.is_empty() => EvalResult::Val(res.rows[0][0].clone()),
+                _ => EvalResult::Null,
+            }
+        }
+        // EXTRACT(YEAR/MONTH/DAY/HOUR FROM expr)
+        E::Extract { field, expr } => {
+            use sqlparser::ast::DateTimeField;
+            use chrono::{TimeZone, Utc, Datelike, Timelike};
+            let val = eval_expr(expr, row).into_value();
+            // Support both date strings ("YYYY-MM-DD") and Unix-ms integers
+            let result: i64 = match &val {
+                Value::String(s) => {
+                    let parts: Vec<&str> = s[..s.len().min(10)].split('-').collect();
+                    let y = parts.first().and_then(|x| x.parse::<i32>().ok()).unwrap_or(0);
+                    let m = parts.get(1).and_then(|x| x.parse::<u32>().ok()).unwrap_or(0);
+                    let d = parts.get(2).and_then(|x| x.parse::<u32>().ok()).unwrap_or(0);
+                    match field {
+                        DateTimeField::Year  => y as i64,
+                        DateTimeField::Month => m as i64,
+                        DateTimeField::Day   => d as i64,
+                        _ => 0,
+                    }
+                }
+                _ => {
+                    let ts_ms = match &val {
+                        Value::Number(n) => n.as_i64().unwrap_or(0),
+                        _ => 0,
+                    };
+                    let secs  = ts_ms / 1000;
+                    let nanos = ((ts_ms % 1000).abs() as u32) * 1_000_000;
+                    if let chrono::LocalResult::Single(dt) = Utc.timestamp_opt(secs, nanos) {
+                        match field {
+                            DateTimeField::Year  => dt.year() as i64,
+                            DateTimeField::Month => dt.month() as i64,
+                            DateTimeField::Day   => dt.day() as i64,
+                            DateTimeField::Hour  => dt.hour() as i64,
+                            _ => 0,
+                        }
+                    } else { 0 }
+                }
+            };
+            EvalResult::Val(serde_json::json!(result))
+        }
+        E::Substring { expr, substring_from, substring_for, .. } => {
+            let s = json_to_str(&eval_expr(expr, row).into_value());
+            let chars: Vec<char> = s.chars().collect();
+            let total = chars.len() as i64;
+            let start = substring_from.as_ref()
+                .and_then(|e| eval_expr(e, row).as_f64())
+                .map(|n| n as i64)
+                .unwrap_or(1);
+            let idx = if start > 0 { (start - 1).min(total) as usize }
+                      else if start < 0 { (total + start).max(0) as usize }
+                      else { 0 };
+            let result: String = match substring_for.as_ref().and_then(|e| eval_expr(e, row).as_f64()) {
+                Some(l) => chars[idx..].iter().take(l as usize).collect(),
+                None    => chars[idx..].iter().collect(),
+            };
+            EvalResult::Val(Value::String(result))
         }
         E::Case { operand, conditions, results, else_result } => {
             if let Some(op) = operand {
@@ -1130,6 +1582,64 @@ fn eval_function(f: &sqlparser::ast::Function, row: &Row) -> EvalResult {
                         .replace("%Y", y).replace("%m", m).replace("%d", d)
                         .replace("%y", if y.len() >= 4 { &y[2..] } else { y });
                     return EvalResult::Val(Value::String(result));
+                }
+            }
+            EvalResult::Null
+        }
+        "SUBSTRING" | "SUBSTR" => {
+            if let sqlparser::ast::FunctionArguments::List(list) = &f.args {
+                let exprs: Vec<&sqlparser::ast::Expr> = list.args.iter().filter_map(|a| match a {
+                    sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(e)) => Some(e),
+                    _ => None,
+                }).collect();
+                if let Some(s_expr) = exprs.first() {
+                    let s = json_to_str(&eval_expr(s_expr, row).into_value());
+                    // 1-based start position
+                    let start = exprs.get(1)
+                        .and_then(|e| eval_expr(e, row).as_f64())
+                        .map(|n| n as i64)
+                        .unwrap_or(1);
+                    let len = exprs.get(2)
+                        .and_then(|e| eval_expr(e, row).as_f64())
+                        .map(|n| n as usize);
+                    let chars: Vec<char> = s.chars().collect();
+                    let total = chars.len() as i64;
+                    // MySQL: negative start counts from end; 0 treated as 1
+                    let idx = if start > 0 { (start - 1).min(total) as usize }
+                              else if start < 0 { (total + start).max(0) as usize }
+                              else { 0 };
+                    let result: String = match len {
+                        Some(l) => chars[idx..].iter().take(l).collect(),
+                        None    => chars[idx..].iter().collect(),
+                    };
+                    return EvalResult::Val(Value::String(result));
+                }
+            }
+            EvalResult::Null
+        }
+        "TRIM" => {
+            first_arg_expr(&f.args).map(|e| {
+                EvalResult::Val(Value::String(json_to_str(&eval_expr(e, row).into_value()).trim().to_string()))
+            }).unwrap_or(EvalResult::Null)
+        }
+        "LPAD" => {
+            if let sqlparser::ast::FunctionArguments::List(list) = &f.args {
+                let exprs: Vec<&sqlparser::ast::Expr> = list.args.iter().filter_map(|a| match a {
+                    sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(e)) => Some(e),
+                    _ => None,
+                }).collect();
+                if exprs.len() >= 2 {
+                    let s = json_to_str(&eval_expr(exprs[0], row).into_value());
+                    let target_len = eval_expr(exprs[1], row).as_f64().unwrap_or(0.0) as usize;
+                    let pad = exprs.get(2).map(|e| json_to_str(&eval_expr(e, row).into_value())).unwrap_or_else(|| " ".to_string());
+                    let pad_ch: Vec<char> = pad.chars().collect();
+                    let s_ch: Vec<char> = s.chars().collect();
+                    if s_ch.len() >= target_len {
+                        return EvalResult::Val(Value::String(s_ch[..target_len].iter().collect()));
+                    }
+                    let needed = target_len - s_ch.len();
+                    let prefix: String = pad_ch.iter().cycle().take(needed).collect();
+                    return EvalResult::Val(Value::String(format!("{}{}", prefix, s)));
                 }
             }
             EvalResult::Null

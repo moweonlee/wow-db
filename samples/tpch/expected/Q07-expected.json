@@ -1,0 +1,8 @@
+{
+  "query_id": "Q07",
+  "scale_factor": 0.01,
+  "expected_row_count": 4,
+  "notes": "volume shipping FRANCE-GERMANY",
+  "sample_first_row": null,
+  "validation_columns": []
+}
