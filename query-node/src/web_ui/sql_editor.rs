@@ -14,6 +14,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use super::server::WebUiState;
+use crate::executor::select_exec::execute_select;
 
 // ─── 쿼리 히스토리 ───────────────────────────────────────────────────────────
 
@@ -111,9 +112,26 @@ pub async fn execute_sql(
         .unwrap_or_default()
         .as_millis() as i64;
 
-    // TODO (Phase D): 실제 쿼리 실행 엔진 연동
-    // 현재는 파서 검증 + 스텁 응답
-    let (status, columns, rows, error) = execute_stub(&req.sql);
+    let (status, columns, rows, error) = {
+        let upper = req.sql.trim().to_uppercase();
+        if upper.starts_with("SELECT") || upper.starts_with("SHOW") {
+            match execute_select(&req.sql).await {
+                Ok(sel) => {
+                    let cols = sel.columns.iter().map(|c| ColumnMeta {
+                        name:      c.clone(),
+                        data_type: "String".to_string(),
+                    }).collect();
+                    let rows: Vec<Vec<serde_json::Value>> = sel.rows;
+                    ("success".to_string(), cols, rows, None)
+                }
+                Err(e) => ("error".to_string(), vec![], vec![], Some(e)),
+            }
+        } else {
+            // DDL / DML — not yet routed through Web UI
+            let (status, columns, rows, error) = execute_stub(&req.sql);
+            (status, columns, rows, error)
+        }
+    };
 
     let duration_ms = start.elapsed().as_millis() as u64;
     let row_count   = rows.len() as u64;

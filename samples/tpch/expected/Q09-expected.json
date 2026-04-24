@@ -1,0 +1,8 @@
+{
+  "query_id": "Q09",
+  "scale_factor": 0.01,
+  "expected_row_count": 175,
+  "notes": "nation x year combinations",
+  "sample_first_row": null,
+  "validation_columns": []
+}

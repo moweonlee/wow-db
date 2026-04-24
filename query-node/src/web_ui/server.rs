@@ -101,11 +101,21 @@ async fn handle_ws_sql(mut socket: WebSocket, _state: WebUiState) {
         match msg {
             Ok(Message::Text(sql)) => {
                 info!(sql = %sql, "WebSocket SQL received");
-                // TODO (Phase D): 실제 쿼리 실행 후 스트리밍 반환
-                let resp = serde_json::json!({
-                    "status": "stub",
-                    "message": format!("Received SQL (stub): {}", sql)
-                });
+                let resp = match crate::executor::select_exec::execute_select(&sql).await {
+                    Ok(sel) => {
+                        let row_count = sel.rows.len();
+                        serde_json::json!({
+                            "status":    "success",
+                            "columns":   sel.columns,
+                            "rows":      sel.rows,
+                            "row_count": row_count,
+                        })
+                    },
+                    Err(e) => serde_json::json!({
+                        "status": "error",
+                        "error":  e,
+                    }),
+                };
                 if socket.send(Message::Text(resp.to_string().into())).await.is_err() {
                     break;
                 }

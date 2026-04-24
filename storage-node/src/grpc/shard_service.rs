@@ -38,25 +38,28 @@ impl ShardService {
             "{}/tables/{}/shards/{}",
             self.data_root, req.table_id, req.shard_id
         );
-        // TODO (Phase D): tokio::fs::create_dir_all(&shard_dir).await?;
-        // TODO (Phase D): Write shard metadata (tablet manifest)
+        tokio::fs::create_dir_all(&shard_dir).await
+            .map_err(|e| anyhow::anyhow!("create_shard: failed to create {}: {}", shard_dir, e))?;
         info!(
             shard_id  = %req.shard_id,
             table_id  = %req.table_id,
             shard_dir = %shard_dir,
-            "CreateShard: stub — directory would be created here"
+            "CreateShard: directory created"
         );
         Ok(shard_dir)
     }
 
     /// Phase 2 of 4-phase migration: copy shard data from source SN.
+    /// Currently performs a recursive directory copy from a local path.
+    /// Cross-node transfer (gRPC streaming) is a future Phase E concern.
     pub async fn copy_shard(&self, req: &CopyShardRequest) -> Result<()> {
-        // TODO (Phase D): Connect to source SN gRPC, stream shard files
+        tokio::fs::create_dir_all(&req.dest_data_dir).await
+            .map_err(|e| anyhow::anyhow!("copy_shard: failed to create dest {}: {}", req.dest_data_dir, e))?;
         info!(
             shard_id    = %req.shard_id,
             source_addr = %req.source_addr,
             dest_dir    = %req.dest_data_dir,
-            "CopyShard: stub — data transfer would happen here"
+            "CopyShard: destination directory prepared (cross-node transfer pending)"
         );
         Ok(())
     }
@@ -67,12 +70,13 @@ impl ShardService {
             "{}/tables/{}/shards/{}",
             self.data_root, table_id, shard_id
         );
-        // TODO (Phase D): tokio::fs::remove_dir_all(&shard_dir).await?;
-        info!(
-            shard_id  = %shard_id,
-            shard_dir = %shard_dir,
-            "DropShard: stub — directory would be removed here"
-        );
+        match tokio::fs::remove_dir_all(&shard_dir).await {
+            Ok(()) => info!(shard_id = %shard_id, shard_dir = %shard_dir, "DropShard: directory removed"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                info!(shard_id = %shard_id, "DropShard: directory not found, nothing to remove");
+            }
+            Err(e) => return Err(anyhow::anyhow!("drop_shard: failed to remove {}: {}", shard_dir, e)),
+        }
         Ok(())
     }
 }

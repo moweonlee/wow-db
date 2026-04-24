@@ -1,0 +1,8 @@
+{
+  "query_id": "Q04",
+  "scale_factor": 0.01,
+  "expected_row_count": 5,
+  "notes": "order priority count",
+  "sample_first_row": null,
+  "validation_columns": []
+}

@@ -1,0 +1,8 @@
+{
+  "query_id": "Q06",
+  "scale_factor": 0.01,
+  "expected_row_count": 1,
+  "notes": "single revenue sum",
+  "sample_first_row": null,
+  "validation_columns": []
+}

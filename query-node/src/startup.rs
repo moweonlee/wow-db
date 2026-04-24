@@ -3,7 +3,7 @@
 // On startup, QN reads `QN_HTTP_PEERS` (comma-separated "host:http_port")
 // and POSTs to /api/v1/nodes/register on every reachable peer QN.
 // Also writes self-registration into the local Raft KV.
-// Spawns a heartbeat task to re-register every 15 seconds.
+// Spawns a heartbeat task to re-register every 5 seconds.
 //
 // Role determination:
 //   - NODE_ID matches first entry in QN_HTTP_PEERS or self is QN_LEADER → Leader

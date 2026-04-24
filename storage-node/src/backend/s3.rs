@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
+use object_store::ObjectStore;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
@@ -137,25 +138,46 @@ impl LocalCache {
 pub struct S3Backend {
     config: S3Config,
     cache:  Arc<Mutex<LocalCache>>,
+    store:  Option<Arc<dyn ObjectStore>>,
 }
 
 impl S3Backend {
     pub async fn new(config: S3Config) -> Result<Self> {
-        // 캐시 디렉토리 생성
         tokio::fs::create_dir_all(&config.local_cache_dir).await?;
+
+        // Build the object_store client if credentials are configured
+        let store: Option<Arc<dyn ObjectStore>> = Self::build_store(&config);
+
         info!(
-            bucket = %config.bucket,
-            prefix = %config.prefix,
+            bucket    = %config.bucket,
+            prefix    = %config.prefix,
             cache_dir = %config.local_cache_dir.display(),
+            connected = store.is_some(),
             "S3 backend initialized"
         );
 
         let cache = LocalCache::new(config.local_cache_dir.clone(), config.local_cache_size);
+        Ok(Self { cache: Arc::new(Mutex::new(cache)), config, store })
+    }
 
-        Ok(Self {
-            cache: Arc::new(Mutex::new(cache)),
-            config,
-        })
+    fn build_store(cfg: &S3Config) -> Option<Arc<dyn ObjectStore>> {
+        use object_store::aws::AmazonS3Builder;
+        let mut builder = AmazonS3Builder::new()
+            .with_bucket_name(&cfg.bucket)
+            .with_region(&cfg.region);
+        if let Some(ep) = &cfg.endpoint {
+            builder = builder.with_endpoint(ep).with_allow_http(true);
+        }
+        if let (Some(ak), Some(sk)) = (&cfg.access_key_id, &cfg.secret_key) {
+            builder = builder.with_access_key_id(ak).with_secret_access_key(sk);
+        }
+        match builder.build() {
+            Ok(s) => Some(Arc::new(s)),
+            Err(e) => {
+                warn!(err = %e, "S3 backend: failed to build ObjectStore — running cache-only");
+                None
+            }
+        }
     }
 
     /// S3 객체 키 생성
@@ -168,12 +190,13 @@ impl S3Backend {
         let key = self.object_key(path);
         debug!(key = %key, size = data.len(), "S3 PUT");
 
-        // 캐시에 저장
         self.cache.lock().await.put(&key, &data).await?;
 
-        // TODO (Phase D): 실제 object_store PUT 호출
-        // let location = object_store::path::Path::from(key.as_str());
-        // self.store.put(&location, data).await?;
+        if let Some(store) = &self.store {
+            let location = object_store::path::Path::from(key.as_str());
+            store.put(&location, data.into()).await
+                .map_err(|e| anyhow!("S3 PUT failed: {e}"))?;
+        }
 
         Ok(())
     }
@@ -182,21 +205,21 @@ impl S3Backend {
     pub async fn get(&self, path: &str) -> Result<Bytes> {
         let key = self.object_key(path);
 
-        // 캐시 확인
         if let Some(data) = self.cache.lock().await.get(&key).await {
             return Ok(data);
         }
 
         debug!(key = %key, "S3 GET (cache miss)");
 
-        // TODO (Phase D): 실제 object_store GET 호출
-        // let location = object_store::path::Path::from(key.as_str());
-        // let result   = self.store.get(&location).await?;
-        // let data     = result.bytes().await?;
-        // self.cache.lock().await.put(&key, &data).await?;
-        // return Ok(data);
-
-        Err(anyhow!("S3 backend not connected (stub): key={}", key))
+        let store = self.store.as_ref()
+            .ok_or_else(|| anyhow!("S3 backend not connected: key={}", key))?;
+        let location = object_store::path::Path::from(key.as_str());
+        let result = store.get(&location).await
+            .map_err(|e| anyhow!("S3 GET failed: {e}"))?;
+        let data = result.bytes().await
+            .map_err(|e| anyhow!("S3 GET read failed: {e}"))?;
+        self.cache.lock().await.put(&key, &data).await?;
+        Ok(data)
     }
 
     /// SSTable 파일 삭제 (DELETE)
@@ -205,15 +228,33 @@ impl S3Backend {
         debug!(key = %key, "S3 DELETE");
         self.cache.lock().await.remove(&key);
 
-        // TODO (Phase D): 실제 object_store DELETE 호출
+        if let Some(store) = &self.store {
+            let location = object_store::path::Path::from(key.as_str());
+            store.delete(&location).await
+                .map_err(|e| anyhow!("S3 DELETE failed: {e}"))?;
+        }
         Ok(())
     }
 
     /// 경로 하위 모든 파일 목록
     pub async fn list(&self, prefix_path: &str) -> Result<Vec<String>> {
-        let _key_prefix = self.object_key(prefix_path);
-        // TODO (Phase D): 실제 object_store list 호출
-        Ok(Vec::new())
+        let key_prefix = self.object_key(prefix_path);
+        let store = match &self.store {
+            Some(s) => s,
+            None => return Ok(Vec::new()),
+        };
+
+        use tokio_stream::StreamExt;
+        let prefix = object_store::path::Path::from(key_prefix.as_str());
+        let mut stream = store.list(Some(&prefix));
+        let mut keys = Vec::new();
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(meta) => keys.push(meta.location.to_string()),
+                Err(e)   => warn!(err = %e, "S3 list error"),
+            }
+        }
+        Ok(keys)
     }
 
     /// 객체 존재 여부 확인

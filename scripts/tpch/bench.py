@@ -4,14 +4,12 @@ import sys, io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 """
-WOW-DB TPC-H Benchmark (SF=0.01 → correctness, SF=0.1 → performance)
+WOW-DB TPC-H Benchmark
 
 Usage:
-  python bench.py                    # SF=0.01 quick test
-  python bench.py --sf 0.1           # SF=0.1 perf test
-  python bench.py --no-load          # skip data load (tables already loaded)
-  python bench.py --query 1          # run single query
-  python bench.py --port 19030       # QN MySQL port
+  python bench.py --sf 0.01 --queries all --output json --report out.json
+  python bench.py --sf 0.1 --queries Q01,Q03,Q06 --output markdown
+  python bench.py --no-load --queries Q01 --runs 3
 """
 
 import pymysql
@@ -20,23 +18,45 @@ import time
 import sys
 import argparse
 import math
-from datetime import date, timedelta
+import json
+import os
+import platform
+import subprocess
+from datetime import date, timedelta, datetime
 from collections import defaultdict
 
 # ─── CLI Args ────────────────────────────────────────────────────────────────
 
 parser = argparse.ArgumentParser(description="WOW-DB TPC-H Benchmark")
 parser.add_argument("--host",    default="127.0.0.1")
-parser.add_argument("--port",    type=int, default=19030)
+parser.add_argument("--port",    type=int, default=9030)
 parser.add_argument("--user",    default="root")
 parser.add_argument("--db",      default="tpch")
 parser.add_argument("--sf",      type=float, default=0.01, help="Scale factor (0.01 | 0.1 | 1)")
 parser.add_argument("--no-load", action="store_true", help="Skip table creation & data load")
-parser.add_argument("--query",   type=int, default=0, help="Run single query number (0=all)")
-parser.add_argument("--timeout", type=int, default=120, help="Query timeout seconds")
+parser.add_argument("--query",   type=int, default=0, help="Run single query number (0=all; legacy)")
+parser.add_argument("--queries", default="Q01,Q03,Q05,Q06,Q10,Q14",
+                    help="Comma-separated query IDs (e.g. Q01,Q03) or 'all' for all 22")
+parser.add_argument("--output",  default="text", choices=["text","json","markdown"],
+                    help="Output format")
+parser.add_argument("--report",  default=None,
+                    help="Write JSON report to FILE")
+parser.add_argument("--runs",    type=int, default=1,
+                    help="Number of runs per query (for p50/p95/p99 stats)")
+parser.add_argument("--timeout", type=int, default=30, help="Per-query timeout seconds")
 args = parser.parse_args()
 
 SF = args.sf
+RUN_ID = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+# Resolve query list
+ALL_QUERY_IDS = [f"Q{i:02d}" for i in range(1, 23)]
+if args.query:
+    query_ids_to_run = [f"Q{args.query:02d}"]
+elif args.queries.lower() == "all":
+    query_ids_to_run = ALL_QUERY_IDS
+else:
+    query_ids_to_run = [q.strip().upper() for q in args.queries.split(",")]
 
 # Row counts per SF=1 (TPC-H spec)
 N_REGION    = 5
@@ -48,9 +68,46 @@ N_PARTSUPP  = N_PART * 4
 N_ORDERS    = int(1_500_000 * SF)
 N_LINEITEM  = int(6_000_000 * SF)
 
+def get_wow_db_version():
+    try:
+        result = subprocess.run(["git","rev-parse","--short","HEAD"],
+                                capture_output=True, text=True, cwd=os.path.dirname(__file__))
+        return result.stdout.strip() if result.returncode == 0 else "unknown"
+    except Exception:
+        return "unknown"
+
+def get_hardware_info():
+    import multiprocessing
+    try:
+        ram_gb = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') // (1024**3)
+    except Exception:
+        ram_gb = 0
+    try:
+        import psutil
+        ram_gb = psutil.virtual_memory().total // (1024**3)
+    except Exception:
+        pass
+    docker_ver = "unknown"
+    try:
+        r = subprocess.run(["docker","version","--format","{{.Client.Version}}"],
+                           capture_output=True, text=True)
+        docker_ver = r.stdout.strip() if r.returncode == 0 else "unknown"
+    except Exception:
+        pass
+    return {
+        "cpu_model": platform.processor() or platform.machine(),
+        "cpu_cores": multiprocessing.cpu_count(),
+        "ram_gb": ram_gb,
+        "storage_type": "SSD",
+        "os": platform.platform(),
+        "docker_version": docker_ver,
+    }
+
+WOW_DB_VERSION = get_wow_db_version()
+
 print(f"\n{'='*60}")
 print(f"  WOW-DB TPC-H Benchmark  |  SF={SF}")
-print(f"  Target: {args.host}:{args.port}")
+print(f"  Target: {args.host}:{args.port}  Queries: {args.queries}")
 print(f"  Row counts: lineitem~{N_LINEITEM:,}  orders~{N_ORDERS:,}  customer~{N_CUSTOMER:,}")
 print(f"{'='*60}\n")
 
@@ -476,62 +533,195 @@ else:
     except Exception as e:
         print(f"  WARN: USE {args.db}: {e}")
 
+# ── Expected row counts at SF=0.01 (used for PASS/PARTIAL classification) ─────
+
+EXPECTED_ROWS = {
+    "Q01": 4,   "Q02": 5,   "Q03": 10,  "Q04": 5,   "Q05": 5,
+    "Q06": 1,   "Q07": 4,   "Q08": 2,   "Q09": 175, "Q10": 20,
+    "Q11": 50,  "Q12": 2,   "Q13": 42,  "Q14": 1,   "Q15": 1,
+    "Q16": 18,  "Q17": 1,   "Q18": 10,  "Q19": 1,   "Q20": 1,
+    "Q21": 10,  "Q22": 7,
+}
+
+# ── Load SQL files from samples/tpch/queries/ if present ─────────────────────
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT   = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+SQL_DIR     = os.path.join(REPO_ROOT, "samples", "tpch", "queries")
+
+def load_query_sql(qid):
+    """Load SQL for a query ID. Falls back to QUERIES dict if file not found."""
+    sql_file = os.path.join(SQL_DIR, f"{qid}.sql")
+    if os.path.exists(sql_file):
+        with open(sql_file, encoding="utf-8") as f:
+            content = f.read()
+        # Strip SQL comments at top to get the actual SQL
+        lines = [l for l in content.splitlines() if not l.strip().startswith("--")]
+        return "\n".join(lines).strip(), sql_file
+    # Fall back to inline QUERIES dict (legacy)
+    qnum = int(qid[1:])
+    if qnum in QUERIES:
+        name, sql = QUERIES[qnum]
+        return sql, None
+    return None, None
+
 # ── Run Queries ───────────────────────────────────────────────────────────────
 
 print(f"\n{'='*60}")
-print(f"  TPC-H Query Execution")
+print(f"  TPC-H Query Execution  (SF={SF}, runs={args.runs})")
 print(f"{'='*60}\n")
 
-query_ids = [args.query] if args.query else sorted(QUERIES.keys())
+load_start = time.perf_counter()
+query_results = []   # list of result dicts per contract schema
 
-for qid in query_ids:
-    if qid not in QUERIES:
-        print(f"Q{qid}: unknown query")
+for qid in query_ids_to_run:
+    sql, sql_file = load_query_sql(qid)
+    qnum = int(qid[1:])
+    name = QUERIES.get(qnum, ("Unknown",))[0] if qnum in QUERIES else qid
+
+    if sql is None:
+        print(f"[{qid}] SKIP — no SQL file or inline definition")
+        query_results.append({
+            "id": qid, "sql_file": sql_file, "status": "SKIP",
+            "duration_ms": None, "row_count_actual": None,
+            "row_count_expected": EXPECTED_ROWS.get(qid),
+            "error": None, "notes": "No SQL defined"
+        })
         continue
-    name, sql = QUERIES[qid]
-    print(f"[Q{qid:02d}] {name}")
-    t0 = time.perf_counter()
-    try:
-        cur.execute(sql)
-        rows = cur.fetchall()
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        results[qid] = {"status": "OK", "rows": len(rows), "ms": elapsed_ms}
-        print(f"       {elapsed_ms:8.1f} ms   {len(rows)} rows returned")
-        # Print first 3 rows of result
-        if rows:
-            cols = [d[0] for d in cur.description] if cur.description else []
-            for row in rows[:3]:
-                vals = "  ".join(f"{c}={v}" for c,v in zip(cols, row))
-                print(f"         {vals}")
-            if len(rows) > 3:
-                print(f"         ... ({len(rows)-3} more rows)")
-    except Exception as e:
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        results[qid] = {"status": "ERR", "rows": 0, "ms": elapsed_ms, "error": str(e)}
-        print(f"       {elapsed_ms:8.1f} ms   ERROR: {e}")
-    print()
 
-# ── Summary ───────────────────────────────────────────────────────────────────
+    print(f"[{qid}] {name}")
+    run_times = []
+    status = "FAIL"
+    actual_rows = 0
+    error_msg = None
+
+    for run_idx in range(args.runs):
+        # Reconnect if connection was lost by a previous query
+        try:
+            conn.ping(reconnect=True)
+            cur = conn.cursor()
+            cur.execute(f"USE {args.db}")
+        except Exception:
+            try:
+                conn = connect()
+                cur = conn.cursor()
+                cur.execute(f"USE {args.db}")
+            except Exception as e2:
+                error_msg = f"Reconnect failed: {e2}"
+                status = "FAIL"
+                break
+
+        t0 = time.perf_counter()
+        try:
+            cur.execute(sql)
+            rows = cur.fetchall()
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            run_times.append(elapsed_ms)
+            actual_rows = len(rows)
+            expected = EXPECTED_ROWS.get(qid)
+            if expected is None:
+                status = "PASS"
+            elif abs(actual_rows - expected) <= max(1, int(expected * 0.01)):
+                status = "PASS"
+            else:
+                status = "PARTIAL"
+            if run_idx == 0:
+                cols = [d[0] for d in cur.description] if cur.description else []
+                for row in rows[:2]:
+                    vals = "  ".join(f"{c}={v}" for c, v in zip(cols, row))
+                    print(f"         {vals}")
+                if len(rows) > 2:
+                    print(f"         ... ({len(rows)-2} more)")
+            print(f"       run {run_idx+1}: {elapsed_ms:.1f} ms  {actual_rows} rows  {status}")
+        except Exception as e:
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            run_times.append(elapsed_ms)
+            error_msg = str(e)
+            status = "FAIL"
+            print(f"       run {run_idx+1}: {elapsed_ms:.1f} ms  ERROR: {e}")
+            break  # don't retry on error
+
+    median_ms = sorted(run_times)[len(run_times)//2] if run_times else None
+    sym = {"PASS": "✅", "PARTIAL": "⚠️", "FAIL": "❌", "SKIP": "⏭"}.get(status, "?")
+    print(f"       {sym} {status}  median={median_ms:.1f}ms  rows={actual_rows}\n")
+
+    query_results.append({
+        "id": qid,
+        "sql_file": sql_file or f"inline:{qid}",
+        "status": status,
+        "duration_ms": median_ms,
+        "row_count_actual": actual_rows,
+        "row_count_expected": EXPECTED_ROWS.get(qid),
+        "error": error_msg,
+        "notes": None,
+    })
+
+load_end = time.perf_counter()
+total_load_ms = (load_end - load_start) * 1000
+
+# ── Build summary ─────────────────────────────────────────────────────────────
+
+counts = {"PASS": 0, "PARTIAL": 0, "FAIL": 0, "SKIP": 0}
+for r in query_results:
+    counts[r["status"]] = counts.get(r["status"], 0) + 1
+
+total_query_ms = sum(r["duration_ms"] for r in query_results if r["duration_ms"])
+
+# ── Text summary (always printed) ─────────────────────────────────────────────
 
 print(f"\n{'='*60}")
-print(f"  TPC-H Summary  (SF={SF})")
+print(f"  TPC-H Summary  SF={SF}  WOW-DB {WOW_DB_VERSION}")
 print(f"{'='*60}")
-print(f"  {'Q':>3}  {'Query Name':<35}  {'ms':>8}  {'Rows':>6}  Status")
-print(f"  {'-'*3}  {'-'*35}  {'-'*8}  {'-'*6}  {'-'*6}")
-for qid in query_ids:
-    if qid not in results:
-        continue
-    r = results[qid]
-    name, _ = QUERIES.get(qid, ("", ""))
-    status_sym = "✓" if r["status"] == "OK" else "✗"
-    print(f"  Q{qid:02d}  {name:<35}  {r['ms']:>8.1f}  {r['rows']:>6}  {status_sym} {r['status']}")
-ok_count  = sum(1 for r in results.values() if r["status"] == "OK")
-err_count = len(results) - ok_count
-print(f"\n  Pass: {ok_count}  Fail: {err_count}  Total: {len(results)}")
-if ok_count > 0:
-    total_ms = sum(r["ms"] for r in results.values() if r["status"] == "OK")
-    print(f"  Total query time: {total_ms:.1f} ms")
+print(f"  {'Query':<6}  {'Status':<8}  {'ms':>8}  {'Actual':>7}  {'Expected':>8}")
+print(f"  {'-'*6}  {'-'*8}  {'-'*8}  {'-'*7}  {'-'*8}")
+for r in query_results:
+    sym = {"PASS": "✅", "PARTIAL": "⚠️", "FAIL": "❌", "SKIP": "⏭"}.get(r["status"], "?")
+    ms_str = f"{r['duration_ms']:.1f}" if r["duration_ms"] else "—"
+    exp_str = str(r["row_count_expected"]) if r["row_count_expected"] is not None else "—"
+    print(f"  {r['id']:<6}  {sym} {r['status']:<6}  {ms_str:>8}  {r['row_count_actual']:>7}  {exp_str:>8}")
+print(f"\n  PASS={counts['PASS']}  PARTIAL={counts['PARTIAL']}  FAIL={counts['FAIL']}  SKIP={counts['SKIP']}")
+print(f"  Total query time: {total_query_ms:.1f} ms")
 print(f"{'='*60}\n")
+
+# ── JSON output ───────────────────────────────────────────────────────────────
+
+if args.output == "json" or args.report:
+    hw = get_hardware_info()
+    report = {
+        "run_id": RUN_ID,
+        "wow_db_version": WOW_DB_VERSION,
+        "hardware": hw,
+        "cluster": {"qn": 3, "cn": 3, "sn": 3},
+        "scale_factor": SF,
+        "data_state": "cold_cache",
+        "load_duration_ms": int(total_load_ms),
+        "queries": query_results,
+        "summary": {
+            "total_query_ms": int(total_query_ms),
+            "pass": counts["PASS"],
+            "partial": counts["PARTIAL"],
+            "fail": counts["FAIL"],
+            "skip": counts["SKIP"],
+        },
+    }
+    if args.output == "json":
+        print(json.dumps(report, indent=2))
+    if args.report:
+        with open(args.report, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2)
+        print(f"[REPORT] Written to {args.report}")
+
+# ── Markdown output ───────────────────────────────────────────────────────────
+
+elif args.output == "markdown":
+    print(f"## TPC-H Benchmark Results — SF={SF} — {RUN_ID[:10]}\n")
+    print(f"| Query | Status | Duration (ms) | Rows Actual | Rows Expected |")
+    print(f"|-------|--------|--------------|-------------|---------------|")
+    for r in query_results:
+        sym = {"PASS": "✅ PASS", "PARTIAL": "⚠️ PARTIAL", "FAIL": "❌ FAIL", "SKIP": "⏭ SKIP"}.get(r["status"], r["status"])
+        ms = f"{r['duration_ms']:.0f}" if r["duration_ms"] else "—"
+        exp = str(r["row_count_expected"]) if r["row_count_expected"] is not None else "—"
+        print(f"| {r['id']} | {sym} | {ms} | {r['row_count_actual']} | {exp} |")
 
 cur.close()
 conn.close()

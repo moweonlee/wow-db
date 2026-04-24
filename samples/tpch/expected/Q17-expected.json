@@ -1,0 +1,8 @@
+{
+  "query_id": "Q17",
+  "scale_factor": 0.01,
+  "expected_row_count": 1,
+  "notes": "single avg_yearly",
+  "sample_first_row": null,
+  "validation_columns": []
+}

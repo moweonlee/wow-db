@@ -1,0 +1,8 @@
+{
+  "query_id": "Q13",
+  "scale_factor": 0.01,
+  "expected_row_count": 42,
+  "notes": "distinct c_count values",
+  "sample_first_row": null,
+  "validation_columns": []
+}

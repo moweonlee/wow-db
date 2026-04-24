@@ -121,22 +121,87 @@ impl SnPartSource for LocalSnPartSource {
     }
 }
 
-// ─── gRPC 스텁 (프로덕션 — 향후 구현) ────────────────────────────────────────
+// ─── gRPC 구현 ────────────────────────────────────────────────────────────────
 
-/// 실제 SN gRPC 연결 구현
-/// 현재는 스텁; Phase F에서 tonic 클라이언트로 구현 예정
+/// 실제 SN gRPC 연결을 통한 PartitionInfo 조회
 pub struct GrpcSnPartSource;
 
 #[async_trait]
 impl SnPartSource for GrpcSnPartSource {
-    async fn get_parts(&self, _sn_endpoint: &str, _shard_id: Uuid) -> Vec<PartMeta> {
-        // TODO Phase F: tonic client call to StorageService::GetPartList
-        vec![]
+    async fn get_parts(&self, sn_endpoint: &str, shard_id: Uuid) -> Vec<PartMeta> {
+        use crate::gen::wowdb::storage::{
+            storage_service_client::StorageServiceClient,
+            GetPartListRequest,
+        };
+        use tokio_stream::StreamExt;
+
+        let addr = format!("http://{}", sn_endpoint);
+        let mut client = match StorageServiceClient::connect(addr).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(sn = %sn_endpoint, err = %e, "GrpcSnPartSource: connect failed");
+                return vec![];
+            }
+        };
+
+        let req = GetPartListRequest { shard_id: shard_id.as_bytes().to_vec() };
+        let mut stream = match client.get_part_list(req).await {
+            Ok(r) => r.into_inner(),
+            Err(e) => {
+                tracing::warn!(sn = %sn_endpoint, err = %e, "GrpcSnPartSource: get_part_list failed");
+                return vec![];
+            }
+        };
+
+        let mut parts = Vec::new();
+        while let Some(Ok(info)) = stream.next().await {
+            let created_at = chrono::DateTime::from_timestamp_millis(info.created_at_ms)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_default();
+            parts.push(PartMeta {
+                part_id:          info.part_id,
+                shard_id:         shard_id.to_string(),
+                partition_id:     String::new(),
+                sn_node_id:       String::new(),
+                level:            info.level,
+                sequence_num:     info.sequence_num,
+                row_count:        info.row_count,
+                size_bytes:       info.size_bytes,
+                min_sort_key:     info.min_sort_key,
+                max_sort_key:     info.max_sort_key,
+                bloom_size_bytes: info.bloom_size_bytes,
+                created_at,
+            });
+        }
+        parts
     }
 
-    async fn get_shard_stats(&self, _sn_endpoint: &str, _shard_id: Uuid) -> (u64, u64, u64) {
-        // TODO Phase F: tonic client call to StorageService::GetShardInfo
-        (0, 0, 0)
+    async fn get_shard_stats(&self, sn_endpoint: &str, shard_id: Uuid) -> (u64, u64, u64) {
+        use crate::gen::wowdb::storage::{
+            storage_service_client::StorageServiceClient,
+            GetShardInfoRequest,
+        };
+
+        let addr = format!("http://{}", sn_endpoint);
+        let mut client = match StorageServiceClient::connect(addr).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(sn = %sn_endpoint, err = %e, "GrpcSnPartSource: connect failed");
+                return (0, 0, 0);
+            }
+        };
+
+        let req = GetShardInfoRequest { shard_id: shard_id.as_bytes().to_vec() };
+        match client.get_shard_info(req).await {
+            Ok(resp) => {
+                let r = resp.into_inner();
+                (r.row_count, r.size_bytes, r.lsn)
+            }
+            Err(e) => {
+                tracing::warn!(sn = %sn_endpoint, err = %e, "GrpcSnPartSource: get_shard_info failed");
+                (0, 0, 0)
+            }
+        }
     }
 }
 

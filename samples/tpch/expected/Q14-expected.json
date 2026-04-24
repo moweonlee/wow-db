@@ -1,0 +1,8 @@
+{
+  "query_id": "Q14",
+  "scale_factor": 0.01,
+  "expected_row_count": 1,
+  "notes": "single promo_revenue",
+  "sample_first_row": null,
+  "validation_columns": []
+}

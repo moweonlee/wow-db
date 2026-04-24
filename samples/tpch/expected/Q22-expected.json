@@ -1,0 +1,8 @@
+{
+  "query_id": "Q22",
+  "scale_factor": 0.01,
+  "expected_row_count": 7,
+  "notes": "7 country codes",
+  "sample_first_row": null,
+  "validation_columns": []
+}

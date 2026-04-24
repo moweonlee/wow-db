@@ -9,6 +9,7 @@ use bytes::Bytes;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
+use shared::log_buffer;
 use shared::types::{SortKey, SortKeyComponent};
 
 use crate::lsm::levels::{CompactionConfig, PartitionLevels, SstRef, WriteControl};
@@ -127,10 +128,15 @@ pub struct TabletWriter {
     data_dir:    PathBuf,
     levels:      Arc<RwLock<PartitionLevels>>,
     seq_counter: Arc<PartitionSeqCounter>,
+    log_buf:     Option<Arc<std::sync::Mutex<log_buffer::LogBuffer>>>,
 }
 
 impl TabletWriter {
-    pub async fn new(data_dir: PathBuf, tablet_id: String) -> Result<Self> {
+    pub async fn new(
+        data_dir: PathBuf,
+        tablet_id: String,
+        log_buf: Option<Arc<std::sync::Mutex<log_buffer::LogBuffer>>>,
+    ) -> Result<Self> {
         let wal_dir = data_dir.join(&tablet_id).join("wal");
         let wal = Arc::new(Wal::open(&wal_dir).await?);
         let memtable = Arc::new(Mutex::new(MemTable::new(DEFAULT_MEMTABLE_THRESHOLD)));
@@ -138,7 +144,9 @@ impl TabletWriter {
         let levels      = Arc::new(RwLock::new(PartitionLevels::new(CompactionConfig::default())));
         let seq_counter = Arc::new(PartitionSeqCounter::new(0));
 
-        let writer = Self { tablet_id: tablet_id.clone(), wal, memtable, data_dir, levels, seq_counter };
+        let writer = Self {
+            tablet_id: tablet_id.clone(), wal, memtable, data_dir, levels, seq_counter, log_buf,
+        };
 
         // WAL replay: 크래시/재시작 후 MemTable 복구
         writer.replay_wal().await?;
@@ -187,9 +195,20 @@ impl TabletWriter {
                 rows = replayed,
                 "WAL replay 완료 — MemTable 복구"
             );
-            // FR-008: WAL 이벤트 — main.rs 의 LOG_BUFFER 는 바이너리 전용이라 직접 참조 불가.
-            // 향후 LogBuffer 를 TabletWriter 에 주입하는 방식으로 개선 가능.
-            // 현재는 info! tracing 로그로만 기록 (운영 로그 파일에는 남음).
+            // FR-008: WAL replay 이벤트를 대시보드 /logs 버퍼에 기록
+            if let Some(ref buf) = self.log_buf {
+                if let Ok(mut b) = buf.lock() {
+                    b.push(log_buffer::make_entry(
+                        log_buffer::LogLevel::Info,
+                        "storage::wal",
+                        "WAL replay 완료 — MemTable 복구",
+                        vec![
+                            ("tablet_id", self.tablet_id.as_str()),
+                            ("rows", &replayed.to_string()),
+                        ],
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -390,13 +409,18 @@ impl TabletWriter {
 pub struct TabletWriterRegistry {
     writers:  Arc<Mutex<HashMap<String, Arc<TabletWriter>>>>,
     data_dir: PathBuf,
+    log_buf:  Option<Arc<std::sync::Mutex<log_buffer::LogBuffer>>>,
 }
 
 impl TabletWriterRegistry {
-    pub fn new(data_dir: PathBuf) -> Self {
+    pub fn new(
+        data_dir: PathBuf,
+        log_buf: Option<Arc<std::sync::Mutex<log_buffer::LogBuffer>>>,
+    ) -> Self {
         Self {
             writers:  Arc::new(Mutex::new(HashMap::new())),
             data_dir,
+            log_buf,
         }
     }
 
@@ -427,12 +451,46 @@ impl TabletWriterRegistry {
         stats
     }
 
+    /// 등록된 모든 Tablet의 SSTable 참조 목록 반환 (GetPartList용)
+    pub async fn get_all_sst_refs(&self) -> Vec<std::sync::Arc<crate::lsm::levels::SstRef>> {
+        let writers = self.writers.lock().await;
+        let mut all = Vec::new();
+        for writer in writers.values() {
+            let lvls = writer.levels.read().await;
+            all.extend(lvls.read_snapshot());
+        }
+        all
+    }
+
+    /// 모든 Tablet의 집계 통계 (row_count, size_bytes, part_count) 반환 (GetShardInfo용)
+    pub async fn aggregate_stats(&self) -> (u64, u64, u32) {
+        let writers = self.writers.lock().await;
+        let mut row_count = 0u64;
+        let mut size_bytes = 0u64;
+        let mut part_count = 0u32;
+        for writer in writers.values() {
+            let lvls = writer.levels.read().await;
+            let ssts = lvls.read_snapshot();
+            row_count  += ssts.iter().map(|s| s.row_count).sum::<u64>();
+            size_bytes += ssts.iter().map(|s| s.size_bytes).sum::<u64>();
+            part_count += ssts.len() as u32;
+            // Include MemTable row count
+            let mem = writer.memtable.lock().await;
+            row_count += mem.row_count() as u64;
+        }
+        (row_count, size_bytes, part_count)
+    }
+
     pub async fn get_or_create(&self, tablet_id: &str) -> Result<Arc<TabletWriter>> {
         let mut writers = self.writers.lock().await;
         if let Some(w) = writers.get(tablet_id) {
             return Ok(w.clone());
         }
-        let writer = TabletWriter::new(self.data_dir.clone(), tablet_id.to_string()).await?;
+        let writer = TabletWriter::new(
+            self.data_dir.clone(),
+            tablet_id.to_string(),
+            self.log_buf.as_ref().map(Arc::clone),
+        ).await?;
         let writer = Arc::new(writer);
         writers.insert(tablet_id.to_string(), writer.clone());
         Ok(writer)
@@ -474,7 +532,7 @@ mod tests {
     #[tokio::test]
     async fn test_tablet_writer_write() {
         let dir = tempdir().unwrap();
-        let writer = TabletWriter::new(dir.path().to_path_buf(), "tablet-001".into())
+        let writer = TabletWriter::new(dir.path().to_path_buf(), "tablet-001".into(), None)
             .await.unwrap();
 
         let rows = vec![make_row(1, b"sort_001"), make_row(1, b"sort_002")];
@@ -486,7 +544,7 @@ mod tests {
     #[tokio::test]
     async fn test_prepare_commit() {
         let dir = tempdir().unwrap();
-        let writer = TabletWriter::new(dir.path().to_path_buf(), "tablet-002".into())
+        let writer = TabletWriter::new(dir.path().to_path_buf(), "tablet-002".into(), None)
             .await.unwrap();
         writer.prepare(42).await.unwrap();
         writer.commit(42).await.unwrap();
